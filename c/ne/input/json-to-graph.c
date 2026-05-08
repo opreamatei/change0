@@ -1,4 +1,5 @@
 #include "json-to-graph.h"
+#include "graph/graph-export.h"
 #include "json.h"
 #include "util.h"
 #include "time.h"
@@ -67,20 +68,24 @@ static void AddNodesFromEntry(json_object_entry* entry, size_t context){
 }
 
 static _Bool ProcessArrayLinkage(json_value *entry, double weight, double activation, size_t context, time_t now){
+	change_assert(entry, "JSON Entry is null.\n");
 	if (!entry) return 0;
 
 	if (entry->type != json_array || entry->u.array.length != 2) return 0;
+	change_assert(entry->type == json_array && entry->u.array.length == 2, "JSON is not array or has other length.\n");
 
 	json_value* a = entry->u.array.values[0];
 	json_value* b = entry->u.array.values[1];
 
 
-	cassert(a->type == json_string && b->type == json_string, "Error: Nodes are not strings");
+	change_assert(a->type == json_string && b->type == json_string, "Error: Nodes are not strings");
 
 	Node* A = FindNode(a->u.string.ptr, a->u.string.length, NodeAt(context));
+	change_assert(A, "Node A doesn't not exist. [%s]", a->u.string.ptr);
 	if (!A) return 0;
 	A->lastTouched = time(NULL);
 	Node* B = FindNode(b->u.string.ptr, b->u.string.length, NodeAt(context));
+	change_assert(B, "Node B doesn't not exist. [%s]", a->u.string.ptr);
 	if (!B) return 0;
 	B->lastTouched = time(NULL);
 
@@ -132,7 +137,9 @@ static void AddConnectionFromEntry(json_value* val, size_t context, time_t now){
 		}
 	}
 
-	cassert(ProcessArrayLinkage(arr, weight, activation, context, now), "Problem when creaing connections list, btw size must be two.");
+	char *graph = SeriliazeGraph();
+	dump_to_file(DEFAULT_DUMP_DIRECTORY "debug-response.txt",graph, strlen(graph));
+	ProcessArrayLinkage(arr, weight, activation, context, now);
 	
 }
 

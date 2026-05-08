@@ -14,7 +14,7 @@ void InitGoalSystem();
 _Bool DecomposeGoal(Goal *g);
 
 void UpdateGoal(Goal *g, time_t now);
-Goal **GetGoalsContainer(size_t *len);
+Goal* ComputePartialDecomposition(Goal *goal);
 
 
 #endif

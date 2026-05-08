@@ -1,7 +1,9 @@
 import {
   SERVER_BASE_URL,
+  buildGoalEndUrl,
   buildGoalDecomposeUrl,
   buildGoalListUrl,
+  buildGoalStartUrl,
 } from './config/server'
 
 export type GoalRelation = 'parent' | 'next' | 'prev'
@@ -27,6 +29,10 @@ export interface GoalDecomposePayload {
   goalIndex: number
 }
 
+export interface GoalStatusActionPayload {
+  goalId: string
+}
+
 export interface GoalListResponseItem {
   id: string
   globalIndex: number
@@ -49,6 +55,26 @@ export interface GoalListResponse {
   count: number
   container_len: number
   goals: GoalListResponseItem[]
+}
+
+export interface GoalStatusActionResponse {
+  ok: boolean
+  'goal-id': string
+  at: number
+  start_date: number
+  end_date: number
+}
+
+export interface GoalEventPayload {
+  'goal-id': string
+  start_date?: number
+  end_date?: number
+}
+
+export interface GoalEventEnvelope {
+  id: string
+  type: string
+  data: string
 }
 
 export class Goal implements GoalInit {
@@ -204,6 +230,46 @@ export async function loadGoalsFromServer(baseUrl = SERVER_BASE_URL) {
   const items = Array.isArray(payload.goals) ? payload.goals : []
 
   return items.map(Goal.fromServer)
+}
+
+async function postGoalStatusAction(url: string, payload: GoalStatusActionPayload) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      'goal-id': payload.goalId,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Goal action failed: ${response.status}`)
+  }
+
+  return (await response.json()) as GoalStatusActionResponse
+}
+
+export async function startGoalOnServer(goalId: string, baseUrl = SERVER_BASE_URL) {
+  return postGoalStatusAction(buildGoalStartUrl(baseUrl), { goalId })
+}
+
+export async function endGoalOnServer(goalId: string, baseUrl = SERVER_BASE_URL) {
+  return postGoalStatusAction(buildGoalEndUrl(baseUrl), { goalId })
+}
+
+export function applyGoalEvent(goals: Goal[], goalId: string, payload: GoalEventPayload) {
+  return goals.map((goal) => {
+    if (goal.id !== goalId) {
+      return goal
+    }
+
+    return Goal.from({
+      ...goal,
+      startDate: payload.start_date && payload.start_date > 0 ? payload.start_date : null,
+      endDate: payload.end_date && payload.end_date > 0 ? payload.end_date : null,
+    })
+  })
 }
 
 /* -------------------------------------------------------------------------- */

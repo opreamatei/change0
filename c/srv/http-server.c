@@ -600,6 +600,52 @@ static Goal* find_goal_by_id_string(const char* goal_id) {
 	return NULL;
 }
 
+static Goal* find_goal_from_request_body(const HttpRequest* req, char out_goal_id[GOAL_ID_LEN + 1]) {
+	int goal_index_int = 0;
+	char goal_id[256];
+	Goal* goal = NULL;
+
+	if (out_goal_id) {
+		out_goal_id[0] = '\0';
+	}
+
+	if (!req || !req->body) {
+		return NULL;
+	}
+
+	goal_id[0] = '\0';
+
+	if (json_get_int_field(req->body, "goalIndex", &goal_index_int) ||
+	    json_get_int_field(req->body, "globalIndex", &goal_index_int) ||
+	    json_get_int_field(req->body, "goal-index", &goal_index_int)) {
+		if (goal_index_int <= 0) {
+			return NULL;
+		}
+
+		goal = ExternalFindGoal((size_t)goal_index_int);
+	} else if (
+		json_get_string_field(req->body, "goal-id", goal_id, sizeof(goal_id)) ||
+		json_get_string_field(req->body, "goalId", goal_id, sizeof(goal_id)) ||
+		json_get_string_field(req->body, "id", goal_id, sizeof(goal_id))
+	) {
+		if (!validate_goal_id_32(goal_id)) {
+			return NULL;
+		}
+
+		goal = find_goal_by_id_string(goal_id);
+	}
+
+	if (!goal) {
+		return NULL;
+	}
+
+	if (out_goal_id) {
+		goal_id_to_cstr(goal, out_goal_id);
+	}
+
+	return goal;
+}
+
 static void append_goal_json(String* out, Goal* g) {
 	char goal_id[GOAL_ID_LEN + 1];
 
@@ -1137,6 +1183,91 @@ static void handle_post_goal_decompose(int client_fd, const HttpRequest* req) {
 	free(result_json);
 }
 
+static void handle_post_goal_status_action(
+	int client_fd,
+	const HttpRequest* req,
+	const char* event_type,
+	time_t (*action_fn)(goalIDType),
+	const char* date_field_name
+) {
+	char goal_id[GOAL_ID_LEN + 1];
+	char event_body[256];
+	char response_body[256];
+	char* esc_goal_id = NULL;
+	int response_len;
+	int event_len;
+	time_t action_time = 0;
+	Goal* goal = NULL;
+
+	if (!req->body) {
+		send_json_response(
+			client_fd,
+			400,
+			"Bad Request",
+			"{\"ok\":false,\"error\":\"missing_body\"}"
+		);
+		return;
+	}
+
+	goal = find_goal_from_request_body(req, goal_id);
+	if (!goal) {
+		send_json_response(
+			client_fd,
+			404,
+			"Not Found",
+			"{\"ok\":false,\"error\":\"goal_not_found\"}"
+		);
+		return;
+	}
+
+	action_time = action_fn(goal_id);
+	event_len = snprintf(
+		event_body,
+		sizeof(event_body),
+		"{\"goal-id\":\"%s\",\"%s\":%lld,\"start_date\":%lld,\"end_date\":%lld}",
+		goal_id,
+		date_field_name,
+		(long long)action_time,
+		(long long)goal->start_date,
+		(long long)goal->end_date
+	);
+
+	if (event_len > 0 && (size_t)event_len < sizeof(event_body)) {
+		goal_emit_event(goal_id, event_type, event_body, (size_t)event_len);
+	}
+
+	esc_goal_id = json_escape_dup(goal_id);
+	response_len = snprintf(
+		response_body,
+		sizeof(response_body),
+		"{\"ok\":true,\"goal-id\":\"%s\",\"at\":%lld,\"start_date\":%lld,\"end_date\":%lld}",
+		esc_goal_id,
+		(long long)action_time,
+		(long long)goal->start_date,
+		(long long)goal->end_date
+	);
+	free(esc_goal_id);
+
+	if (response_len < 0 || (size_t)response_len >= sizeof(response_body)) {
+		send_json_response(
+			client_fd,
+			500,
+			"Internal Server Error",
+			"{\"ok\":false,\"error\":\"response_too_large\"}"
+		);
+		return;
+	}
+
+	send_response(
+		client_fd,
+		200,
+		"OK",
+		"application/json",
+		response_body,
+		(size_t)response_len
+	);
+}
+
 static void handle_get_goal_events(int client_fd, const char* full_path) {
 	char path_only[256];
 	const char* query = NULL;
@@ -1570,6 +1701,16 @@ static int handle_request(int client_fd, const HttpRequest* req) {
 
 	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/goal/list") == 0) {
 		handle_get_goal_list(client_fd);
+		return 0;
+	}
+
+	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/goal/start") == 0) {
+		handle_post_goal_status_action(client_fd, req, "goal_started", StartGoal, "start_date");
+		return 0;
+	}
+
+	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/goal/end") == 0) {
+		handle_post_goal_status_action(client_fd, req, "goal_ended", EndGoal, "end_date");
 		return 0;
 	}
 
