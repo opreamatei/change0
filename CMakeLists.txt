@@ -237,7 +237,6 @@ target_include_directories(goal-util
 	${CMAKE_SOURCE_DIR}/c/ne
 	${CMAKE_SOURCE_DIR}/c
 	${CMAKE_SOURCE_DIR}/c/ne/goal
-	${CMAKE_SOURCE_DIR}/c/ne/search
 )
 target_link_libraries(goal-util PUBLIC util globals jsonp)
 

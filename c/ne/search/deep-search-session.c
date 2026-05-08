@@ -181,7 +181,7 @@ void start_ds_session(Task *task, char* id, String* out){
 	size_t idepth = 0, edepth = 0;
 	String reason; InitString(&reason, 1024);
 
-	while (edepth++){
+	while (++edepth){
 		cassert(edepth < 10, "Error : External Depth went way too hight\n");
 
 		idepth = 1;
