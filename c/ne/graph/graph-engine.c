@@ -57,7 +57,7 @@ void RefreshGraph(){
 	time_t currTime = time(NULL);
 
 	double k = ACTIVATION_IMPORTANCE_TO_NODE_WEIGHT;
-	double c = SUPPORT_MERIT_TO_NODE_WEIGHT; 
+	double c = NCOUNT_PENALTY_TO_NODE_WEIGHT; 
 		
 	double mx_seen = -1, mx_used = -1, mx_support = -1;
 

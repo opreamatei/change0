@@ -1,4 +1,5 @@
 #include "goal-ai.h"
+#include "change-errors.h"
 #include "config.h"
 #include "node.h"
 #include "openai.h"
@@ -33,7 +34,7 @@ void AICallExtractionGoalSchema(String *input, String *out)
     FreeString(result);
 }
 
-void ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t *estimated_time){
+void ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t *estimated_time, _Bool forceEstTime){
 	String json_extract_result;
 
 	// extract process goals
@@ -51,13 +52,13 @@ void ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t 
 		json_object_entry candidate = doc->u.object.values[i];
 
 		if (strcmp(candidate.name, "extrainfo") == 0){
-			cassert(candidate.value->type == json_string, "JSON \"extrainfo\" is not a string.\n");
+			change_assert(candidate.value->type == json_string, "JSON \"extrainfo\" is not a string. \n\n[%s]\n", c_str(text));
 			CatString(extrainfo, candidate.value->u.string.ptr, candidate.value->u.string.length);
 		}else if (strcmp(candidate.name, "title") == 0){
-			cassert(candidate.value->type == json_string, "JSON \"title\" is not a string.\n");
+			change_assert(candidate.value->type == json_string, "JSON \"title\" is not a string. \n\n[%s]\n", c_str(text));
 			CatString(title, candidate.value->u.string.ptr, candidate.value->u.string.length);
-		}else if (strcmp(candidate.name, "estimated_time") == 0){
-			cassert(candidate.value->type == json_integer, "JSON \"estimated_time\" is not an integer.\n");
+		}else if (forceEstTime && strcmp(candidate.name, "estimated_time") == 0){
+			change_assert(candidate.value->type == json_integer, "JSON \"estimated_time\" is not an integer. \n\n[%s]\n", c_str(text));
 			*estimated_time = candidate.value->u.integer;
 		}
 	}

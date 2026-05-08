@@ -25,10 +25,18 @@ void exec_response(json_value* doc, String *dynamic_mem, size_t depth, String *c
 
 	if (command == 1)
 		run1(doc, dynamic_mem, ds_id);
-	if (command == 2)
+	else if (command == 2)
 		run2(doc, dynamic_mem, ds_id);
-	if (command == 3)
+	else if (command == 3)
 		run3(doc, dynamic_mem, ds_id);
+	else if (command == 4)
+		run4(doc, dynamic_mem, ds_id);
+	else if (command == 5)
+		run5(doc, dynamic_mem, ds_id);
+	else if (command == 6)
+		run6(doc, dynamic_mem, ds_id);
+	else 
+		CatTemplateString(dynamic_mem, "{Error : Commands are only 1-6, you passed [%d] }", command);
 }
 
 // Half is AI generated
@@ -182,3 +190,4 @@ json_value *call_gpt_judge(String *out, Task *task){
 	ai_openai_response_free(&created);
 	return root;
 }
+

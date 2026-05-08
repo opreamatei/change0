@@ -61,9 +61,9 @@ _Bool try_terminate(DS_memory *mem, String *out, size_t depth, Task* task, Strin
 	return 0; // did not finish
 }
 
-static inline void write_feedback(DS_memory* mem, String* reason){
+static inline void write_feedback(DS_memory* mem, String* out, String* reason){
 	EmptyString(&mem->dynamic);
-	CatTemplateString(&mem->persistent, "{ Server Intervention :  You had previously tried to execute this task, but failed the automatic validation, here is feedback: [%s]. You may repeat the round with this hint. }", c_str(reason));
+	CatTemplateString(&mem->persistent, "{ Server Intervention :  You had previously tried to execute this task, but failed the automatic validation, here is feedback: [%s]. Your previous response that caused the failing is [%s]. You may repeat the round with this hint. }", c_str(reason));
 }
 
 static _Bool judge_result(String *out, String* reason, Task *task, char *ds_id){
@@ -178,10 +178,10 @@ void start_ds_session(Task *task, char* id, String* out){
 	ds_emit(id, "ds-start", "{\"start\" : true}", FSIZE("{\"start\" : true}"));
 	
 	// internal external depth
-	size_t idepth = 1, edepth = 1;
+	size_t idepth = 0, edepth = 0;
 	String reason; InitString(&reason, 1024);
 
-	while (edepth++){
+	while (++edepth){
 		cassert(edepth < 10, "Error : External Depth went way too hight\n");
 
 		idepth = 1;
@@ -196,7 +196,7 @@ void start_ds_session(Task *task, char* id, String* out){
 
 
 		// failed task 
-		write_feedback(&mem, &reason);
+		write_feedback(&mem, out, &reason);
 	}
 
 	ds_emit(id, "d-mem", mem.dynamic.p, mem.dynamic.len);

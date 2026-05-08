@@ -78,10 +78,10 @@ static _Bool ProcessArrayLinkage(json_value *entry, double weight, double activa
 	cassert(a->type == json_string && b->type == json_string, "Error: Nodes are not strings");
 
 	Node* A = FindNode(a->u.string.ptr, a->u.string.length, NodeAt(context));
-	if (!A) return 1;
+	if (!A) return 0;
 	A->lastTouched = time(NULL);
 	Node* B = FindNode(b->u.string.ptr, b->u.string.length, NodeAt(context));
-	if (!B) return 1;
+	if (!B) return 0;
 	B->lastTouched = time(NULL);
 
 	Connection* existing = LinkExists(A, B);
@@ -95,6 +95,9 @@ static _Bool ProcessArrayLinkage(json_value *entry, double weight, double activa
 		
 		ab->_activation += activation * 0.1;
 		ab->_weight += ( weight - CONN_INIT_WGHT ) * CONNECTION_GUESS_WEIGHT_RELEVANCE;
+
+		ba->_activation += activation * 0.1;
+		ba->_weight += ( weight - CONN_INIT_WGHT ) * CONNECTION_GUESS_WEIGHT_RELEVANCE;
 	}
 
 	return 1;

@@ -1,177 +1,100 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import GoalViewer from './section/goal-view'
-import { findGoalByGlobalIndex, loadGoalsFromServer, type Goal } from './goal'
-
-type RouteName = 'home' | 'goal'
-
-function getLocationState() {
-  const route = window.location.pathname === '/goal' ? 'goal' : 'home'
-  if (route !== 'goal') {
-    return { route, goalIndex: null as number | null }
-  }
-
-  const query = new URLSearchParams(window.location.search)
-  const goalIndex = Number(query.get('goal'))
-  return {
-    route,
-    goalIndex: Number.isFinite(goalIndex) && goalIndex > 0 ? goalIndex : null,
-  }
-}
+import {
+        createMockGoalListFromTemplate,
+        findGoalById,
+        getGoalChildren,
+        getRootGoals,
+        type Goal,
+} from './goal'
+import { buildGoalPath, getLocationState, ROOT_GOAL_ID, type RouteName } from './config/utils';
 
 function App() {
-  const initialLocation = getLocationState()
-  const [route, setRoute] = useState<RouteName>(initialLocation.route)
-  const [goalIndex, setGoalIndex] = useState<number | null>(
-    initialLocation.goalIndex,
-  )
-  const [goals, setGoals] = useState<Goal[]>([])
-  const [selectedGoal, setSelectedGoal] = useState<Goal | null>(null)
-  const [message, setMessage] = useState('Server not connected.')
-  const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    const onPopState = () => {
-      const locationState = getLocationState()
-      setRoute(locationState.route)
-      setGoalIndex(locationState.goalIndex)
-      if (locationState.route === 'home') {
-        setSelectedGoal(null)
-        setGoalIndex(null)
-      }
-    }
-
-    window.addEventListener('popstate', onPopState)
-    return () => window.removeEventListener('popstate', onPopState)
-  }, [])
-
-  useEffect(() => {
-    if (route !== 'goal' || selectedGoal) {
-      return
-    }
-
-    let alive = true
-
-    ;(async () => {
-      try {
-        const loadedGoals = goals.length > 0 ? goals : await loadServerGoals()
-        const targetIndex = goalIndex ?? loadedGoals[0]?.globalIndex ?? null
-        const goal = targetIndex
-          ? findGoalByGlobalIndex(loadedGoals, targetIndex)
-          : null
-
-        if (!alive) {
-          return
-        }
-
-        if (goal) {
-          setSelectedGoal(goal)
-          setGoals(loadedGoals)
-          return
-        }
-
-        setMessage('Success. No goals were returned by the server.')
-        window.history.replaceState({}, '', '/')
-        setRoute('home')
-        setGoalIndex(null)
-      } catch (error) {
-        if (!alive) {
-          return
-        }
-
-        setMessage(
-          error instanceof Error ? error.message : 'Failed to restore goal view.',
+        const initialLocation = getLocationState()
+        const mockGoals = useMemo(() => createMockGoalListFromTemplate(), [])
+        const [route, setRoute] = useState<RouteName>(initialLocation.route)
+        const [goalId, setGoalId] = useState<string | null>(initialLocation.goalId)
+        const [message, setMessage] = useState(
+                `Using mock goals only. Loaded ${mockGoals.length} items locally.`,
         )
-        window.history.replaceState({}, '', '/')
-        setRoute('home')
-        setGoalIndex(null)
-      }
-    })()
 
-    return () => {
-      alive = false
-    }
-  }, [route, goalIndex, goals, selectedGoal])
+        const selectedParentGoal = useMemo<Goal | null>(() => {
+                if (!goalId || goalId === ROOT_GOAL_ID) {
+                        return null
+                }
 
-  async function loadServerGoals() {
-    const loadedGoals = await loadGoalsFromServer()
-    setGoals(loadedGoals)
-    return loadedGoals
-  }
+                return findGoalById(mockGoals, goalId)
+        }, [goalId, mockGoals])
 
-  async function connectServer() {
-    setBusy(true)
-    setMessage('Connecting to server...')
+        const visibleGoals = useMemo(() => {
+                if (!goalId || goalId === ROOT_GOAL_ID) {
+                        return getRootGoals(mockGoals)
+                }
 
-    try {
-      const loadedGoals = await loadServerGoals()
-      setMessage(`Success. Loaded ${loadedGoals.length} goals from server.`)
-    } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : 'Failed to connect to server.',
-      )
-    } finally {
-      setBusy(false)
-    }
-  }
+                if (!selectedParentGoal) {
+                        return []
+                }
 
-  async function viewFirstGoal() {
-    setBusy(true)
-    setMessage('Opening first goal...')
+                return getGoalChildren(mockGoals, selectedParentGoal.globalIndex)
+        }, [goalId, mockGoals, selectedParentGoal])
 
-    try {
-      const loadedGoals = goals.length > 0 ? goals : await loadServerGoals()
-      const firstGoal = findGoalByGlobalIndex(
-        loadedGoals,
-        loadedGoals[0]?.globalIndex ?? 0,
-      )
+        useEffect(() => {
+                const onPopState = () => {
+                        const locationState = getLocationState()
+                        setRoute(locationState.route)
+                        setGoalId(locationState.goalId)
+                }
 
-      if (!firstGoal) {
-        setMessage('Success. No goals were returned by the server.')
-        return
-      }
+                window.addEventListener('popstate', onPopState)
+                return () => window.removeEventListener('popstate', onPopState)
+        }, [])
 
-      setSelectedGoal(firstGoal)
-      setGoalIndex(firstGoal.globalIndex)
-      window.history.pushState({}, '', `/goal?goal=${firstGoal.globalIndex}`)
-      setRoute('goal')
-    } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : 'Failed to open goal view.',
-      )
-    } finally {
-      setBusy(false)
-    }
-  }
+        function viewRootGoal() {
+                if (mockGoals.length === 0) {
+                        setMessage('No mock goals are available.')
+                        return
+                }
 
-  if (route === 'goal') {
-    if (!selectedGoal) {
-      return <p className="goal-connect-message">Loading goal...</p>
-    }
+                setMessage('Viewing root mock goals.')
+                setGoalId(ROOT_GOAL_ID)
+                window.history.pushState({}, '', buildGoalPath(ROOT_GOAL_ID))
+                setRoute('goal')
+        }
 
-    return <GoalViewer goal={selectedGoal} />
-  }
+        if (route === 'goal') {
+                if (mockGoals.length === 0) {
+                        return <p className="goal-connect-message">No mock goal available.</p>
+                }
 
-  return (
-    <>
-      <button
-        type="button"
-        className="goal-connect-button"
-        onClick={connectServer}
-        disabled={busy}
-      >
-        Connect server
-      </button>
-      <button
-        type="button"
-        className="goal-view-button"
-        onClick={viewFirstGoal}
-        disabled={busy}
-      >
-        View goal
-      </button>
-      <p className="goal-connect-message">{message}</p>
-    </>
-  )
+                if (goalId !== ROOT_GOAL_ID && !selectedParentGoal) {
+                        return (
+                                <p className="goal-connect-message">
+                                        Mock goal "{goalId}" was not found.
+                                </p>
+                        )
+                }
+
+                return (
+                        <GoalViewer
+                                parentGoal={selectedParentGoal}
+                                children_goals={visibleGoals}
+                                global_goals={mockGoals}
+                        />
+                )
+        }
+
+        return (
+                <>
+                        <button
+                                type="button"
+                                className="goal-view-button"
+                                onClick={viewRootGoal}
+                        >
+                                View root goals
+                        </button>
+                        <p className="goal-connect-message">{message}</p>
+                </>
+        )
 }
 
 export default App

@@ -1,70 +1,79 @@
-import { useEffect, useRef } from 'react'
-import type { Goal } from '../goal'
-
-function resizeCanvas(canvas: HTMLCanvasElement) {
-  const context = canvas.getContext('2d')
-  if (!context) {
-    return null
-  }
-
-  const rect = canvas.getBoundingClientRect()
-  const scale = Math.max(1, Math.min(window.devicePixelRatio || 1, 2))
-  const width = Math.max(1, Math.round(rect.width))
-  const height = Math.max(1, Math.round(rect.height))
-
-  canvas.width = Math.round(width * scale)
-  canvas.height = Math.round(height * scale)
-  context.setTransform(scale, 0, 0, scale, 0, 0)
-
-  return { context, width, height }
-}
-
-function drawCanvas(canvas: HTMLCanvasElement, goal: Goal) {
-  const frame = resizeCanvas(canvas)
-  if (!frame) {
-    return
-  }
-
-  const { context, width, height } = frame
-  context.fillStyle = '#000000'
-  context.fillRect(0, 0, width, height)
-
-  const cx = width/2, cy = height/2;
-
-  context.fillStyle = '#ffffff'
-  const fontSize = 32;
-  context.font = `${fontSize}px Roboto`
-
-  const text_m_info = context.measureText(goal.title);
-  
-  context.fillText(goal.title, cx - text_m_info.width/2, cy - fontSize / 2);
-}
+import { buildGoalPath } from '../config/utils';
+import { findGoalByGlobalIndex, type Goal } from '../goal';
 
 export interface GoalViewerProps {
-  goal: Goal
+	children_goals: Goal[];
+	global_goals: Goal[];
+	parentGoal: Goal | null;
 }
 
-export default function GoalViewer({ goal }: GoalViewerProps) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+function GoalData({goal} : {goal: Goal | null}){
+	return goal ? (
+		<div className="goal-meta">
+		<h3>Current Goal</h3>
+		<p>ID: {goal.id}</p>
+		<p>Title: {goal.title}</p>
+		</div>
+	) : (
+	<h3>Viewing as root</h3>
+	)
+};
 
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) {
-      return
-    }
+function ChildrenGoalDisplay({children} : {children : Goal[]}){
+	return (
+			children.length > 0 && (
+				<div className="goal-list">
+				<h3>Goals</h3>
 
-    const redraw = () => drawCanvas(canvas, goal)
-    redraw()
+				{
+					children.map(g => (
+						<a
+						key={g.id}
+						href={buildGoalPath(g.id)}
+						className="goal-link"
+						>
+						goal [{g.title}]
+						</a>
+					))
+				}
+				</div>
+			)
 
-    window.addEventListener('resize', redraw)
-    return () => window.removeEventListener('resize', redraw)
-  }, [goal])
 
-  return (
-    <canvas
-      ref={canvasRef}
-      className="goal-viewer-canvas"
-      aria-label={goal?.title ? `Goal viewer canvas for ${goal.title}` : 'Goal viewer canvas'}
-    />
-  )
+	)
+}
+
+function GoToParentButton({global_goals, goal} : {global_goals : Goal[], goal : Goal | null}){
+	const outer_parent_goal =
+		goal?.parent
+			? findGoalByGlobalIndex(global_goals, goal.parent)
+			: null;
+
+	return <a
+	className="btn btn-secondary"
+	href={buildGoalPath(
+		outer_parent_goal
+			? outer_parent_goal.id
+			: "root"
+	)}
+	>
+	Go back to parent
+	</a>;
+}
+
+export default function GoalViewer(props: GoalViewerProps) {
+
+	const { global_goals, children_goals, parentGoal } = props;
+
+
+	return (
+		<div className="goal-viewer">
+
+			<GoalData goal={parentGoal} />
+			
+			<ChildrenGoalDisplay children = {children_goals}/>
+
+			<GoToParentButton global_goals={global_goals} goal={parentGoal} />
+		</div>
+	);
 }

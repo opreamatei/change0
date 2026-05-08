@@ -8,12 +8,13 @@
 
 void FreeGoal(Goal *g);
 void FreeGoals();
-Goal* CreateUserGoal(String *input1, String *input2, char goalId[GOAL_ID_SIZE]);
+Goal* CreateUserGoal(String *input1, String *input2, goalIDType goalID);
 
 void InitGoalSystem();
 _Bool DecomposeGoal(Goal *g);
 
 void UpdateGoal(Goal *g, time_t now);
 Goal **GetGoalsContainer(size_t *len);
+
 
 #endif

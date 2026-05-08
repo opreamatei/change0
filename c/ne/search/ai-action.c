@@ -1,6 +1,9 @@
 #include "ai-action.h"
+#include "goal-info.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include "goal/goal-util.h"
+#include "util.h"
 #include <string.h>
 #include "search.h"
 #include "command-parsing.h"
@@ -226,3 +229,222 @@ void run3(json_value* doc, String *dynamic_mem, char* ds_id){
 	free(data);
 }
 
+// Partially AI Generated
+void run4(json_value* doc, String *dynamic_mem, char* ds_id){
+	if (!doc || !dynamic_mem) return;
+	lazy_load();
+
+	if (GOAL_CONTAINER_COUNT == INITIAL_GOAL_INDEX){ CatFixed(dynamic_mem, "Warning, you tried to run a goal-oriented command (4,5,6), but the user currently doesn't have any goals. Please avoid commands 4,5,6."); return;}
+
+	char mode[16] = "roots";
+	size_t mode_length = 5;
+	size_t max = SIZE_MAX;
+
+	decompose_command_4_params(doc, dynamic_mem, &mode, &mode_length, &max);
+
+	String data;
+	InitString(&data, 1024);
+	change_assert(data.p, "Failed to allocate memory for command 4 data.\n");
+
+	if (!strcmp(mode, "roots")){
+
+		size_t goals_len = GOAL_CONTAINER_COUNT - INITIAL_GOAL_INDEX;
+		Goal** goals = GetGoalsContainer(&goals_len);
+
+		CatFixed(&data, "Current user Root Goals: {");
+
+		for (size_t i = 0; i < goals_len; i++){
+			const Goal* g = goals[i];
+
+			const char* started_on;
+			const char* finished_on;
+
+			char started_buf[64];
+			char finished_buf[64];
+
+			if (g->start_date == 0) {
+				started_on = "not started";
+			} else {
+				snprintf(started_buf, sizeof(started_buf), "%s", ctime(&g->start_date));
+				started_buf[strcspn(started_buf, "\n")] = 0;
+				started_on = started_buf;
+			}
+
+			if (g->end_date == 0) {
+				finished_on = "not finished";
+			} else {
+				snprintf(finished_buf, sizeof(finished_buf), "%s", ctime(&g->end_date));
+				finished_buf[strcspn(finished_buf, "\n")] = 0;
+				finished_on = finished_buf;
+			}
+
+			CatTemplateString(
+					&data,
+					"{\"name\":\"%s\", "
+					"\"extra-info\":\"%s\", "
+					"\"finished_on\":\"%s\", "
+					"\"started_on\":\"%s\", "
+					"\"est-required-total-time-seconds\":%zu, "
+					"\"id\":\"%s\", "
+					"\"priority\":%zu}",
+					g->title.p,
+					g->extra_info.p,
+					finished_on,
+					started_on,
+					(size_t)g->required_time,
+					g->id,
+					g->priority
+					);
+
+			if (i + 1 < goals_len){
+				CatFixed(&data, ",");
+			}
+		}
+
+		CatFixed(&data, "}");
+	}
+	else if (!strcmp(mode, "due")){
+		CatFixed(&data, "Current user Due Goals:\n");
+		SerializeDueGoals(&data, max);
+	}
+	else if (!strcmp(mode, "history")){
+		CatFixed(&data, "Current user Goal History:\n");
+		SerializeUserGoalHistory(&data, max);
+	}
+	else {
+		CatFixed(&data, "Internal Error: Invalid command 4 mode.\n");
+	}
+
+	ds_emit(ds_id, "cmd-4", data.p, data.len);
+
+	CatString(dynamic_mem, data.p, data.len);
+	FreeString(&data);
+}
+
+static void CatGoalTree(String* data, const Goal* g, int_fast64_t depth){
+	CatTemplateString(
+			data,
+			"{\"name\":\"%s\", "
+			"\"extra-info\":\"%s\", "
+			"\"est-required-total-time-seconds\":%zu, "
+			"\"id\":\"%s\", "
+			"\"priority\":%zu, "
+			"\"children\":[",
+			g->title,
+			g->extra_info,
+			(size_t)g->required_time,
+			g->id,
+			g->priority
+			);
+
+	if (depth > 0 && g->subgoals_len > 0){
+		for (size_t i = 0; i < g->subgoals_len; i++){
+			const Goal* child = FindGoalFromIndex(g->subgoals[i]);
+
+			CatGoalTree(data, child, depth - 1);
+
+			if (i + 1 < g->subgoals_len){
+				CatFixed(data, ",");
+			}
+		}
+	}
+
+	CatFixed(data, "]");
+
+	if (g->subgoals_len == 0 && g->required_time > 3600){
+		CatFixed(data, ", \"decomposition_status\":\"not yet decomposed\"");
+	}
+
+	CatFixed(data, "}");
+}
+
+// AI generated
+void run5(json_value* doc, String *dynamic_mem, char* ds_id){
+	if (!doc || !dynamic_mem) return;
+	lazy_load();
+
+	if (GOAL_CONTAINER_COUNT == INITIAL_GOAL_INDEX){ CatFixed(dynamic_mem, "Warning, you tried to run a goal-oriented command (4,5,6), but the user currently doesn't have any goals. Please avoid commands 4,5,6."); return;}
+
+	goalIDType goal_id;
+	int_fast64_t depth = 0;
+
+	if (!decompose_command_5_params(doc, dynamic_mem, &goal_id, &depth)) return;
+
+	if (depth < 1) depth = 1;
+	if (depth > 5) depth = 5;
+
+	Goal* goal = FindGoalByID(goal_id);
+
+	if (!goal){
+		CatFixed(dynamic_mem, "Error: Goal not found.\n");
+		return;
+	}
+
+	String data;
+	InitString(&data, 1024);
+	change_assert(data.p, "Failed to allocate memory for data.\n");
+
+	CatFixed(&data, "Command Result: ");
+	CatGoalTree(&data, goal, depth);
+
+	ds_emit(ds_id, "cmd-5", data.p, data.len);
+
+	CatString(dynamic_mem, data.p, data.len);
+	FreeString(&data);
+}
+
+void run6(json_value* doc, String *dynamic_mem, char* ds_id){
+	if (!doc || !dynamic_mem) return;
+	lazy_load();
+
+	if (GOAL_CONTAINER_COUNT == INITIAL_GOAL_INDEX){ CatFixed(dynamic_mem, "Warning, you tried to run a goal-oriented command (4,5,6), but the user currently doesn't have any goals. Please avoid commands 4,5,6."); return;}
+
+	goalIDType goal_id;
+	char method[32];
+	size_t method_length = 0;
+
+	if (!decompose_command_6_params(doc, dynamic_mem, &goal_id, &method, &method_length)) return;
+
+	Goal* goal = FindGoalByID(goal_id);
+
+	if (!goal){
+		CatFixed(dynamic_mem, "Error: Goal not found.\n");
+		return;
+	}
+
+	String data;
+	InitString(&data, 1024);
+	cassert(data.p, "Failed to allocate memory for command 6 data.\n");
+
+	CatFixed(&data, "Command Result: ");
+
+	if (!strcmp(method, "history")){
+		SerializeUserGoalHistoryUpTo(goal, &data, 100);
+	}
+	else if (!strcmp(method, "siblings")){
+		SerializeSlibingGoals(goal, &data);
+	}
+	else if (!strcmp(method, "parents")){
+		SerializeGoalParentChain(goal, &data);
+	}
+	else if (!strcmp(method, "linked-siblings")){
+		SerializeGoalLinkedSlibingsChain(goal, &data, 1);
+	}
+	else if (!strcmp(method, "linked-siblings-hidden")){
+		SerializeGoalLinkedSlibingsChain(goal, &data, 0);
+	}
+	else if (!strcmp(method, "uncles")){
+		SerializeGoalParentSlibings(goal, &data, 1);
+	}
+	else if (!strcmp(method, "uncles-hidden")){
+		SerializeGoalParentSlibings(goal, &data, 0);
+	}
+	else {
+		CatFixed(&data, "Internal Error: Invalid command 6 method.\n");
+	}
+
+	ds_emit(ds_id, "cmd-6", data.p, data.len);
+
+	CatString(dynamic_mem, data.p, data.len);
+	FreeString(&data);
+}

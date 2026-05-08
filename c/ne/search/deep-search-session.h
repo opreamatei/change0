@@ -20,10 +20,14 @@
     "\"percA\"," \
     "\"percW\"," \
     "\"depth\"," \
-    "\"intent\"" \
+    "\"intent\"," \
+    "\"mode\"," \
+    "\"max\"," \
+    "\"goal_id\"," \
+    "\"method\"" \
   "]," \
   "\"properties\":{" \
-    "\"command\":{\"type\":[\"integer\",\"null\"],\"enum\":[1,2,3,null]}," \
+    "\"command\":{\"type\":[\"integer\",\"null\"],\"enum\":[1,2,3,4,5,6,null]}," \
     "\"finished\":{\"type\":[\"boolean\",\"null\"]}," \
     "\"conclusion\":{\"type\":[\"string\",\"null\"]}," \
     "\"percentage\":{\"type\":[\"integer\",\"null\"],\"minimum\":0,\"maximum\":100}," \
@@ -33,7 +37,11 @@
     "\"percA\":{\"type\":[\"integer\",\"null\"],\"minimum\":0,\"maximum\":100}," \
     "\"percW\":{\"type\":[\"integer\",\"null\"],\"minimum\":0,\"maximum\":100}," \
     "\"depth\":{\"type\":[\"integer\",\"null\"],\"minimum\":1,\"maximum\":5}," \
-    "\"intent\":{\"type\":[\"string\",\"null\"]}" \
+    "\"intent\":{\"type\":[\"string\",\"null\"]}," \
+    "\"mode\":{\"type\":[\"string\",\"null\"],\"enum\":[\"roots\",\"due\",\"history\",null]}," \
+    "\"max\":{\"type\":[\"integer\",\"null\"],\"minimum\":0}," \
+    "\"goal_id\":{\"type\":[\"string\",\"null\"]}," \
+    "\"method\":{\"type\":[\"string\",\"null\"],\"enum\":[\"siblings\",\"parents\",\"linked-siblings\",\"linked-siblings-hidden\",\"uncles\",\"uncles-hidden\",\"history\",null]}" \
   "}" \
 "}"
 

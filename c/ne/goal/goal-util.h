@@ -14,6 +14,10 @@
 
 typedef _Bool (*goal_emit_like_func)(const char* id, const char *type, const char *buffer, size_t buffer_len);
 
+typedef char goalIDType[GOAL_ID_SIZE + 1];
+
+typedef void (start_ds_session_like_func)(Task *task, char* id, String* out);
+
 typedef struct GoalType {
 	String title;
 	String extra_info;
@@ -35,7 +39,7 @@ typedef struct GoalType {
 
 	size_t priority;
 
-	char id[GOAL_ID_SIZE + 1];
+	goalIDType id;
 } Goal;
 
 enum GOAL_STATUS {
@@ -46,12 +50,12 @@ enum GOAL_STATUS {
 extern Goal *GOAL_CONTAINER[1024];
 extern size_t GOAL_CONTAINER_COUNT;
 
-static inline Goal *FindGoal(size_t id)
+static inline Goal *FindGoalFromIndex(size_t index)
 {
-    if (id == 0 || id >= GOAL_CONTAINER_COUNT)
+    if (index == 0 || index >= GOAL_CONTAINER_COUNT)
         return NULL;
 
-    return GOAL_CONTAINER[id];
+    return GOAL_CONTAINER[index];
 }
 
 static inline void link_goals(Goal* a, Goal* b){
@@ -77,8 +81,13 @@ Goal *ExternalFindGoal(size_t id);
 time_t CalcGoalRequiredTime(Goal *g);
 enum GOAL_STATUS ValidateGoal(Goal *g, time_t now);
 void CreateGoalDSId(char* name, char* deep_search_id);
-void PersonalizeGoal(String* input1, String *input2, String* out, char* goalId);
+void PersonalizeGoal(String* input1, String *input2, String* out, char* goalId, start_ds_session_like_func start_ds_session);
 
+Goal **GetGoalsContainer(size_t *len);
 Goal *CalcGoalRoot(Goal *g);
+Goal *FindGoalByID(goalIDType id);
+
+time_t StartGoal(goalIDType goalID);
+time_t EndGoal(goalIDType goalID);
 
 #endif

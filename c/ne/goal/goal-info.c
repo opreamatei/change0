@@ -43,14 +43,48 @@ char* SerializeGoal(Goal* g, size_t *length, char* relation, _Bool showExtraInfo
 
 	return main_buffer;
 }
+
+void SerializeUserGoalHistory(String *buffer, size_t max){
+
+	size_t i = 0;
+
+	for (size_t currentIndex = GOAL_CONTAINER_COUNT;
+			currentIndex-- > INITIAL_GOAL_INDEX && i < max;){
+
+		Goal *g = FindGoalFromIndex(currentIndex);
+
+		if (!g) continue;
+
+		if (g->start_date != 0){
+
+			size_t register_len_size = 0;
+
+			char* info = SerializeGoal(
+					g,
+					&register_len_size,
+					"example-goal",
+					1
+					);
+
+			cassert(info, "Something failed when providing goal info.\n");
+
+			CatString(buffer, info, register_len_size);
+
+			free(info);
+
+			i++;
+		}
+	}
+}
  
 void SerializeUserGoalHistoryUpTo(Goal* g, String *buffer, int max){
 
 	size_t currentIndex = g->globalIndex - 1;
 	int i = 0;
 
-	while (currentIndex >= INITIAL_GOAL_INDEX && i < max){
-		Goal *g = FindGoal(currentIndex);
+	for (size_t currentIndex = g->globalIndex;
+			currentIndex-- > INITIAL_GOAL_INDEX && i < max;){
+		Goal *g = FindGoalFromIndex(currentIndex);
 
 		if (g->start_date != 0){
 			size_t register_len_size = 0;
@@ -71,10 +105,10 @@ void SerializeSlibingGoals(Goal *g, String *buffer){
 		return;
 	}
 
-	Goal* parent = FindGoal(g->parent);
+	Goal* parent = FindGoalFromIndex(g->parent);
 
 	for (size_t i = 0; i < parent->subgoals_len; i++){
-		Goal *slibing = FindGoal(parent->subgoals[i]);
+		Goal *slibing = FindGoalFromIndex(parent->subgoals[i]);
 
 		size_t len = 0;
 		char* info = SerializeGoal(slibing, &len, "brother-goal", 1);
@@ -87,7 +121,7 @@ void SerializeSlibingGoals(Goal *g, String *buffer){
 void SerializeGoalParentChain(Goal *g, String *buffer){
 	
 	while (g->parent != 0){
-		g = FindGoal(g->parent);
+		g = FindGoalFromIndex(g->parent);
 
 		size_t len;
 		char* info = SerializeGoal(g, &len, "parent-goal", 1);
@@ -101,8 +135,10 @@ void SerializeGoalParentChain(Goal *g, String *buffer){
 void SerializeGoalLinkedSlibingsChain(Goal *g, String *buffer, _Bool displayInfo){
 	
 	CatString(buffer, FSTRING_SIZE_PARAMS("Follow-up goals: \n"));
+	Goal* original = g;
+
 	while (g->next != 0){
-		g = FindGoal(g->next);
+		g = FindGoalFromIndex(g->next);
 
 		size_t len;
 		char* info = SerializeGoal(g, &len, "follow-up-goal", displayInfo);
@@ -112,9 +148,10 @@ void SerializeGoalLinkedSlibingsChain(Goal *g, String *buffer, _Bool displayInfo
 		free(info);
 	}
 
+	g = original;
 	CatString(buffer, FSTRING_SIZE_PARAMS("\n\nPrevious goals: \n"));
 	while (g->prev != 0){
-		g = FindGoal(g->prev);
+		g = FindGoalFromIndex(g->prev);
 
 		size_t len;
 		char* info = SerializeGoal(g, &len, "prev-goal", displayInfo);
@@ -130,7 +167,7 @@ void SerializeGoalParentSlibings(Goal *g, String *buffer, _Bool displayInfo){
 		CatString(buffer, FSTRING_SIZE_PARAMS("Root goal has no uncle because it's a root goal."));
 		return;
 	}
-	Goal* parent = FindGoal(g->parent);
+	Goal* parent = FindGoalFromIndex(g->parent);
 	if (parent == 0){
 		CatString(buffer, FSTRING_SIZE_PARAMS("This is a root goal, it doesn't have any uncles."));
 		return;
@@ -141,3 +178,37 @@ void SerializeGoalParentSlibings(Goal *g, String *buffer, _Bool displayInfo){
 	SerializeGoalLinkedSlibingsChain(parent, buffer, displayInfo);
 }
 
+// AI Generated
+void SerializeDueGoals(String *buffer, size_t max){
+
+	size_t emitted = 0;
+
+	for (size_t currentIndex = GOAL_CONTAINER_COUNT;
+			currentIndex-- > INITIAL_GOAL_INDEX && emitted < max;){
+
+		Goal *g = FindGoalFromIndex(currentIndex);
+
+		if (!g) continue;
+
+		// due / unfinished goals only
+		if (g->end_date == 0){
+
+			size_t len = 0;
+
+			char* info = SerializeGoal(
+					g,
+					&len,
+					"due-goal",
+					1
+					);
+
+			cassert(info, "Something failed when serializing due goal.\n");
+
+			CatString(buffer, info, len);
+
+			free(info);
+
+			emitted++;
+		}
+	}
+}

@@ -60,7 +60,7 @@
 "}"
 
 void AICallExtractionGoalSchema(String *input, String *out);
-void ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t *estimated_time);
+void ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t *estimated_time, _Bool forceEstTime);
 void SetGoalShortenPrompt(Goal* g, String* prompt, time_t now);
 void SetGoalDecompositionPrompt(Goal* g, String* prompt, time_t now);
 String *CallGoalDecompositionAI(String *prompt);
