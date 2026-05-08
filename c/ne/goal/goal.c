@@ -157,6 +157,9 @@ Goal* CreateUserGoal(String *input1, String *input2, goalIDType goalId)
 	FreeString(&extra_info);
 	FreeString(&deep_search_result);
 
+	printf("Perfoming the partical decompsition...\n");
+	ComputePartialDecomposition(created);
+
 	return created;
 }
 
@@ -242,3 +245,22 @@ _Bool DecomposeGoal(Goal *g){
 	return 1;
 }
 
+// goes on the first layer deep untill the goals are less than 1 hour
+Goal* ComputePartialDecomposition(Goal *goal){
+	Goal* g = goal;
+	while (g){
+		if (g->required_time < 60 * 60) break;
+
+		_Bool decomposition_result = DecomposeGoal(g);
+		change_assert(decomposition_result, "Couldn't decompose goal : [%s]\n\n", g->title.p);
+
+		// 20 min cap
+		if (g->required_time < 60 * 20) break;
+		size_t nextGoalIndex = goal->subgoals[0]; // pick first one
+
+		g = FindGoalFromIndex(nextGoalIndex);
+		change_assert(g, "Coudln't find first born after decomposition\n\n");
+	}
+
+	return g;
+}
