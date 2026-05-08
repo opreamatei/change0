@@ -1,6 +1,5 @@
 #include "goal-util.h"
 #include "globals.h"
-#include "deep-search-session.h"
 #include <string.h>
 
 Goal *GOAL_CONTAINER[1024];
@@ -36,7 +35,7 @@ time_t CalcGoalRequiredTime(Goal *g){
 	time_t sum = 0;
 
 	for (size_t i = 0; i < g->subgoals_len; i++){
-		Goal *subgoal = FindGoal(g->subgoals[i]);
+		Goal *subgoal = FindGoalFromIndex(g->subgoals[i]);
 		
 		sum += CalcGoalRequiredTime(subgoal);		
 	}
@@ -55,7 +54,7 @@ void GoalSystemLazyLoad(goal_emit_like_func *goal_emit){
 }
 
 Goal *ExternalFindGoal(size_t id){
-	return FindGoal(id);
+	return FindGoalFromIndex(id);
 }
 
 void CreateGoalDSId(char* name, char* deep_search_id){
@@ -114,7 +113,7 @@ Goal *CreateGoal(char goalId[], String *input_goal, String *input_extrainfo, siz
 
 Goal *CalcGoalRoot(Goal *g){
 	while (g->parent != 0){
-		g = FindGoal(g->parent);
+		g = FindGoalFromIndex(g->parent);
 	}
 	return g;
 }
@@ -124,7 +123,7 @@ Goal **GetGoalsContainer(size_t *len){
 	return &GOAL_CONTAINER[1];
 }
 
-void PersonalizeGoal(String* input1, String *input2, String* out, char* goalId){
+void PersonalizeGoal(String* input1, String *input2, String* out, char* goalId, start_ds_session_like_func start_ds_session){
 	InitString(out, 2048);
 
 	// Init params
@@ -137,4 +136,39 @@ void PersonalizeGoal(String* input1, String *input2, String* out, char* goalId){
 	// customize goal
 	start_ds_session(&task, search_id, out);
 
+}
+
+Goal *FindGoalByID(goalIDType id){
+	// TODO : use a goal_id
+	size_t len = GOAL_CONTAINER_COUNT - INITIAL_GOAL_INDEX;
+	Goal** goals = GetGoalsContainer(&len);
+	
+	for (size_t i = 0; i < len; i++){
+		Goal* goal = goals[i];
+		if (strcmp(goal->id, id) == 0)
+			return goal;
+	}
+		return NULL;
+}
+
+time_t StartGoal(goalIDType goalID){
+	Goal* g = FindGoalByID(goalID);
+	change_assert(g, "Goal not found, target goal id %s, serialized goals.", goalID);
+
+	time_t now = time(NULL);
+
+	g->start_date = now;
+	
+	return now;
+}
+
+time_t EndGoal(goalIDType goalID){
+	Goal* g = FindGoalByID(goalID);
+	change_assert(g, "Goal not found, target goal id %s, serialized goals.", goalID);
+
+	time_t now = time(NULL);
+
+	g->end_date = now;
+	
+	return now;
 }

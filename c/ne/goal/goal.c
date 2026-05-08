@@ -79,7 +79,7 @@ void UpdateGoal(Goal *g, time_t now)
 		return;
 
 	for (size_t i = 0; i < g->subgoals_len; i++)
-		UpdateGoal(FindGoal(g->subgoals[i]), now);
+		UpdateGoal(FindGoalFromIndex(g->subgoals[i]), now);
 
 	enum GOAL_STATUS status = ValidateGoal(g, now);
 
@@ -96,7 +96,7 @@ void FreeGoal(Goal *g)
 	if (!g->title.p)
 		return;
 	for (size_t i = 0; i < g->subgoals_len; i++)
-		FreeGoal(FindGoal(g->subgoals[i]));
+		FreeGoal(FindGoalFromIndex(g->subgoals[i]));
 
 	if (g->title.p)
 		FreeString(&g->title);
@@ -116,7 +116,7 @@ void FreeGoals()
 {
 	for (size_t i = INITIAL_GOAL_INDEX; i < GOAL_CONTAINER_COUNT; i++)
 	{
-		Goal* g = FindGoal(i);
+		Goal* g = FindGoalFromIndex(i);
 
 		if (!g || g->parent != 0) continue;
 
@@ -128,14 +128,14 @@ void FreeGoals()
 }
 
 // those are mapped to input1 -> title input2 -> extrainfo
-Goal* CreateUserGoal(String *input1, String *input2, char goalId[])
+Goal* CreateUserGoal(String *input1, String *input2, goalIDType goalId)
 {
 	GoalSystemLazyLoad(&goal_emit);
 
 	String title, extra_info, deep_search_result;
 	time_t estimated_time = 0;
 
-	PersonalizeGoal(input1, input2, &deep_search_result, goalId);
+	PersonalizeGoal(input1, input2, &deep_search_result, goalId, start_ds_session);
 	goal_emit(goalId, "deep-search-final-recomandation", deep_search_result.p, deep_search_result.len);
 	ExtractGoalFromText(&deep_search_result, &title, &extra_info, &estimated_time, 1);
 
@@ -241,3 +241,4 @@ _Bool DecomposeGoal(Goal *g){
 
 	return 1;
 }
+

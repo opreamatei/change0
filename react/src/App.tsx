@@ -1,107 +1,100 @@
 import { useEffect, useMemo, useState } from 'react'
 import GoalViewer from './section/goal-view'
 import {
-  createMockGoalListFromTemplate,
-  findGoalByGlobalIndex,
-  type Goal,
+        createMockGoalListFromTemplate,
+        findGoalById,
+        getGoalChildren,
+        getRootGoals,
+        type Goal,
 } from './goal'
-
-type RouteName = 'home' | 'goal'
-
-function getLocationState() {
-  const route: RouteName = window.location.pathname === '/goal' ? 'goal' : 'home'
-  if (route !== 'goal') {
-    return { route, goalIndex: null as number | null }
-  }
-
-  const query = new URLSearchParams(window.location.search)
-  const goalIndex = Number(query.get('goal'))
-
-  return {
-    route,
-    goalIndex: Number.isFinite(goalIndex) && goalIndex > 0 ? goalIndex : null,
-  }
-}
+import { buildGoalPath, getLocationState, ROOT_GOAL_ID, type RouteName } from './config/utils';
 
 function App() {
-  const initialLocation = getLocationState()
-  const mockGoals = useMemo(() => createMockGoalListFromTemplate(), [])
-  const [route, setRoute] = useState<RouteName>(initialLocation.route)
-  const [goalIndex, setGoalIndex] = useState<number | null>(initialLocation.goalIndex)
-  const [message, setMessage] = useState(
-    `Using mock goals only. Loaded ${mockGoals.length} items locally.`,
-  )
+        const initialLocation = getLocationState()
+        const mockGoals = useMemo(() => createMockGoalListFromTemplate(), [])
+        const [route, setRoute] = useState<RouteName>(initialLocation.route)
+        const [goalId, setGoalId] = useState<string | null>(initialLocation.goalId)
+        const [message, setMessage] = useState(
+                `Using mock goals only. Loaded ${mockGoals.length} items locally.`,
+        )
 
-  const selectedGoal = useMemo<Goal | null>(() => {
-    const fallbackIndex = mockGoals[0]?.globalIndex ?? null
-    const targetIndex = goalIndex ?? fallbackIndex
+        const selectedParentGoal = useMemo<Goal | null>(() => {
+                if (!goalId || goalId === ROOT_GOAL_ID) {
+                        return null
+                }
 
-    if (!targetIndex) {
-      return null
-    }
+                return findGoalById(mockGoals, goalId)
+        }, [goalId, mockGoals])
 
-    return findGoalByGlobalIndex(mockGoals, targetIndex) ?? mockGoals[0] ?? null
-  }, [goalIndex, mockGoals])
+        const visibleGoals = useMemo(() => {
+                if (!goalId || goalId === ROOT_GOAL_ID) {
+                        return getRootGoals(mockGoals)
+                }
 
-  useEffect(() => {
-    const onPopState = () => {
-      const locationState = getLocationState()
-      setRoute(locationState.route)
-      setGoalIndex(locationState.goalIndex)
-    }
+                if (!selectedParentGoal) {
+                        return []
+                }
 
-    window.addEventListener('popstate', onPopState)
-    return () => window.removeEventListener('popstate', onPopState)
-  }, [])
+                return getGoalChildren(mockGoals, selectedParentGoal.globalIndex)
+        }, [goalId, mockGoals, selectedParentGoal])
 
-  useEffect(() => {
-    if (route !== 'goal') {
-      return
-    }
+        useEffect(() => {
+                const onPopState = () => {
+                        const locationState = getLocationState()
+                        setRoute(locationState.route)
+                        setGoalId(locationState.goalId)
+                }
 
-    if (selectedGoal) {
-      setGoalIndex((current) => current ?? selectedGoal.globalIndex)
-      return
-    }
+                window.addEventListener('popstate', onPopState)
+                return () => window.removeEventListener('popstate', onPopState)
+        }, [])
 
-    setMessage('No mock goal available.')
-    window.history.replaceState({}, '', '/')
-    setRoute('home')
-    setGoalIndex(null)
-  }, [route, selectedGoal])
+        function viewRootGoal() {
+                if (mockGoals.length === 0) {
+                        setMessage('No mock goals are available.')
+                        return
+                }
 
-  function viewFirstGoal() {
-    if (!selectedGoal) {
-      setMessage('No mock goals are available.')
-      return
-    }
+                setMessage('Viewing root mock goals.')
+                setGoalId(ROOT_GOAL_ID)
+                window.history.pushState({}, '', buildGoalPath(ROOT_GOAL_ID))
+                setRoute('goal')
+        }
 
-    setMessage(`Viewing mock goal: ${selectedGoal.title}`)
-    setGoalIndex(selectedGoal.globalIndex)
-    window.history.pushState({}, '', `/goal?goal=${selectedGoal.globalIndex}`)
-    setRoute('goal')
-  }
+        if (route === 'goal') {
+                if (mockGoals.length === 0) {
+                        return <p className="goal-connect-message">No mock goal available.</p>
+                }
 
-  if (route === 'goal') {
-    if (!selectedGoal) {
-      return <p className="goal-connect-message">No mock goal available.</p>
-    }
+                if (goalId !== ROOT_GOAL_ID && !selectedParentGoal) {
+                        return (
+                                <p className="goal-connect-message">
+                                        Mock goal "{goalId}" was not found.
+                                </p>
+                        )
+                }
 
-    return <GoalViewer goal={selectedGoal} />
-  }
+                return (
+                        <GoalViewer
+                                parentGoal={selectedParentGoal}
+                                children_goals={visibleGoals}
+                                global_goals={mockGoals}
+                        />
+                )
+        }
 
-  return (
-    <>
-      <button
-        type="button"
-        className="goal-view-button"
-        onClick={viewFirstGoal}
-      >
-        View mock goal
-      </button>
-      <p className="goal-connect-message">{message}</p>
-    </>
-  )
+        return (
+                <>
+                        <button
+                                type="button"
+                                className="goal-view-button"
+                                onClick={viewRootGoal}
+                        >
+                                View root goals
+                        </button>
+                        <p className="goal-connect-message">{message}</p>
+                </>
+        )
 }
 
 export default App

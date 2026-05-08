@@ -223,3 +223,144 @@ void parse_judge_result(json_value* doc, String *reason, _Bool *received_pass, _
 		}
 	}
 }
+
+_Bool decompose_command_4_params(
+		json_value *doc, String *ErrorBuff,
+		char (*mode)[16], size_t *mode_length,
+		size_t *max
+		){
+	*mode_length = 5;
+	memcpy(*mode, "roots", 5);
+	(*mode)[5] = '\0';
+
+	*max = SIZE_MAX;
+
+	for (size_t i = 0; i < doc->u.object.length; i++){
+		json_object_entry entry = doc->u.object.values[i];
+
+		if (!strcmp(entry.name, "mode") && entry.value->type == json_string){
+			if (
+					strcmp(entry.value->u.string.ptr, "roots") != 0 &&
+					strcmp(entry.value->u.string.ptr, "due") != 0 &&
+					strcmp(entry.value->u.string.ptr, "history") != 0
+			   ){
+				CatFixed(ErrorBuff,
+						"Error : \"mode\" parameter must be one of: "
+						"\"roots\", \"due\", or \"history\".\n");
+				return 0;
+			}
+
+			*mode_length = MIN(entry.value->u.string.length, 15);
+			memcpy(*mode, entry.value->u.string.ptr, *mode_length);
+			(*mode)[*mode_length] = '\0';
+		}
+
+		if (!strcmp(entry.name, "max") && entry.value->type == json_integer){
+			if (entry.value->u.integer < 0){
+				CatFixed(ErrorBuff, "Error : \"max\" parameter must be >= 0.\n");
+				return 0;
+			}
+
+			*max = (size_t)entry.value->u.integer;
+		}
+	}
+
+	return 1;
+}
+
+_Bool decompose_command_5_params(
+		json_value *doc, String *ErrorBuff,
+		goalIDType *goal_id,
+		int_fast64_t *depth
+		){
+	*depth = -1;
+	*goal_id[0] = '\0';
+
+	for (size_t i = 0; i < doc->u.object.length; i++){
+		json_object_entry entry = doc->u.object.values[i];
+
+		if (!strcmp(entry.name, "goal_id") && entry.value->type == json_string){
+			size_t goal_id_len = entry.value->u.string.length;
+			memcpy(*goal_id, entry.value->u.string.ptr, goal_id_len);
+			(*goal_id)[goal_id_len] = '\0';
+		}
+
+		if (!strcmp(entry.name, "depth") && entry.value->type == json_integer){
+			*depth = entry.value->u.integer;
+		}
+	}
+
+	if ((*goal_id)[0] == '\0'){
+		CatFixed(ErrorBuff, "Error : You must pass a \"goal_id\" parameter in command 5.\n");
+		return 0;
+	}
+
+	if (*depth == -1){
+		CatFixed(ErrorBuff, "Error : You must pass a \"depth\" parameter in command 5. Valid range: 1-5.\n");
+		return 0;
+	}
+
+	*depth = CLAMP(1, 5, *depth);
+
+	return 1;
+}
+
+// AI Generated
+_Bool decompose_command_6_params(
+		json_value *doc, String *ErrorBuff,
+		goalIDType *goal_id,
+		char (*method)[32], size_t *method_length
+		){
+	*method_length = 0;
+	(*goal_id)[0] = '\0';
+
+	for (size_t i = 0; i < doc->u.object.length; i++){
+		json_object_entry entry = doc->u.object.values[i];
+
+		if (!strcmp(entry.name, "goal_id") && entry.value->type == json_string){
+			size_t goal_id_len = MIN(entry.value->u.string.length, sizeof(*goal_id) - 1);
+
+			memcpy(*goal_id, entry.value->u.string.ptr, goal_id_len);
+			(*goal_id)[goal_id_len] = '\0';
+		}
+
+		if (!strcmp(entry.name, "method") && entry.value->type == json_string){
+			*method_length = MIN(entry.value->u.string.length, 31);
+
+			if (
+					strcmp(entry.value->u.string.ptr, "history") != 0 &&
+					strcmp(entry.value->u.string.ptr, "siblings") != 0 &&
+					strcmp(entry.value->u.string.ptr, "parents") != 0 &&
+					strcmp(entry.value->u.string.ptr, "linked-siblings") != 0 &&
+					strcmp(entry.value->u.string.ptr, "linked-siblings-hidden") != 0 &&
+					strcmp(entry.value->u.string.ptr, "uncles") != 0 &&
+					strcmp(entry.value->u.string.ptr, "uncles-hidden") != 0
+			   ){
+				CatFixed(ErrorBuff,
+						"Error : \"method\" parameter must be one of: "
+						"\"history\", \"siblings\", \"parents\", "
+						"\"linked-siblings\", \"linked-siblings-hidden\", "
+						"\"uncles\", or \"uncles-hidden\".\n");
+				return 0;
+			}
+
+			memcpy(*method, entry.value->u.string.ptr, *method_length);
+			(*method)[*method_length] = '\0';
+		}
+	}
+
+	if ((*goal_id)[0] == '\0'){
+		CatFixed(ErrorBuff, "Error : You must pass a \"goal_id\" parameter in command 6.\n");
+		return 0;
+	}
+
+	if (*method_length == 0){
+		CatFixed(ErrorBuff,
+				"Error : You must pass a \"method\" parameter in command 6. "
+				"Available methods: history, siblings, parents, linked-siblings, "
+				"linked-siblings-hidden, uncles, uncles-hidden.\n");
+		return 0;
+	}
+
+	return 1;
+}

@@ -12,9 +12,11 @@
 char* SerializeGoal(Goal* g, size_t *length, char* relation, _Bool showExtraInfo);
 
 void SerializeUserGoalHistoryUpTo(Goal* g, String *buffer, int max);
+void SerializeUserGoalHistory(String *buffer, size_t max);
 void SerializeSlibingGoals(Goal *g, String *buffer);
 void SerializeGoalParentChain(Goal *g, String *buffer);
 void SerializeGoalLinkedSlibingsChain(Goal *g, String *buffer, _Bool displayInfo);
 void SerializeGoalParentSlibings(Goal *g, String *buffer, _Bool displayInfo);
+void SerializeDueGoals(String *buffer, size_t max);
 
 #endif

@@ -144,6 +144,7 @@ target_link_libraries(deepsearchexecute PUBLIC
 add_library(comparsing SHARED ${CMAKE_SOURCE_DIR}/c/ne/search/command-parsing.c)
 target_include_directories(comparsing PUBLIC
     ${CMAKE_SOURCE_DIR}/c/ne/search
+    ${CMAKE_SOURCE_DIR}/c/ne/goal
     ${CMAKE_SOURCE_DIR}/c/ne
     ${CMAKE_SOURCE_DIR}/c
 )
@@ -151,18 +152,21 @@ target_link_libraries(comparsing PUBLIC
     util
     jsonp
     globals
+    goal-util
 )
 
 add_library(aiaction SHARED ${CMAKE_SOURCE_DIR}/c/ne/search/ai-action.c)
 target_include_directories(aiaction PUBLIC
     ${CMAKE_SOURCE_DIR}/c
     ${CMAKE_SOURCE_DIR}/c/ne/search
+    ${CMAKE_SOURCE_DIR}/c/ne/goal
     ${CMAKE_SOURCE_DIR}/c/ne
 )
 target_link_libraries(aiaction PUBLIC
     jsonp
     util
     search
+    goal-info
     comparsing
     globals
 )
@@ -235,7 +239,7 @@ target_include_directories(goal-util
 	${CMAKE_SOURCE_DIR}/c/ne/goal
 	${CMAKE_SOURCE_DIR}/c/ne/search
 )
-target_link_libraries(goal-util PUBLIC deepsearchsession util globals jsonp)
+target_link_libraries(goal-util PUBLIC util globals jsonp)
 
 add_library(goal-info SHARED ${CMAKE_SOURCE_DIR}/c/ne/goal/goal-info.c)
 target_include_directories(goal-info 

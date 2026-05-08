@@ -676,6 +676,7 @@ static void append_goal_json(String* out, Goal* g) {
 static char* serialize_goals_container_json(void) {
 	size_t goals_len = 0;
 	size_t active_count = 0;
+	
 	Goal** goals = GetGoalsContainer(&goals_len);
 
 	String out;

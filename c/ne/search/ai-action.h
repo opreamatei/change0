@@ -7,6 +7,8 @@
 void run1(json_value* doc, String *dynamic_mem, char* ds_id);
 void run2(json_value* doc, String *dynamic_mem, char* ds_id);
 void run3(json_value* doc, String *dynamic_mem, char* ds_id);
-
+void run4(json_value* doc, String *dynamic_mem, char* ds_id);
+void run5(json_value* doc, String *dynamic_mem, char* ds_id);
+void run6(json_value* doc, String *dynamic_mem, char* ds_id);
 
 #endif
