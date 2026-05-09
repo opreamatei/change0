@@ -71,7 +71,7 @@ _Bool ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t
 			CatString(title, candidate.value->u.string.ptr, candidate.value->u.string.length);
 		}else if (forceEstTime && strcmp(candidate.name, "estimated_time") == 0){
 			//change_assert(candidate.value->type == json_integer, "JSON \"estimated_time\" is not an integer. \n\n[%s]\n", c_str(text));
-			if (candidate.value->type == json_integer)
+			if (candidate.value->type != json_integer)
 				return 0;
 			
 			*estimated_time = candidate.value->u.integer;

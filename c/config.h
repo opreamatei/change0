@@ -45,7 +45,7 @@
 #define NCOUNT_PENALTY_TO_NODE_WEIGHT 0.2 // the more aggresive, the more the weights will depend on stronger connections rather than many connections. I like to keep it low
 #define SUPPORT_MERIT_TO_NODE_WEIGHT 0.6 // how much the support (sum of neighbour connections in a nutshell) matter a node's merit (see merit below in code)
 #define NODE_OLD_WEIGHT_RELEVANCE 0.95 // 95% of the new weight is the old weight's value, 5% is the target weight value. If you set it lower, weights will have more volatile increases
-#define ACT_HALFTIME 100.0 // In how many seconds a node's activation reaches half it's initial value
+#define ACT_HALFTIME 3600.0 // In how many seconds a node's activation reaches half it's initial value
 
 /*
  *

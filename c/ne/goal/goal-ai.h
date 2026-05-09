@@ -14,7 +14,7 @@
       "\"type\":\"string\"" \
     "}," \
     "\"extrainfo\":{" \
-      "\"type\":[\"string\",\"null\"]" \
+      "\"type\":\"string\"" \
     "}," \
     "\"estimated_time\":{" \
       "\"type\":[\"integer\",\"null\"]," \
