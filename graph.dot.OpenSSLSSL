@@ -1,8 +1,0 @@
-digraph "OpenSSL::SSL" {
-node [
-  fontsize = "12"
-];
-    "node16" [ label = "OpenSSL::SSL", shape = septagon ];
-    "node15" [ label = "OpenSSL::Crypto", shape = septagon ];
-    "node16" -> "node15" [ style = dashed ] // OpenSSL::SSL -> OpenSSL::Crypto
-}

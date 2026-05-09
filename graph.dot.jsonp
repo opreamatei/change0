@@ -1,8 +1,0 @@
-digraph "jsonp" {
-node [
-  fontsize = "12"
-];
-    "node4" [ label = "jsonp", shape = doubleoctagon ];
-    "node5" [ label = "m", shape = septagon ];
-    "node4" -> "node5" [ style = dotted ] // jsonp -> m
-}
