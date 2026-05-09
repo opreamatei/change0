@@ -174,3 +174,26 @@ time_t EndGoal(goalIDType goalID){
 
 	return now;
 }
+
+void SerializeAllGoals(String *buffer){
+
+	size_t goals_amm = 0;
+	Goal** container = GetGoalsContainer(&goals_amm);
+
+	if (goals_amm == 0){
+		CatFixed(buffer, "[]");
+		return;
+	};
+
+	ResizeString(buffer, goals_amm * 1024 + 2048);
+
+	CatFixed(buffer, "[");
+	for (size_t i = 0; i < goals_amm; i++){
+		Goal *g = container[i];
+		CatTemplateString(buffer,
+				"%c",
+
+				i != goals_amm - 1 ? ',' : ' ');
+	}
+	CatFixed(buffer, "]");
+}

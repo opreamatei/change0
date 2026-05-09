@@ -19,7 +19,7 @@ void AICallExtractionGoalSchema(String *input, String *out)
     InitString(&req.schema, sizeof(OPENAI_GOAL_EXTRACT_SCHEMA_JSON) + 1);
     CatString(&req.schema, FSTRING_SIZE_PARAMS(OPENAI_GOAL_EXTRACT_SCHEMA_JSON));
 
-    req.model = AI_OPENAI_MODEL_GPT_5_4_NANO;
+    req.model = AI_OPENAI_MODEL_GPT_5_4_MINI;
     req.schema_name = "goal_extraction";
 
 
@@ -249,5 +249,4 @@ String *CallGoalDecompositionAI(String *prompt)
 
 	return result;
 }
-
 

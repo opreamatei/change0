@@ -298,6 +298,10 @@
 "  must be true" \
 "- conclusion:" \
 "  comprehensive investigation summary" \
+"Terminal action contract:" \
+"- If finished is true, conclusion must be a non-empty string." \
+"- Never return finished=true with conclusion=null or an empty conclusion." \
+"- For non-terminal actions, conclusion must be null." \
 "The conclusion MUST include:" \
 "- main findings" \
 "- relevant contexts" \
@@ -528,18 +532,31 @@
 "Estimate the total elapsed time required for the user to meaningfully reach this goal. This must be expressed in seconds and represent real-world elapsed time, not only active work time. " \
 "Be pragmatic and avoid idealized assumptions. " \
 \
+"Your final answer is consumed by a strict downstream extractor. " \
+"Do not output an essay, investigation report headings, bullet lists, or any sections other than the 3 fields below. " \
+"Do not narrate the investigation process. Produce only the adapted goal payload. " \
+"Put all reasoning, evidence, constraints, and justification inside EXTRA_INFO only, but keep EXTRA_INFO compact and goal-facing rather than investigative. " \
+"EXTRA_INFO must describe the concrete project, intended outcome, why it fits the user, and the main scope limits. " \
+"Do not include sections like Main findings, Relevant contexts, graph structures, activation analysis, weight analysis, or stopping justification. Rewrite any such material into short practical context for the goal itself. " \
+"TITLE must be short, concrete, action-oriented, and contain only the adapted goal itself, not findings or explanations. " \
+"TITLE must name the exact project or tool type when the evidence supports it. Avoid generic titles like coding project, app, tool, or game-related application by themselves. " \
+"If the evidence supports multiple variants, choose the single most plausible concrete variant and name it directly in TITLE. " \
+"ESTIMATED_TIME must be a plain integer in seconds with no words, punctuation, or explanation. " \
+"ESTIMATED_TIME is mandatory and must never be omitted or replaced with text like n/a, unknown, or approximate. " \
+"For a one-week project, provide a realistic one-week scale estimate in seconds rather than 0. " \
 "Structure your final conclusion in clearly separated sections so another system can extract them reliably: " \
 \
 "TITLE: " \
-"<concise, specific adapted goal title> " \
+"<concise, specific adapted goal title only; name the exact project> " \
 \
 "EXTRA_INFO: " \
-"<why this goal fits the user, why it is useful for the user, including supporting evidence and constraints, any other kind of info, here the server will also automatically include future edits of the goal> " \
+"<compact practical context: exact project shape, intended outcome, why it fits the user, and major scope limits> " \
 \
 "ESTIMATED_TIME: " \
 "<integer number of seconds> " \
 \
-"Do not mix sections. Keep each section explicit, clean, and unambiguous."
+"Do not mix sections. Keep each section explicit, clean, and unambiguous. " \
+"Do not place labels such as Main findings, Relevant contexts, Strongest graph structures, or similar text inside TITLE."
 
 // This model is responsible for extracting what the above model produces, I don't think it need to be modified.
 #define GOAL_JSON_EXTRACT_PROMPT \
@@ -557,9 +574,18 @@
 "If a field is missing, set it to an empty string (\"\") for strings, or 0 for estimated_time."\
 "If multiple candidates exist, use the first occurrence only."\
 "If the message contains explicit TITLE, EXTRA_INFO, and ESTIMATED_TIME sections, extract them directly with minimal normalization (do not paraphrase unless necessary for formatting)."\
+"Prefer section-based extraction over summarization."\
+"Never place the whole source message or a long analytical report into title."\
+"If explicit sections are missing, title must still stay short and goal-like; move explanatory or investigative content into extrainfo instead."\
+"Prefer a specific project title over a generic category title."\
+"If title is generic but extrainfo names a concrete project or tool type, use the concrete project or tool type as title and keep the rest in extrainfo."\
+"If the message contains headings such as Main findings, Relevant contexts, Strongest graph structures, Strongest behavioral goal evidence, How activation affected interpretation, How weight affected interpretation, Goals support/contradict graph evidence, or Stopping is justified, treat that material as extrainfo, not title."\
+"If extrainfo contains long investigation-style analysis, compress it into practical goal context rather than preserving the full investigation wording."\
+"Title must contain only the adapted goal itself, not evidence, reasons, or analysis."\
 "Do not invent or infer missing information beyond what is explicitly supported."\
 "estimated_time must be a JSON integer in seconds."\
-"If time is not explicitly numeric, set estimated_time to 0."\
+"If the message gives an explicit timeframe such as one week, seven days, weekend, two weeks, or one month, convert it into the corresponding integer number of seconds."\
+"If time is not explicitly numeric and no explicit timeframe is given, set estimated_time to 0."\
 "Output must be valid JSON with double quotes."\
 "Message: [%s]"
 

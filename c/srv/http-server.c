@@ -1316,8 +1316,10 @@ static void handle_get_goal_events(int client_fd, const char* full_path) {
 static void handle_post_goal_create(int client_fd, const HttpRequest* req) {
 	char title[256];
 	char extra_info[2048];
+	char event_body[256];
 	char response_body[256];
 	char* esc_goal_id = NULL;
+	int event_len;
 	int response_len;
 	String title_s;
 	String extra_info_s;
@@ -1374,7 +1376,7 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req) {
 
 	if (!goal) {
 		goal_emit_event(
-			goal->id,
+			NULL,
 			"goal_create_failed",
 			"goal create failed",
 			strlen("goal create failed")
@@ -1389,12 +1391,21 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req) {
 		return;
 	}
 
-	goal_emit_event(
-		goal->id,
-		"goal_created",
-		"goal created",
-		strlen("goal created")
+	event_len = snprintf(
+		event_body,
+		sizeof(event_body),
+		"{\"goal-id\":\"%s\"}",
+		goal->id
 	);
+
+	if (event_len > 0 && (size_t)event_len < sizeof(event_body)) {
+		goal_emit_event(
+			goal->id,
+			"goal_created",
+			event_body,
+			(size_t)event_len
+		);
+	}
 
 	esc_goal_id = json_escape_dup(goal->id);
 	response_len = snprintf(

@@ -797,10 +797,23 @@ async function createGoal(event){
     let raw={};
     try{raw=text?JSON.parse(text):{}}catch{}
     if(!response.ok)throw new Error(text||`HTTP ${response.status}`);
-    const serverGoalId=String(raw?.id||raw?.goalId||raw?.data?.id||raw?.data?.goalId||"").trim();
+    const serverGoalId=String(
+      raw?.["goal-id"]||
+      raw?.goalId||
+      raw?.id||
+      raw?.data?.["goal-id"]||
+      raw?.data?.goalId||
+      raw?.data?.id||
+      ""
+    ).trim();
     if(serverGoalId){
       goal.id=serverGoalId;
       L.active=serverGoalId;
+      recEvent(L,"graph-viewer.goals.v5",{
+        id:serverGoalId,
+        type:"goal_created",
+        data:JSON.stringify({"goal-id":serverGoalId})
+      },{});
       save("graph-viewer.goals.v5",L.items);
       panels();
       await connect("goal",serverGoalId);
