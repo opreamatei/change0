@@ -4,6 +4,7 @@ import {
   applyGoalEvent,
   endGoalOnServer,
   findGoalById,
+  getGoalIdFromEvent,
   getGoalChildren,
   getRootGoals,
   type GoalEventEnvelope,
@@ -105,10 +106,6 @@ function App() {
         return
       }
 
-      if (envelope.type !== 'goal_started' && envelope.type !== 'goal_ended') {
-        return
-      }
-
       let payload: GoalEventPayload
 
       try {
@@ -117,9 +114,19 @@ function App() {
         return
       }
 
-      const goalIdFromEvent = payload['goal-id'] || envelope.id
+      const goalIdFromEvent = getGoalIdFromEvent(envelope, payload)
 
-      setGoals((currentGoals) => applyGoalEvent(currentGoals, goalIdFromEvent, payload))
+      if (!goalIdFromEvent) {
+        return
+      }
+
+      if (envelope.type !== 'goal_started' && envelope.type !== 'goal_ended' && envelope.type !== 'goal_created') {
+        return
+      }
+
+      if (envelope.type === 'goal_started' || envelope.type === 'goal_ended') {
+        setGoals((currentGoals) => applyGoalEvent(currentGoals, goalIdFromEvent, payload))
+      }
 
       const pendingAction = pendingActionRef.current
       if (pendingAction?.goalId === goalIdFromEvent) {

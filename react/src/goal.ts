@@ -66,7 +66,7 @@ export interface GoalStatusActionResponse {
 }
 
 export interface GoalEventPayload {
-  'goal-id': string
+  'goal-id'?: string
   start_date?: number
   end_date?: number
 }
@@ -75,6 +75,10 @@ export interface GoalEventEnvelope {
   id: string
   type: string
   data: string
+}
+
+export function getGoalIdFromEvent(envelope: GoalEventEnvelope, payload: GoalEventPayload) {
+  return payload['goal-id'] || envelope.id
 }
 
 export class Goal implements GoalInit {

@@ -15,4 +15,4 @@ cmake --build build -j
 
 cd build
 
-#./change
+./change

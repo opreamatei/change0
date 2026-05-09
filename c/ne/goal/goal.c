@@ -277,3 +277,5 @@ Goal* ComputePartialDecomposition(Goal *goal){
 
 	return g;
 }
+
+
