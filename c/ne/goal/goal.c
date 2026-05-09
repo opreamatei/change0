@@ -269,7 +269,7 @@ Goal* ComputePartialDecomposition(Goal *goal){
 
 		// 20 min cap
 		if (g->required_time < 60 * 20) break;
-		size_t nextGoalIndex = goal->subgoals[0]; // pick first one
+		size_t nextGoalIndex = g->subgoals[0]; // pick first one
 
 		g = FindGoalFromIndex(nextGoalIndex);
 		change_assert(g, "Coudln't find first born after decomposition\n\n");
