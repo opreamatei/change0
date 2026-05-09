@@ -1,0 +1,19 @@
+digraph "goal-info" {
+node [
+  fontsize = "12"
+];
+    "node8" [ label = "goal-info", shape = doubleoctagon ];
+    "node3" [ label = "goal-util", shape = doubleoctagon ];
+    "node8" -> "node3"  // goal-info -> goal-util
+    "node2" [ label = "globals", shape = doubleoctagon ];
+    "node3" -> "node2"  // goal-util -> globals
+    "node4" [ label = "jsonp", shape = doubleoctagon ];
+    "node3" -> "node4"  // goal-util -> jsonp
+    "node5" [ label = "m", shape = septagon ];
+    "node4" -> "node5" [ style = dotted ] // jsonp -> m
+    "node6" [ label = "util", shape = doubleoctagon ];
+    "node3" -> "node6"  // goal-util -> util
+    "node7" [ label = "change-errors", shape = doubleoctagon ];
+    "node6" -> "node7"  // util -> change-errors
+    "node6" -> "node4"  // util -> jsonp
+}

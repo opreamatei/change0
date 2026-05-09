@@ -5,24 +5,6 @@
 Goal *GOAL_CONTAINER[1024];
 size_t GOAL_CONTAINER_COUNT = INITIAL_GOAL_INDEX;
 
-static const char charset[] =
-"abcdefghijklmnopqrstuvwxyz"
-"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-"0123456789";
-
-void random_id(char *out, size_t len){
-	srand((unsigned int)time(NULL));
-	size_t charset_size = sizeof(charset) - 1;
-
-	out[0] = 'g';
-
-	for (size_t i = 1; i < len; ++i) {
-		out[i] = charset[rand() % charset_size];
-	}
-
-	out[len] = '\0';
-}
-
 enum GOAL_STATUS ValidateGoal(Goal *g, time_t now)
 {
 	// parent goals are valid because they depend on children validation

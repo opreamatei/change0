@@ -1,4 +1,4 @@
-import {$,EP,meta,transport,resize,base,status,id,local,save,rand32,color} from "./shared.js";
+import {$,EP,meta,transport,resize,base,status,id,local,save,color} from "./shared.js";
 import {createGraphView} from "./graph-view.js";
 
 const toastState={timer:0};
@@ -782,20 +782,29 @@ async function createGoal(event){
   const title=$("goal-title").value.trim();
   const extraInfo=$("goal-extra-info").value.trim();
   if(!title)return;
-  const gid=rand32();
-  const goal={id:gid,goalId:gid,title,extraInfo,events:[],status:"Creating",createdAt:Date.now()};
+  const localGoalId=id("goal-pending");
+  const goal={id:localGoalId,title,extraInfo,events:[],status:"Creating",createdAt:Date.now()};
   L.items.unshift(goal);
-  L.active=gid;
+  L.active=localGoalId;
   L.busy=true;
   resetGoalTimelineView();
   save("graph-viewer.goals.v5",L.items);
   panels();
   setGoalPanel("timeline");
   try{
-    await connect("goal",gid);
-    const response=await fetch(EP.goalCreate,{method:"POST",cache:"no-store",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:gid,goalId:gid,title,extraInfo})});
+    const response=await fetch(EP.goalCreate,{method:"POST",cache:"no-store",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,extraInfo})});
     const text=await response.text();
+    let raw={};
+    try{raw=text?JSON.parse(text):{}}catch{}
     if(!response.ok)throw new Error(text||`HTTP ${response.status}`);
+    const serverGoalId=String(raw?.id||raw?.goalId||raw?.data?.id||raw?.data?.goalId||"").trim();
+    if(serverGoalId){
+      goal.id=serverGoalId;
+      L.active=serverGoalId;
+      save("graph-viewer.goals.v5",L.items);
+      panels();
+      await connect("goal",serverGoalId);
+    }
     goal.status="Created";
     L.detail="Created.";
     await loadGoals(true);

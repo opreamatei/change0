@@ -10,6 +10,25 @@
 #include <stdlib.h>
 #include "change-errors.h"
 
+static const char charset[] =
+"abcdefghijklmnopqrstuvwxyz"
+"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+"0123456789";
+
+void random_id(char *out, size_t len){
+	srand((unsigned int)time(NULL));
+	size_t charset_size = sizeof(charset) - 1;
+
+	out[0] = 'g';
+
+	for (size_t i = 1; i < len; ++i) {
+		out[i] = charset[rand() % charset_size];
+	}
+
+	out[len] = '\0';
+}
+
+
 size_t mystrnlen(const char* s, size_t maxlen) {
     size_t i;
     for (i = 0; i < maxlen && s[i] != '\0'; i++);

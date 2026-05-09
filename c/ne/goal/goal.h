@@ -8,7 +8,7 @@
 
 void FreeGoal(Goal *g);
 void FreeGoals();
-Goal* CreateUserGoal(String *input1, String *input2, goalIDType goalID);
+Goal* CreateUserGoal(String *input1, String *input2, start_ds_session_like_func* start_ds_session);
 
 void InitGoalSystem();
 _Bool DecomposeGoal(Goal *g);

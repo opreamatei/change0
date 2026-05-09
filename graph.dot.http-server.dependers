@@ -1,0 +1,11 @@
+digraph "http-server" {
+node [
+  fontsize = "12"
+];
+    "node23" [ label = "http-server", shape = doubleoctagon ];
+    "node12" [ label = "change", shape = egg ];
+    "node12" -> "node23" [ style = dotted ] // change -> http-server
+    "node28" [ label = "ui", shape = doubleoctagon ];
+    "node28" -> "node23"  // ui -> http-server
+    "node12" -> "node28" [ style = dotted ] // change -> ui
+}

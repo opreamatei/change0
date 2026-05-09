@@ -57,6 +57,7 @@ char* searchFirstNonDigit(char *source);
 #define c_str(s) ((s)->p)
 #define CatFixed(dest, source) (CatString((dest), (source), FSIZE((source))))
 
+void random_id(char *out, size_t len);
 void lowerAll(char** s, size_t len);
 
 typedef struct {

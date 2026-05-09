@@ -1,0 +1,15 @@
+digraph "inputprocessor" {
+node [
+  fontsize = "12"
+];
+    "node24" [ label = "inputprocessor", shape = doubleoctagon ];
+    "node23" [ label = "http-server", shape = doubleoctagon ];
+    "node23" -> "node24"  // http-server -> inputprocessor
+    "node12" [ label = "change", shape = egg ];
+    "node12" -> "node23" [ style = dotted ] // change -> http-server
+    "node28" [ label = "ui", shape = doubleoctagon ];
+    "node28" -> "node23"  // ui -> http-server
+    "node12" -> "node28" [ style = dotted ] // change -> ui
+    "node12" -> "node24" [ style = dotted ] // change -> inputprocessor
+    "node28" -> "node24"  // ui -> inputprocessor
+}

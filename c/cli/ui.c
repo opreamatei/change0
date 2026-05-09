@@ -151,7 +151,7 @@ static void Run(int i){
 		String input0; InitString(&input0, input_size0 + 1);
 		String input1; InitString(&input1, input_size1 + 1);
 
-		Goal *g = CreateUserGoal(&input0, &input1, "12345678901234567890123456789012");
+		Goal *g = CreateUserGoal(&input0, &input1, start_ds_session);
 
 		FreeString(&input0);
 		FreeString(&input1);

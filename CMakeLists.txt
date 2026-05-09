@@ -227,7 +227,7 @@ target_include_directories(goal PUBLIC
 	${CMAKE_SOURCE_DIR}/c/ne/goal
 	${CMAKE_SOURCE_DIR}/c/ne/search
 )
-target_link_libraries(goal PUBLIC goal-ai goal-info goal-util util openai jsonp node deepsearchsession)
+target_link_libraries(goal PUBLIC goal-ai goal-info goal-util util openai jsonp node)
 
 add_library(goal-util SHARED ${CMAKE_SOURCE_DIR}/c/ne/goal/goal-util.c)
 target_include_directories(goal-util 

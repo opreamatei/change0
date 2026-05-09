@@ -1,0 +1,18 @@
+digraph "json2graph" {
+node [
+  fontsize = "12"
+];
+    "node25" [ label = "json2graph", shape = doubleoctagon ];
+    "node24" [ label = "inputprocessor", shape = doubleoctagon ];
+    "node24" -> "node25"  // inputprocessor -> json2graph
+    "node23" [ label = "http-server", shape = doubleoctagon ];
+    "node23" -> "node24"  // http-server -> inputprocessor
+    "node12" [ label = "change", shape = egg ];
+    "node12" -> "node23" [ style = dotted ] // change -> http-server
+    "node28" [ label = "ui", shape = doubleoctagon ];
+    "node28" -> "node23"  // ui -> http-server
+    "node12" -> "node28" [ style = dotted ] // change -> ui
+    "node12" -> "node24" [ style = dotted ] // change -> inputprocessor
+    "node28" -> "node24"  // ui -> inputprocessor
+    "node12" -> "node25" [ style = dotted ] // change -> json2graph
+}

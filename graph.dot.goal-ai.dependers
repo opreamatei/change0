@@ -1,0 +1,17 @@
+digraph "goal-ai" {
+node [
+  fontsize = "12"
+];
+    "node21" [ label = "goal-ai", shape = doubleoctagon ];
+    "node20" [ label = "goal", shape = doubleoctagon ];
+    "node20" -> "node21"  // goal -> goal-ai
+    "node12" [ label = "change", shape = egg ];
+    "node12" -> "node20" [ style = dotted ] // change -> goal
+    "node23" [ label = "http-server", shape = doubleoctagon ];
+    "node23" -> "node20"  // http-server -> goal
+    "node12" -> "node23" [ style = dotted ] // change -> http-server
+    "node28" [ label = "ui", shape = doubleoctagon ];
+    "node28" -> "node23"  // ui -> http-server
+    "node12" -> "node28" [ style = dotted ] // change -> ui
+    "node28" -> "node20"  // ui -> goal
+}

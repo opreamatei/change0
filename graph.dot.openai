@@ -1,0 +1,20 @@
+digraph "openai" {
+node [
+  fontsize = "12"
+];
+    "node14" [ label = "openai", shape = doubleoctagon ];
+    "node15" [ label = "OpenSSL::Crypto", shape = septagon ];
+    "node14" -> "node15" [ style = dotted ] // openai -> OpenSSL::Crypto
+    "node16" [ label = "OpenSSL::SSL", shape = septagon ];
+    "node14" -> "node16" [ style = dotted ] // openai -> OpenSSL::SSL
+    "node16" -> "node15" [ style = dashed ] // OpenSSL::SSL -> OpenSSL::Crypto
+    "node4" [ label = "jsonp", shape = doubleoctagon ];
+    "node14" -> "node4"  // openai -> jsonp
+    "node5" [ label = "m", shape = septagon ];
+    "node4" -> "node5" [ style = dotted ] // jsonp -> m
+    "node6" [ label = "util", shape = doubleoctagon ];
+    "node14" -> "node6"  // openai -> util
+    "node7" [ label = "change-errors", shape = doubleoctagon ];
+    "node6" -> "node7"  // util -> change-errors
+    "node6" -> "node4"  // util -> jsonp
+}
