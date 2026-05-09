@@ -1314,7 +1314,6 @@ static void handle_get_goal_events(int client_fd, const char* full_path) {
 }
 
 static void handle_post_goal_create(int client_fd, const HttpRequest* req) {
-	char goal_id[256];
 	char title[256];
 	char extra_info[2048];
 	char response_body[256];
@@ -1324,7 +1323,6 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req) {
 	String extra_info_s;
 	Goal* goal = NULL;
 
-	goal_id[0] = '\0';
 	title[0] = '\0';
 	extra_info[0] = '\0';
 
@@ -1334,38 +1332,6 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req) {
 			400,
 			"Bad Request",
 			"{\"ok\":false,\"error\":\"missing_body\"}"
-		);
-		return;
-	}
-
-	/*
-	 * Required goal identifier.
-	 *
-	 * Primary key: "goal-id"
-	 * Compatibility fallbacks: "goalId", then "id"
-	 *
-	 * The goal-id must be exactly 32 characters. The length check is kept
-	 * explicit through change_assert(...) because invalid ids indicate a
-	 * caller-side protocol bug, not a server-generated id.
-	 */
-	if (!json_get_string_field(req->body, "goal-id", goal_id, sizeof(goal_id)) &&
-	    !json_get_string_field(req->body, "goalId", goal_id, sizeof(goal_id)) &&
-	    !json_get_string_field(req->body, "id", goal_id, sizeof(goal_id))) {
-		send_json_response(
-			client_fd,
-			400,
-			"Bad Request",
-			"{\"ok\":false,\"error\":\"missing_goal_id\"}"
-		);
-		return;
-	}
-
-	if (!validate_goal_id_32(goal_id)) {
-		send_json_response(
-			client_fd,
-			400,
-			"Bad Request",
-			"{\"ok\":false,\"error\":\"invalid_goal_id_length\"}"
 		);
 		return;
 	}
@@ -1391,8 +1357,7 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req) {
 		return;
 	}
 
-	printf("goal/create goal-id=%s title=%s extraInfo=%s\n",
-	       goal_id,
+	printf("goal/create title=%s extraInfo=%s\n",
 	       title,
 	       extra_info);
 
@@ -1402,20 +1367,14 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req) {
 	CatString(&title_s, title, strlen(title));
 	CatString(&extra_info_s, extra_info, strlen(extra_info));
 
-	goal_emit_event(
-		goal_id,
-		"goal_create_started",
-		FSTRING_SIZE_PARAMS("goal create started")
-	);
-
-	goal = CreateUserGoal(&title_s, &extra_info_s, goal_id);
+	goal = CreateUserGoal(&title_s, &extra_info_s, start_ds_session);
 
 	FreeString(&extra_info_s);
 	FreeString(&title_s);
 
 	if (!goal) {
 		goal_emit_event(
-			goal_id,
+			goal->id,
 			"goal_create_failed",
 			"goal create failed",
 			strlen("goal create failed")
@@ -1431,13 +1390,13 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req) {
 	}
 
 	goal_emit_event(
-		goal_id,
+		goal->id,
 		"goal_created",
 		"goal created",
 		strlen("goal created")
 	);
 
-	esc_goal_id = json_escape_dup(goal_id);
+	esc_goal_id = json_escape_dup(goal->id);
 	response_len = snprintf(
 		response_body,
 		sizeof(response_body),

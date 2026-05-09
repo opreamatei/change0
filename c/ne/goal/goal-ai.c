@@ -22,10 +22,13 @@ void AICallExtractionGoalSchema(String *input, String *out)
     req.model = AI_OPENAI_MODEL_GPT_5_4_NANO;
     req.schema_name = "goal_extraction";
 
+
     printf("Calling extracter... \n\n");
 
     String *result = ai_openai_call_gpt_request(&req);
     cassert(result, "OpenAI goal extraction call failed.\n");
+
+    printf("Result is %s\n", result->p);
 
     CatString(out, result->p, result->len);
 
@@ -34,7 +37,7 @@ void AICallExtractionGoalSchema(String *input, String *out)
     FreeString(result);
 }
 
-void ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t *estimated_time, _Bool forceEstTime){
+_Bool ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t *estimated_time, _Bool forceEstTime){
 	String json_extract_result;
 
 	// extract process goals
@@ -46,23 +49,38 @@ void ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t 
 	AICallExtractionGoalSchema(text, &json_extract_result);
 
 	json_value* doc = json_parse(c_str(&json_extract_result), json_extract_result.len);
-	change_assert(doc && doc->type == json_object, "Goal is not an object or is not a json\n\n\n%s", c_str(text));
+	//change_assert(doc && doc->type == json_object, "Goal is not an object or is not a json\n\n\n%s", c_str(text));
+	if (!doc || !(doc->type == json_object)){
+		return 0;
+	}
 
 	for (size_t i = 0; i < doc->u.object.length; i++){
 		json_object_entry candidate = doc->u.object.values[i];
 
 		if (strcmp(candidate.name, "extrainfo") == 0){
-			change_assert(candidate.value->type == json_string, "JSON \"extrainfo\" is not a string. \n\n[%s]\n", c_str(text));
+			//change_assert(candidate.value->type == json_string, "JSON \"extrainfo\" is not a string. \n\n[%s]\n", c_str(text));
+			if (candidate.value->type != json_string)
+				return 0;
+			
 			CatString(extrainfo, candidate.value->u.string.ptr, candidate.value->u.string.length);
 		}else if (strcmp(candidate.name, "title") == 0){
-			change_assert(candidate.value->type == json_string, "JSON \"title\" is not a string. \n\n[%s]\n", c_str(text));
+			//change_assert(candidate.value->type == json_string, "JSON \"title\" is not a string. \n\n[%s]\n", c_str(text));
+			if (candidate.value->type != json_string)
+				return 0;
+			
 			CatString(title, candidate.value->u.string.ptr, candidate.value->u.string.length);
 		}else if (forceEstTime && strcmp(candidate.name, "estimated_time") == 0){
-			change_assert(candidate.value->type == json_integer, "JSON \"estimated_time\" is not an integer. \n\n[%s]\n", c_str(text));
+			//change_assert(candidate.value->type == json_integer, "JSON \"estimated_time\" is not an integer. \n\n[%s]\n", c_str(text));
+			if (candidate.value->type != json_integer)
+				return 0;
+			
 			*estimated_time = candidate.value->u.integer;
 		}
 	}
+
 	json_value_free(doc);
+
+	return 1;
 
 }
 

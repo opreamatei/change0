@@ -8,16 +8,13 @@
 "{" \
   "\"type\":\"object\"," \
   "\"additionalProperties\":false," \
-  "\"required\":[\"title\",\"reason\",\"extrainfo\",\"estimated_time\"]," \
+  "\"required\":[\"title\",\"extrainfo\",\"estimated_time\"]," \
   "\"properties\":{" \
     "\"title\":{" \
       "\"type\":\"string\"" \
     "}," \
-    "\"reason\":{" \
-      "\"type\":\"string\"" \
-    "}," \
     "\"extrainfo\":{" \
-      "\"type\":[\"string\",\"null\"]" \
+      "\"type\":\"string\"" \
     "}," \
     "\"estimated_time\":{" \
       "\"type\":[\"integer\",\"null\"]," \
@@ -60,7 +57,7 @@
 "}"
 
 void AICallExtractionGoalSchema(String *input, String *out);
-void ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t *estimated_time, _Bool forceEstTime);
+_Bool ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t *estimated_time, _Bool forceEstTime);
 void SetGoalShortenPrompt(Goal* g, String* prompt, time_t now);
 void SetGoalDecompositionPrompt(Goal* g, String* prompt, time_t now);
 String *CallGoalDecompositionAI(String *prompt);

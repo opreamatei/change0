@@ -8,7 +8,6 @@
 #include <unistd.h>
 #include "json.h"
 #include "openai.h"
-#include "deep-search-session.h"
 #include "goal-ai.h"
 
 static goal_emit_like_func goal_emit = NULL;
@@ -128,16 +127,30 @@ void FreeGoals()
 }
 
 // those are mapped to input1 -> title input2 -> extrainfo
-Goal* CreateUserGoal(String *input1, String *input2, goalIDType goalId)
+Goal* CreateUserGoal(String *input1, String *input2, start_ds_session_like_func* start_ds_session)
 {
 	GoalSystemLazyLoad(&goal_emit);
 
 	String title, extra_info, deep_search_result;
 	time_t estimated_time = 0;
+	goalIDType goalId;
+	random_id(goalId, GOAL_ID_SIZE + 1);
+	goalId[32] = '\0';
 
 	PersonalizeGoal(input1, input2, &deep_search_result, goalId, start_ds_session);
 	goal_emit(goalId, "deep-search-final-recomandation", deep_search_result.p, deep_search_result.len);
-	ExtractGoalFromText(&deep_search_result, &title, &extra_info, &estimated_time, 1);
+	
+	_Bool success = 0;
+	size_t depth_error = 0;
+	while (!success){
+		success = ExtractGoalFromText(&deep_search_result, &title, &extra_info, &estimated_time, 1);
+		depth_error++; 
+		change_assert(depth_error < 10, "Depth went way to high");
+		
+		if (!success){
+			printf("%s, %s, %zu", title.p, extra_info.p, estimated_time);
+		}
+	}
 
 	// emit info to client
 	goal_emit(goalId, "title", title.p, title.len);
@@ -168,7 +181,7 @@ _Bool DecomposeGoal(Goal *g){
 	
 	if (g->subgoals_len != 0){
 		printf("Goal seems already decomposed.\n");
-		return 0;
+		return 1;
 	}
 	if (g->required_time < GOAL_MIN_SECONDS){
 		printf("Goal si too short to decompose, shortest is 15 minutes");
