@@ -1,0 +1,935 @@
+Analiza proiectului CHANGE - partea C
+
+1. Scop general
+
+Partea din `c/` este backend-ul experimental al proiectului. Din cod si din README reiese ca intentia principala nu este construirea unui chatbot clasic, ci a unui sistem care:
+
+- transforma input-ul utilizatorului intr-o identitate semantica persistenta;
+- foloseste aceasta identitate pentru investigare contextualizata;
+- conecteaza identitatea cu un sistem de goals;
+- incearca sa personalizeze recomandari, decompozitii de obiective si concluzii.
+
+Pe scurt:
+
+- `Neuroengine` modeleaza "cine este utilizatorul";
+- `Deep Search` investigheaza aceasta structura pentru un task concret;
+- `Goal System` modeleaza "ce face utilizatorul" si "cum evolueaza comportamental";
+- serverul si CLI-ul doar expun aceste capabilitati.
+
+
+2. Arhitectura mare
+
+Entry point-ul este foarte simplu:
+
+- `c/main.c`
+  - `UIStart()`
+  - `UILoop()`
+  - `UIKill()`
+
+CLI-ul este folosit ca orchestrator local pentru demo, nu ca loc unde sta logica importanta.
+
+In `UIStart()` se intampla initializarea reala:
+
+- se initializeaza containerul global de noduri;
+- se creeaza cele 5 contexte radacina:
+  - `profesie`
+  - `emotie`
+  - `pasiuni`
+  - `generalitati`
+  - `subiectiv`
+- se initializeaza harta globala de pointeri;
+- se inregistreaza callback-uri pentru emiterea evenimentelor:
+  - `ds_emit`
+  - `goal_emit`
+- se initializeaza goal system-ul.
+
+Arhitectural, proiectul poate fi impartit in 5 blocuri:
+
+- `c/ne/input`
+  - ingestie text si decompozitie in graf
+- `c/ne`
+  - modelul intern al "neuroengine"-ului
+- `c/ne/search`
+  - deep search si primitivele de cautare
+- `c/ne/goal`
+  - modelarea, personalizarea si decompozitia goal-urilor
+- `c/srv`
+  - expunerea datelor prin HTTP/SSE
+
+
+3. Modelul conceptual al sistemului
+
+Sistemul lucreaza cu doua tipuri mari de memorie:
+
+- memorie identitara
+  - reprezentata ca graf semantic
+- memorie comportamentala
+  - reprezentata ca goal-uri, istoric, decompozitii, inceput/sfarsit, esec, extindere
+
+Aceasta separare este una dintre ideile cele mai bune din proiect:
+
+- graf-ul nu este tratat ca lista de task-uri;
+- goal-urile nu sunt tratate ca identitate;
+- deep search-ul este obligat sa combine cele doua perspective.
+
+
+4. Neuroengine - structura interna
+
+`Neuroengine` nu este un engine neuronal in sens ML. Nu exista backpropagation, embedding-uri locale sau invatare statistica in sens clasic.
+
+De fapt, `Neuroengine` este:
+
+- un graf semantic ierarhic;
+- cu contexte psihologice explicite;
+- cu ponderi si activari;
+- cu decay temporal;
+- cu o forma simplificata de propagare a relevantei.
+
+4.1. Nodurile
+
+Structura de baza este `Node`, definita in `c/ne/node.h`.
+
+Un nod contine:
+
+- `label`
+  - numele conceptului
+- `parent`
+  - contextul sau un nod superior
+- `neighbours`
+  - conexiuni catre alte noduri
+- `_activation`
+  - relevanta de moment
+- `_weight`
+  - importanta structurala
+- `times_seen`
+  - de cate ori a fost observat in investigatii
+- `times_used`
+  - de cate ori a fost folosit activ ca punct de plecare
+- `pendingTouches`
+  - acumulare de activare care urmeaza sa fie aplicata
+- `lastTouched`
+  - timestamp pentru decay
+
+Exista si `Connection`, care are:
+
+- `_activation`
+- `_weight`
+- `target`
+- `pendingTouches`
+- `lastTouched`
+
+Deci sistemul are semnal numeric atat pe noduri, cat si pe muchii.
+
+
+4.2. Contextele psihologice
+
+Primele 5 noduri create in sistem sunt:
+
+- `profesie`
+- `emotie`
+- `pasiuni`
+- `generalitati`
+- `subiectiv`
+
+Toate conceptele reale ale utilizatorului sunt atasate sub unul dintre aceste contexte.
+
+Acest design are o consecinta importanta:
+
+- acelasi label poate exista in contexte diferite;
+- acelasi cuvant in `emotie` nu este acelasi lucru cu acelasi cuvant in `profesie`;
+- sistemul modeleaza conceptul ca entitate locala de context, nu ca entitate universala.
+
+Asta apare si in promptul pentru `deep search`, unde modelul este avertizat explicit sa nu uneasca implicit noduri cu acelasi label din contexte diferite.
+
+
+4.3. Activation vs Weight
+
+Aceasta este distinctia centrala din proiect.
+
+`activation` inseamna:
+
+- ce este salien acum;
+- ce este mental prezent;
+- ce este emotional sau contextual activ;
+- ce a fost atins recent.
+
+`weight` inseamna:
+
+- ce este important pe termen lung;
+- ce este structural relevant;
+- ce are semnificatie persistenta in identitatea utilizatorului.
+
+Arhitectural, aceasta distinctie este folosita peste tot:
+
+- la ranking global;
+- la ranking local pe vecini;
+- la deep search;
+- la interpretarea output-ului catre model.
+
+
+4.4. Efectul ierarhiei
+
+Functiile:
+
+- `read_node_activation`
+- `read_node_weight`
+- `read_connection_activation`
+- `read_connection_weight`
+
+nu returneaza doar valoarea locala.
+
+Ele multiplica scorul local cu lantul de parinti. Asta inseamna:
+
+- scorul unui nod depinde de contextul in care traieste;
+- scorul unei conexiuni depinde si el de activarea/greutatea contextului.
+
+Deci contextele nu sunt doar etichete de organizare. Ele participa numeric la evaluare.
+
+Aceasta este o idee importanta: contextul psihologic influenteaza relevanta finala.
+
+
+5. Cum intra informatia in neuroengine
+
+Input-ul textual ajunge in `c/ne/input/input-processor.c`.
+
+Fluxul este:
+
+1. utilizatorul scrie text;
+2. textul este introdus intr-un prompt de decompozitie;
+3. promptul este trimis catre OpenAI;
+4. modelul returneaza JSON structurat;
+5. JSON-ul este tradus in noduri si conexiuni;
+6. nodurile sunt adaugate in contextul potrivit.
+
+Practic, AI-ul joaca rolul de parser semantic extern.
+
+Modulul `json-to-graph.c` face transformarea finala:
+
+- daca un nod nu exista, il creeaza;
+- daca exista deja, il "atinge" si ii creste activarea prin `touch_node`;
+- daca o conexiune exista, ii creste activarea;
+- daca nu exista, o creeaza bidirectional.
+
+Detaliu important:
+
+- scorurile sugerate de AI nu sunt acceptate brut;
+- ele sunt amortizate prin constante precum:
+  - `NODE_GUESS_WEIGHT_RELEVANCE`
+  - `CONNECTION_GUESS_WEIGHT_RELEVANCE`
+
+Deci sistemul incearca sa evite ca modelul de decompozitie sa supra-pondereze instant un concept nou.
+
+
+6. RefreshGraph - inima dinamica a neuroengine-ului
+
+`RefreshGraph()` din `c/ne/graph/graph-engine.c` este probabil partea cea mai importanta din motor.
+
+Rolul sau:
+
+- aplica decay temporal pe activare;
+- aplica `pendingTouches`;
+- recalculeaza suportul structural al nodurilor;
+- recalibreaza `weight` pentru fiecare nod.
+
+6.1. Decay temporal
+
+Activarea scade exponential in timp, pe baza unui half-life configurabil:
+
+- `ACT_HALFTIME`
+
+Asta inseamna:
+
+- ce nu mai este atins de sistem devine mai putin prezent;
+- identitatea recenta si activitatea curenta influenteaza iesirea.
+
+6.2. Support
+
+Pentru fiecare nod se calculeaza un `support` bazat pe vecini:
+
+- suma ponderilor conexiunilor;
+- plus o componenta din activarea conexiunilor;
+- impartit la o penalizare legata de numarul de vecini.
+
+Interpretare:
+
+- un nod nu devine important doar pentru ca are multe legaturi;
+- sistemul penalizeaza explozia de vecini slabi;
+- incearca sa favorizeze vecinii puternici si sustinerea structurala coerenta.
+
+6.3. Weight update
+
+`weight` este recalculat folosind:
+
+- `times_seen`
+- `times_used`
+- `support`
+- o combinatie de merit, confidence si old_weight
+
+In termeni conceptuali:
+
+- `times_seen` = cat de des sistemul observa conceptul in investigatii;
+- `times_used` = cat de des il foloseste ca pivot de cautare;
+- `support` = cat de bine e sustinut in subgraf;
+- `old_weight` = inertie structurala.
+
+Este o formula euristica, nu una formal justificata matematic, dar scopul e clar:
+
+- stabilizarea importantei in timp;
+- evitarea volatilitatii excesive;
+- combinarea recency + usage + structural support.
+
+
+7. Ce este Deep Search
+
+`Deep Search` este un agent de investigare constrans de backend.
+
+Nu este:
+
+- simplu search in graf;
+- simplu chain-of-thought liber;
+- simplu query catre OpenAI.
+
+Este o bucla controlata cu:
+
+- memorie persistenta;
+- memorie dinamica;
+- schema JSON stricta;
+- set limitat de comenzi;
+- executor determinist;
+- judecator separat.
+
+Din punct de vedere arhitectural, este cel mai interesant subsistem.
+
+
+8. Deep Search - design intern
+
+Modulul principal este `c/ne/search/deep-search-session.c`.
+
+O sesiune DS porneste cu:
+
+- un `Task`
+  - textul problemei
+  - o adancime minima `minDepth`
+- un id de sesiune
+- un buffer pentru concluzia finala
+
+Memoria sesiunii este impartita in:
+
+- `persistent`
+  - promptul mare cu regulile si descrierea lumii
+- `dynamic`
+  - istoricul rundelor, output-urilor, erorilor si rezultatelor
+
+Fluxul este:
+
+1. se construieste promptul persistent din `DS_PERSISTENT_PROMPT`;
+2. se face `RefreshGraph()`;
+3. modelul primeste persistent + dynamic;
+4. modelul raspunde cu JSON strict;
+5. backend-ul parseaza raspunsul;
+6. daca modelul nu termina, se executa exact o comanda;
+7. rezultatul comenzii este adaugat in memorie;
+8. bucla continua;
+9. cand modelul ofera concluzie, un al doilea model o judeca;
+10. daca judecata pica, se injecteaza feedback si procesul continua.
+
+Acest pattern este foarte aproape de:
+
+- planner -> tool executor -> critic/judge
+
+doar ca totul este facut manual in C, nu printr-un framework de agenti.
+
+
+9. DS_PERSISTENT_PROMPT - rol si semnificatie
+
+Promptul persistent din `c/config.h` este foarte mare si defineste practic constitutia agentului DS.
+
+El spune modelului:
+
+- care este obiectivul;
+- ce este identity graph;
+- ce este goal system;
+- cum se interpreteaza activation vs weight;
+- ce comenzi exista;
+- in ce ordine ar trebui folosite;
+- ca trebuie sa aleaga exact o singura actiune pe pas;
+- ca nu trebuie sa rezolve taskul direct, ci sa investigheze.
+
+Asta este foarte important:
+
+- autorul nu lasa modelul sa improvizeze liber;
+- il transforma intr-un investigator ghidat;
+- ii reduce spatiul de actiune la operatii precise.
+
+Deci `deep search` este mai degraba un protocol de investigare decat o simpla discutie cu AI-ul.
+
+
+10. Comenzile Deep Search
+
+Comenzile sunt executate in `c/ne/search/ai-action.c`.
+
+10.1. Comanda 1 - Global Graph Filtering
+
+Scop:
+
+- gasirea celor mai relevante noduri la nivel global.
+
+Poate filtra dupa:
+
+- `activation`
+- `weight`
+
+Interpretare:
+
+- dupa `activation` vezi ce domina acum;
+- dupa `weight` vezi ce e structural important.
+
+Aceasta comanda este buna pentru orientare initiala.
+
+
+10.2. Comanda 2 - Local Graph Neighbor Search
+
+Scop:
+
+- inspectia vecinilor puternici ai unui nod intr-un context dat.
+
+Input:
+
+- context exact;
+- label exact;
+- criteriu de ranking.
+
+Rol:
+
+- porneste de la un concept deja plauzibil;
+- identifica relatiile sale locale cele mai puternice.
+
+
+10.3. Comanda 3 - Recursive Graph Exploration
+
+Scop:
+
+- explorarea mai adanca a unui subgraf.
+
+Foloseste:
+
+- prag de activare;
+- prag de weight;
+- depth.
+
+Aceasta este forma de "deep" din `deep search`:
+
+- nu doar vezi top noduri;
+- urmaresti pattern-uri multi-hop.
+
+Interesant este ca filtrarea pe fiecare nivel cere trecerea simultana a pragurilor de activare si greutate, ceea ce reduce zgomotul si mentine doar legaturi suficient de puternice pe ambele axe.
+
+
+10.4. Comanda 4 - Goal Evidence Inspection
+
+Scop:
+
+- inspectie globala a goal-urilor.
+
+Mode:
+
+- `roots`
+- `due`
+- `history`
+
+Rol:
+
+- vede directia actuala a utilizatorului;
+- presiunea din obiective incomplete;
+- urmele comportamentale istorice.
+
+
+10.5. Comanda 5 - Goal Tree Inspection
+
+Scop:
+
+- inspectia arborelui unui goal.
+
+Rol:
+
+- vede structura interna a unui obiectiv;
+- verifica descompunerea;
+- identifica zone nedecompuse sau prea mari.
+
+
+10.6. Comanda 6 - Goal Relational Inspection
+
+Scop:
+
+- inspectia relatiei dintre un goal si contextul lui comportamental.
+
+Metode:
+
+- `history`
+- `siblings`
+- `parents`
+- `linked-siblings`
+- `linked-siblings-hidden`
+- `uncles`
+- `uncles-hidden`
+
+Aceasta comanda incearca sa dea goal-urilor un context lateral si ierarhic, nu doar vertical.
+
+
+11. Memoria DS
+
+Un element foarte bun de design este separarea dintre:
+
+- `persistent memory`
+- `dynamic memory`
+
+`persistent` contine:
+
+- regulile lumii;
+- schema conceptuala;
+- descrierea operatiei agentului.
+
+`dynamic` contine:
+
+- raspunsurile modelului;
+- output-urile comenzilor;
+- rezultatele rundelor;
+- feedback-ul de la judge;
+- erorile de executie.
+
+In practica:
+
+- modelul isi construieste investigatia in pasi;
+- backend-ul il obliga sa se bazeze pe evidence deja observat;
+- feedback-ul din esecuri de judge este reinjectat in promptul persistent.
+
+Este o forma rudimentara, dar clara, de self-correcting loop.
+
+
+12. Judge-ul DS
+
+La finalul unei secvente de gandire, concluzia nu este acceptata direct.
+
+Se apeleaza `call_gpt_judge`, care:
+
+- primeste taskul initial;
+- primeste concluzia DS;
+- returneaza un verdict structurat.
+
+Daca verdictul este negativ:
+
+- motivul este inserat in memorie;
+- modelul reia investigatia.
+
+Aceasta decizie este importanta arhitectural deoarece separa:
+
+- "agentul care exploreaza"
+- "agentul care verifica"
+
+Adica reduce riscul ca aceeasi generatie sa fie acceptata fara control.
+
+
+13. Search engine-ul de sub DS
+
+Sub nivelul agentic, proiectul are un search engine destul de simplu si eficient pentru nevoia lui.
+
+In `c/ne/search/search.c`:
+
+- filtrele top-percent folosesc `quickselect`;
+- nu sorteaza complet vectorul;
+- cauta pragul si apoi extrag elementele peste prag.
+
+Asta este folosit pentru:
+
+- top noduri globale;
+- top vecini locali.
+
+Pentru explorarea recursiva:
+
+- se construieste un JSON-like text al familiei nodului;
+- se urmareste subgraful pana la o adancime maxima;
+- se taie muchiile care nu trec pragurile.
+
+Conceptual, acesta este un motor de retrieval structural, nu semantic embedding retrieval.
+
+
+14. Goal System - rol mare
+
+`Goal System` este al doilea pilon al aplicatiei.
+
+El nu este un simplu TODO manager. Este gandit ca memorie comportamentala, adica:
+
+- ce a vrut utilizatorul;
+- ce a inceput;
+- ce a terminat;
+- ce nu a terminat;
+- cum s-au descompus obiectivele;
+- cum au esuat si cum au fost reparate.
+
+Promptul DS spune explicit:
+
+- goals are not identity;
+- goals are behavioral evidence;
+- ele trebuie interpretate impreuna cu graph evidence.
+
+Asta este una dintre cele mai sanatoase idei din proiect.
+
+
+15. Modelul de date pentru goals
+
+Structura `Goal` contine:
+
+- `title`
+- `extra_info`
+- `start_date`
+- `end_date`
+- `required_time`
+- `subgoals`
+- `subgoals_len`
+- `parent`
+- `prev`
+- `next`
+- `globalIndex`
+- `depth`
+- `retry_depth`
+- `priority`
+- `id`
+
+Observatii:
+
+- `parent + subgoals` formeaza ierarhia;
+- `prev + next` creeaza o relatie secventiala intre frati;
+- `required_time` este esential pentru validare si reparatie;
+- `retry_depth` urmareste cate adaptari a suferit goal-ul.
+
+
+16. Cum se creeaza un goal
+
+Crearea unui goal de utilizator nu este directa.
+
+Fluxul real este:
+
+1. utilizatorul da o formulare initiala;
+2. se ruleaza `PersonalizeGoal`;
+3. `PersonalizeGoal` creeaza un `Task` DS;
+4. DS produce o recomandare finala personalizata;
+5. recomandarea este trimisa la un extractor AI;
+6. extractorul produce:
+  - `title`
+  - `extra_info`
+  - `estimated_time`
+7. backend-ul valideaza estimarea;
+8. se creeaza `Goal`;
+9. se face decompozitie partiala.
+
+Deci sistemul nu ia goal-ul brut al utilizatorului ca adevar final.
+Il trece printr-un proces de contextualizare si restructurare.
+
+
+17. DecomposeGoal
+
+`DecomposeGoal` sparge un obiectiv mare in subgoal-uri.
+
+Proces:
+
+- genereaza prompt cu context comportamental;
+- include istoric, parinti, chain-uri de goals;
+- ruleaza si un DS suplimentar pentru personal context;
+- cere AI-ului un JSON cu subgoals;
+- valideaza strict structura;
+- creeaza copil dupa copil;
+- le leaga intre ele prin `prev/next`;
+- recalculeaza timpul total.
+
+Observatia cheie:
+
+- decompozitia nu este doar sintactica;
+- incearca sa fie personalizata pe baza identitatii si istoricului.
+
+
+18. Repair si adaptare de goals
+
+Exista o logica de auto-reparare a goal-urilor.
+
+Daca un leaf goal devine invalid temporal:
+
+- la inceput este extins cu 25%;
+- dupa cateva retry-uri, este "shortened" de AI.
+
+Asta sugereaza filosofia proiectului:
+
+- goal-ul nu este fix;
+- sistemul incearca sa-l faca realizabil;
+- esecul nu inseamna doar abandon, ci recalibrare.
+
+
+19. Rolul OpenAI in arhitectura
+
+OpenAI este folosit in mai multe locuri:
+
+- decompozitie input -> graf;
+- deep search;
+- deep search judge;
+- extractie goal;
+- decompozitie goal;
+- shorten goal.
+
+Deci AI-ul este folosit ca motor semantic de nivel inalt, in timp ce C-ul ramane executorul logic si containerul de stare.
+
+Asta inseamna:
+
+- semantic understanding este externalizat;
+- state management si tool execution sunt locale.
+
+Este un pattern rezonabil pentru un prototype.
+
+
+20. Serverul
+
+`c/srv/http-server.c` expune:
+
+- datele grafului;
+- rezultate de DS;
+- goal-uri;
+- evenimente prin SSE.
+
+Serverul nu pare nucleul arhitecturii, ci strat de transport.
+
+Practic:
+
+- CLI-ul porneste motorul;
+- serverul il face observabil pentru frontend.
+
+
+21. Rolul `globals`
+
+`globals.*` implementeaza o mica harta globala de pointeri.
+
+Este folosita pentru:
+
+- `ds_emit`
+- `goal_emit`
+
+Avantaj:
+
+- reduce dependentele directe dintre module.
+
+Dezavantaj:
+
+- introduce stare globala si cuplaj implicit.
+
+Ca demo e acceptabil. Ca arhitectura mare, ar trebui inlocuit cu dependency injection real sau cu un context de aplicatie explicit.
+
+
+22. Ce incearca sa optimizeze proiectul
+
+Din cod se vede clar ca autorul incearca sa optimizeze pentru:
+
+- personalizare semantica;
+- persistenta unei identitati;
+- investigatie explicabila in pasi;
+- corelare intre identitate si comportament;
+- decompozitie adaptiva a obiectivelor.
+
+Nu optimizeaza in primul rand pentru:
+
+- performanta extrema;
+- siguranta la productie;
+- robustete operationala;
+- concurenta;
+- modularitate riguroasa.
+
+
+23. Puncte forte ale arhitecturii
+
+23.1. Separare buna de concepte
+
+Separarea intre:
+
+- identity graph
+- goal system
+- deep search
+
+este buna si bine gandita conceptual.
+
+23.2. Activation vs weight
+
+Aceasta dualitate este foarte utila si este aplicata consecvent.
+
+23.3. Contexte psihologice explicite
+
+Modelul cu 5 contexte face sistemul mai interpretabil si reduce unele ambiguitati semantice.
+
+23.4. Agent orchestration clara
+
+Planner + executor + judge este o structura solida pentru un experimental agent system.
+
+23.5. Goal-urile ca behavioral evidence
+
+Aceasta este o decizie foarte buna de produs si de modelare.
+
+
+24. Limite si slabiciuni tehnice
+
+24.1. Dependenta foarte mare de OpenAI
+
+Fara OpenAI, aproape tot pipeline-ul semantic se opreste.
+
+24.2. Global state
+
+Exista multe elemente globale:
+
+- `Nodes`
+- `ConnectionCount`
+- `Contexts`
+- `GOAL_CONTAINER`
+- global pointer map
+
+Asta face sistemul mai greu de testat si izolat.
+
+24.3. Memory management manual
+
+Totul este facut manual cu:
+
+- `malloc`
+- `realloc`
+- `free`
+
+Pentru un demo e normal, dar riscul de bug-uri este real.
+
+24.4. Multe euristici
+
+Formulele de scoring sunt utile, dar sunt mai degraba hand-tuned decat validate empiric.
+
+24.5. Robustete limitata
+
+Se bazeaza mult pe:
+
+- `cassert`
+- presupuneri puternice despre formatul AI output-ului
+
+In productie ar ceda usor.
+
+24.6. Lipsa unui model clar de persistenta
+
+Exista export/import, dar nu pare un persistence layer matur.
+
+
+25. Ce este "deep" in Deep Search
+
+Numele nu vine doar din marketing.
+
+Este "deep" din 3 motive:
+
+1. exploreaza iterativ in mai multe runde;
+2. poate explora structural recursiv subgraful;
+3. combina doua memorii:
+   - identitate
+   - comportament
+
+Totusi, nu este "deep" in sens academic de reasoning system formal. Este mai degraba:
+
+- guided graph investigation with LLM orchestration.
+
+
+26. Ce este "neuro" in Neuroengine
+
+Nu este "neuro" in sens de neural network.
+
+Este "neuro" mai degraba metaforic, pentru ca:
+
+- are activare;
+- are decay;
+- are legaturi intre concepte;
+- are semnale de importanta;
+- are ideea de salience si persistent relevance.
+
+Mai corect spus:
+
+- este un semantic salience graph engine.
+
+
+27. Obiectivele mari ale proiectului
+
+Din implementare rezulta urmatoarele obiective implicite:
+
+- construirea unei identitati software a utilizatorului;
+- explorarea acestei identitati prin instrumente controlate;
+- personalizarea planificarii si investigarii;
+- transformarea goal-urilor in procese adaptive;
+- obtinerea unei aplicatii interactive cu vizualizare a grafului.
+
+Practic, proiectul vrea sa fie un fel de:
+
+- personal cognitive backend
+
+mai mult decat un simplu task manager sau simple note graph.
+
+
+28. Judecata finala asupra arhitecturii
+
+Arhitectura este mai buna conceptual decat executia ei concreta.
+
+Adica:
+
+- ideea de produs este clara;
+- delimitarea conceptelor este buna;
+- deep search-ul este surprinzator de coerent pentru un demo;
+- goal system-ul are o directie interesanta;
+- neuroengine-ul are o metafora consistenta.
+
+Dar:
+
+- implementarea este inca experimentala;
+- multe parti sunt fragile;
+- exista mult cod de demo, debugging si iteratie rapida;
+- sistemul nu este pregatit pentru productie.
+
+Cel mai important lucru de retinut este acesta:
+
+partea din `c/` nu este doar "un backend care apeleaza OpenAI", ci un runtime personalizat care incearca sa construiasca o memorie identitara si un protocol de investigare peste ea.
+
+
+29. Rezumat scurt
+
+`Neuroengine`:
+
+- graf semantic ierarhic;
+- 5 contexte psihologice;
+- activare + weight;
+- decay temporal;
+- update euristic de relevanta.
+
+`Deep Search`:
+
+- agent investigativ constrans;
+- o comanda per pas;
+- planner + executor + judge;
+- opereaza peste graf si goals.
+
+`Goal System`:
+
+- memorie comportamentala;
+- personalizare prin DS;
+- decompozitie AI;
+- adaptare si reparatie in timp.
+
+`Scopul proiectului`:
+
+- sa modeleze utilizatorul;
+- sa lege identitatea de comportament;
+- sa produca investigatii si goals personalizate.
+
+
+30. Concluzie
+
+Partea `c/` este un nucleu experimental de "personal intelligence engine". Nu este un motor neural adevarat, dar este un sistem coerent de memorie semantica + investigare ghidata + planificare adaptiva.
+
+Valoarea lui principala nu sta in performanta sau in eleganta C-ului, ci in modelul conceptual:
+
+- identitatea este graf;
+- comportamentul este sistem de goals;
+- investigatia este protocol controlat;
+- AI-ul este folosit ca interpret semantic, nu ca singurul loc unde traieste logica.
+
+Pentru un demo/WIP, ideea este serioasa si destul de bine structurata.
