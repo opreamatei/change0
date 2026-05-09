@@ -5,6 +5,24 @@
 Goal *GOAL_CONTAINER[1024];
 size_t GOAL_CONTAINER_COUNT = INITIAL_GOAL_INDEX;
 
+static const char charset[] =
+"abcdefghijklmnopqrstuvwxyz"
+"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+"0123456789";
+
+void random_id(char *out, size_t len){
+	srand((unsigned int)time(NULL));
+	size_t charset_size = sizeof(charset) - 1;
+
+	out[0] = 'g';
+
+	for (size_t i = 1; i < len; ++i) {
+		out[i] = charset[rand() % charset_size];
+	}
+
+	out[len] = '\0';
+}
+
 enum GOAL_STATUS ValidateGoal(Goal *g, time_t now)
 {
 	// parent goals are valid because they depend on children validation
@@ -24,9 +42,9 @@ time_t CalcGoalRequiredTime(Goal *g){
 	change_assert(g, "Goal with required time of 0 must not exist [%s]", g->title.p);
 
 	/*
-		If a goal has children, return the children sum
-		else return the default required time 
-	*/
+	   If a goal has children, return the children sum
+	   else return the default required time 
+	   */
 
 	if (g->subgoals_len == 0){
 		return g->required_time;
@@ -36,7 +54,7 @@ time_t CalcGoalRequiredTime(Goal *g){
 
 	for (size_t i = 0; i < g->subgoals_len; i++){
 		Goal *subgoal = FindGoalFromIndex(g->subgoals[i]);
-		
+
 		sum += CalcGoalRequiredTime(subgoal);		
 	}
 
@@ -47,10 +65,10 @@ time_t CalcGoalRequiredTime(Goal *g){
 }
 
 void GoalSystemLazyLoad(goal_emit_like_func *goal_emit){
-    if (*goal_emit == NULL){
-        *goal_emit = (goal_emit_like_func)ReadGlobalPointer(FSTRING_SIZE_PARAMS("goal_emit"));
-	change_assert(goal_emit, "Can't load goal_emit");
-    }
+	if (*goal_emit == NULL){
+		*goal_emit = (goal_emit_like_func)ReadGlobalPointer(FSTRING_SIZE_PARAMS("goal_emit"));
+		change_assert(goal_emit, "Can't load goal_emit");
+	}
 }
 
 Goal *ExternalFindGoal(size_t id){
@@ -66,13 +84,15 @@ void CreateGoalDSId(char* name, char* deep_search_id){
 }
 
 // AI generated function
-void CreateSubgoalId(Goal *parent, size_t child_index, char out[33])
+void CreateSubgoalId(Goal *parent, size_t child_index, goalIDType out)
 {
-	memset(out, 0, 33);
+	memset(out, 0, GOAL_ID_SIZE + 1);
 
-	int n = snprintf(out, 33, "g%zu-%zu", parent->globalIndex, child_index + 1);
-
-	change_assert(n > 0 && n < 33, "Failed to create subgoal id.\n");
+	//int n = snprintf(out, 33, "g%zu-%zu", parent->globalIndex, child_index + 1);
+	// TODO merge the two techniques
+	random_id(out, GOAL_ID_SIZE + 1);
+	out[32] = '\0';
+	//change_assert(n > 0 && n < 33, "Failed to create subgoal id.\n");
 }
 
 Goal *CreateGoal(char goalId[], String *input_goal, String *input_extrainfo, size_t estimated_time, size_t parent_index, size_t depth)
@@ -117,7 +137,7 @@ Goal *CalcGoalRoot(Goal *g){
 	}
 	return g;
 }
- 
+
 Goal **GetGoalsContainer(size_t *len){
 	*len = GOAL_CONTAINER_COUNT - INITIAL_GOAL_INDEX;
 	return &GOAL_CONTAINER[1];
@@ -132,7 +152,7 @@ void PersonalizeGoal(String* input1, String *input2, String* out, char* goalId, 
 
 	Task task = {0};
 	create_goal_task(input1, input2, &task);
-	
+
 	// customize goal
 	start_ds_session(&task, search_id, out);
 
@@ -142,13 +162,13 @@ Goal *FindGoalByID(goalIDType id){
 	// TODO : use a goal_id
 	size_t len = GOAL_CONTAINER_COUNT - INITIAL_GOAL_INDEX;
 	Goal** goals = GetGoalsContainer(&len);
-	
+
 	for (size_t i = 0; i < len; i++){
 		Goal* goal = goals[i];
 		if (strcmp(goal->id, id) == 0)
 			return goal;
 	}
-		return NULL;
+	return NULL;
 }
 
 time_t StartGoal(goalIDType goalID){
@@ -158,7 +178,7 @@ time_t StartGoal(goalIDType goalID){
 	time_t now = time(NULL);
 
 	g->start_date = now;
-	
+
 	return now;
 }
 
@@ -169,6 +189,6 @@ time_t EndGoal(goalIDType goalID){
 	time_t now = time(NULL);
 
 	g->end_date = now;
-	
+
 	return now;
 }

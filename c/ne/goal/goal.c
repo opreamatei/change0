@@ -137,7 +137,18 @@ Goal* CreateUserGoal(String *input1, String *input2, goalIDType goalId)
 
 	PersonalizeGoal(input1, input2, &deep_search_result, goalId, start_ds_session);
 	goal_emit(goalId, "deep-search-final-recomandation", deep_search_result.p, deep_search_result.len);
-	ExtractGoalFromText(&deep_search_result, &title, &extra_info, &estimated_time, 1);
+	
+	_Bool success = 0;
+	size_t depth_error = 0;
+	while (!success){
+		success = ExtractGoalFromText(&deep_search_result, &title, &extra_info, &estimated_time, 1);
+		depth_error++; 
+		change_assert(depth_error < 10, "Depth went way to high");
+		
+		if (!success){
+			printf("%s, %s, %zu", title.p, extra_info.p, estimated_time);
+		}
+	}
 
 	// emit info to client
 	goal_emit(goalId, "title", title.p, title.len);
@@ -168,7 +179,7 @@ _Bool DecomposeGoal(Goal *g){
 	
 	if (g->subgoals_len != 0){
 		printf("Goal seems already decomposed.\n");
-		return 0;
+		return 1;
 	}
 	if (g->required_time < GOAL_MIN_SECONDS){
 		printf("Goal si too short to decompose, shortest is 15 minutes");

@@ -256,6 +256,8 @@ void run4(json_value* doc, String *dynamic_mem, char* ds_id){
 		for (size_t i = 0; i < goals_len; i++){
 			const Goal* g = goals[i];
 
+			if (g->parent > 0) continue;
+
 			const char* started_on;
 			const char* finished_on;
 
