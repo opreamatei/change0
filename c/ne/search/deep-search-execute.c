@@ -16,7 +16,11 @@ void exec_response(json_value* doc, String *dynamic_mem, size_t depth, String *c
 	
 	parse_exec_response(doc, &finished, &original_conclusion, &command);
 
-	cassert(!(finished && !original_conclusion), "Error : Finished but no conclusion passed");
+	if (finished && !original_conclusion){
+		CatFixed(dynamic_mem, "\nError : AI Model tried to finish, but have not passed a \"conclusion\" in response.");
+		//cassert(!(finished && !original_conclusion), "Error : Finished but no conclusion passed");
+		return;
+	}
 
 	if (finished && original_conclusion){
 		CatString(conclusion, original_conclusion->u.string.ptr, original_conclusion->u.string.length);
