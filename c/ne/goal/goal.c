@@ -34,7 +34,7 @@ static void shorten_goal(Goal *g, time_t now){
 
 	String new_title, new_extra_info;
 	time_t new_estimated_time = 0; // this should not matter
-	ExtractGoalFromText(out, &new_title, &new_extra_info, &new_estimated_time, 0);
+	ExtractGoalFromText(out, &new_title, &new_extra_info, &new_estimated_time, 0, NULL);
 	
 	change_assert(new_title.len > 1 && new_extra_info.len > 1, "Goal title or extra info is broken. title : [%s], info : [%s]\n", new_title.p, new_extra_info.p);
 
@@ -142,15 +142,25 @@ Goal* CreateUserGoal(String *input1, String *input2, start_ds_session_like_func*
 	
 	_Bool success = 0;
 	size_t depth_error = 0;
+	String feedback_intervention; InitString(&feedback_intervention, 512);
+
 	while (!success){
-		success = ExtractGoalFromText(&deep_search_result, &title, &extra_info, &estimated_time, 1);
+		success = ExtractGoalFromText(&deep_search_result, &title, &extra_info, &estimated_time, 1, &feedback_intervention);
+
+		if (estimated_time == 0){
+			CatTemplateString(&feedback_intervention, "\n\nServer intervention : \"The server detected your previous response (%s) had an invalid estimate_time of 0, please consider estimated time being the total time of the goal, 0 is not allowed. Please Retry.\n\"", title.p);
+			success = 0;
+		}
+
 		depth_error++; 
 		change_assert(depth_error < 10, "Depth went way to high");
 		
 		if (!success){
-			printf("%s, %s, %zu", title.p, extra_info.p, estimated_time);
+			printf("\n\nERROR WHEN EXTRACTING, WARING THIS WILL NOT SAVE : %s, %s, %zu", title.p, extra_info.p, estimated_time);
 		}
 	}
+
+	FreeString(&feedback_intervention);
 
 	// emit info to client
 	goal_emit(goalId, "title", title.p, title.len);

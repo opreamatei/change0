@@ -175,6 +175,23 @@ time_t EndGoal(goalIDType goalID){
 	return now;
 }
 
+static size_t EstimateGoalsJSONSize(Goal **container, size_t goals_amm) {
+    size_t total = 128; // '[' + ']'
+
+    for (size_t i = 0; i < goals_amm; i++) {
+        Goal *g = container[i];
+
+        total += 256; 
+
+        total += g->title.len;
+        total += g->extra_info.len;
+
+        total += g->subgoals_len * 24;
+    }
+
+    return total;
+}
+
 void SerializeAllGoals(String *buffer){
 
 	size_t goals_amm = 0;
@@ -185,15 +202,55 @@ void SerializeAllGoals(String *buffer){
 		return;
 	};
 
-	ResizeString(buffer, goals_amm * 1024 + 2048);
+	ResizeString(buffer, EstimateGoalsJSONSize(container, goals_amm));
+	EmptyString(buffer);
 
 	CatFixed(buffer, "[");
-	for (size_t i = 0; i < goals_amm; i++){
-		Goal *g = container[i];
-		CatTemplateString(buffer,
-				"%c",
 
-				i != goals_amm - 1 ? ',' : ' ');
+	for (size_t i = 0; i < goals_amm; i++) {
+		Goal *g = container[i];
+
+		CatTemplateString(buffer,
+				"{"
+				"\"title\":\"%s\","
+				"\"extra_info\":\"%s\","
+				"\"start_date\":%lld,"
+				"\"end_date\":%lld,"
+				"\"required_time\":%lld,"
+				"\"subgoals_len\":%zu,"
+				"\"parent\":%zu,"
+				"\"prev\":%zu,"
+				"\"next\":%zu,"
+				"\"globalIndex\":%zu,"
+				"\"depth\":%zu,"
+				"\"retry_depth\":%zu,"
+				"\"priority\":%zu,"
+				"\"id\":%zu"
+				"}%c",
+				g->title.p,
+				g->extra_info.p,
+				(long long)g->start_date,
+				(long long)g->end_date,
+				(long long)g->required_time,
+				g->subgoals_len,
+				g->parent,
+				g->prev,
+				g->next,
+				g->globalIndex,
+				g->depth,
+				g->retry_depth,
+				g->priority,
+				(size_t)g->id,
+				i != goals_amm - 1 ? ',' : ' '
+					);
 	}
+
 	CatFixed(buffer, "]");
+}
+
+void ExportGoalsTo(char* path){
+	String buff; InitString(&buff,1);
+	SerializeAllGoals(&buff);
+	dump_to_file(path, buff.p, buff.len);
+	FreeString(&buff);
 }

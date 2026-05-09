@@ -12,6 +12,7 @@
 #define DEFAULT_MOCK_DIRECTORY PROJECT_ROOT "mocks/"
 #define DEFAULT_DUMP_DIRECTORY PROJECT_ROOT "dumps/"
 #define DEFAULT_GRAPH_EXPORT PROJECT_ROOT "graph-copy.json"
+#define DEFAULT_GOALS_DIRECTORY PROJECT_ROOT "goals-copy.json"
 #define CONFIG_STR(x) #x
 #define CONFIG_XSTR(x) CONFIG_STR(x)
 #define DEFAULT_MOCK_NODES_COUNT 12
@@ -541,8 +542,14 @@
 "TITLE must be short, concrete, action-oriented, and contain only the adapted goal itself, not findings or explanations. " \
 "TITLE must name the exact project or tool type when the evidence supports it. Avoid generic titles like coding project, app, tool, or game-related application by themselves. " \
 "If the evidence supports multiple variants, choose the single most plausible concrete variant and name it directly in TITLE. " \
+"You must always make an explicit duration judgment for this personalized goal, even when the source goal did not provide one. Base it on the concrete scope you selected. " \
+"Do not leave the duration implicit inside EXTRA_INFO. Do not describe it with words only. Always emit the final numeric duration on the ESTIMATED_TIME line. " \
 "ESTIMATED_TIME must be a plain integer in seconds with no words, punctuation, or explanation. " \
 "ESTIMATED_TIME is mandatory and must never be omitted or replaced with text like n/a, unknown, or approximate. " \
+"ESTIMATED_TIME must represent total real-world elapsed time for this exact personalized goal, not just focused work time. " \
+"If you describe a scope like weekend project, one week, two weeks, one month, or three days, convert that scope into integer seconds and output only that integer. " \
+"Do not output ranges, qualifiers, units, prose, or symbolic forms such as 2-3 weeks, ~604800, 604800 seconds, or about a week. Output only one integer. " \
+"Use 0 only if the goal text is truly too incomplete to estimate after personalization. Otherwise provide your best concrete integer estimate. " \
 "For a one-week project, provide a realistic one-week scale estimate in seconds rather than 0. " \
 "Structure your final conclusion in clearly separated sections so another system can extract them reliably: " \
 \
@@ -555,6 +562,8 @@
 "ESTIMATED_TIME: " \
 "<integer number of seconds> " \
 \
+"Example valid ending: TITLE: Build a lightweight personal finance dashboard EXTRA_INFO: Tailor it for the user's habit of tracking work and outcomes, focus on manual entry plus weekly summaries, and avoid bank integrations in the first version ESTIMATED_TIME: 1209600 " \
+"Example invalid endings: ESTIMATED_TIME: about two weeks ; ESTIMATED_TIME: 1209600 seconds ; missing ESTIMATED_TIME ; putting the duration only inside EXTRA_INFO. " \
 "Do not mix sections. Keep each section explicit, clean, and unambiguous. " \
 "Do not place labels such as Main findings, Relevant contexts, Strongest graph structures, or similar text inside TITLE."
 

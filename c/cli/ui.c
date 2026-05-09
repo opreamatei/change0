@@ -91,8 +91,12 @@ static void Run(int i){
 		}
 	}
 
-	if (options[i].type == EXPORT){
+	if (options[i].type == SAVEGRAPH){
 		ExportGraphTo(DEFAULT_GRAPH_EXPORT);
+	}
+
+	if (options[i].type == SAVEGOALS){
+		ExportGraphTo(DEFAULT_GOALS_DIRECTORY);
 	}
 
 	if (options[i].type == DEEPRESEARCH){

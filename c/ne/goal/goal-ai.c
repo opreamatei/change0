@@ -7,10 +7,14 @@
 #include "deep-search-session.h"
 #include "goal-info.h"
 
-void AICallExtractionGoalSchema(String *input, String *out)
+static void AICallExtractionGoalSchema(String *input, String *out, String* feedback)
 {
     String prompt;
     InitString(&prompt, input->len + 2048);
+
+    if (feedback != NULL){
+	    CatString(&prompt, feedback->p, feedback->len);
+    }
 
     CatTemplateString(&prompt, GOAL_JSON_EXTRACT_PROMPT, c_str(input));
 
@@ -37,7 +41,8 @@ void AICallExtractionGoalSchema(String *input, String *out)
     FreeString(result);
 }
 
-_Bool ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t *estimated_time, _Bool forceEstTime){
+_Bool ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t *estimated_time, _Bool forceEstTime, String *feedback){
+	
 	String json_extract_result;
 
 	// extract process goals
@@ -46,7 +51,7 @@ _Bool ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t
 
 	printf("Extracing goal... \n\n");
 
-	AICallExtractionGoalSchema(text, &json_extract_result);
+	AICallExtractionGoalSchema(text, &json_extract_result, feedback);
 
 	json_value* doc = json_parse(c_str(&json_extract_result), json_extract_result.len);
 	//change_assert(doc && doc->type == json_object, "Goal is not an object or is not a json\n\n\n%s", c_str(text));
@@ -249,4 +254,3 @@ String *CallGoalDecompositionAI(String *prompt)
 
 	return result;
 }
-
