@@ -8,10 +8,11 @@ enum INPUT_OPTION {
 	MESSAGE,
 	NMESSAGE,
 	REGEN_OPENAI,
-	EXPORT,
 	DEEPRESEARCH,
 	STARTSERVER,
 	CREATEGOAL,
+	SAVEGOALS,
+	SAVEGRAPH,
 };
 
 typedef struct {
@@ -25,10 +26,11 @@ InputOption options[] = {
     {MESSAGE, 'u', "Write user input."},
     {REGEN_OPENAI, 'r', "Regen mocks with ChatGPT"},
     {NMESSAGE, 'n', "Create n messages directly from pre-cached mocks."},
-    {EXPORT, 'e', "Export brain to json."},
     {DEEPRESEARCH, 'd', "Run deep research"},
     {STARTSERVER, 's', "Start HTTP Server"},
-    {CREATEGOAL, 'g', "Create a new Goal"}
+    {CREATEGOAL, 'g', "Create a new Goal"},
+    {SAVEGRAPH, 'c', "Copy graph to json"},
+    {SAVEGOALS, 'b', "Copy goals to json"},
 };
 #define OPTIONS_COUNT (sizeof(options) / sizeof(InputOption))
 
