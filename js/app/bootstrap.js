@@ -1,4 +1,4 @@
-import {$,EP,meta,transport,resize,base,status,id,local,save,color} from "./shared.js";
+import {$,EP,meta,transport,resize,base,status,id,local,save,color,loadEndpointBase,setEndpointBase,defaultEndpointBase} from "./shared.js";
 import {createGraphView} from "./graph-view.js";
 
 const toastState={timer:0};
@@ -47,6 +47,8 @@ const graphView=createGraphView({
   toast,
   confirmAction:confirmGraphAction
 });
+
+let endpointBase=loadEndpointBase();
 
 const R={sessions:local("graph-viewer.research-sessions.v5",[]),active:"",prepared:id("rs"),source:null,state:"disconnected",busy:false,first:0};
 const L={items:local("graph-viewer.goals.v5",[]),server:[],byIndex:new Map(),active:"",source:null,state:"disconnected",busy:false,load:false,decomp:false,selected:0,focus:0,explode:false,mode:"structure",first:0};
@@ -106,6 +108,45 @@ const goalStructureState={
 
 if(!R.active&&R.sessions.length)R.active=R.sessions[0].id;
 if(!L.active&&L.items.length)L.active=L.items[0].id;
+
+function closeStream(store){
+  if(!store.source)return;
+  store.source.close();
+  store.source=null;
+}
+
+function closeActiveStreams(){
+  closeStream(R);
+  closeStream(L);
+}
+
+function syncEndpointUi(message=`Using ${endpointBase}`,good=true){
+  const input=$("endpoint-base-input");
+  const statusNode=$("endpoint-status");
+  const resetButton=$("reset-endpoint");
+  if(input)input.value=endpointBase;
+  if(statusNode){
+    statusNode.textContent=message;
+    statusNode.classList.toggle("is-good",good);
+    statusNode.classList.toggle("is-bad",!good);
+  }
+  if(resetButton)resetButton.disabled=endpointBase===defaultEndpointBase();
+}
+
+async function applyEndpointChange(rawValue,{reloadGraph=true}={}){
+  endpointBase=setEndpointBase(rawValue);
+  closeActiveStreams();
+  R.state="disconnected";
+  L.state="disconnected";
+  R.detail="Ready.";
+  L.detail="Ready.";
+  syncEndpointUi(`Using ${endpointBase}`,true);
+  panels();
+  if(reloadGraph){
+    await graphView.loadGraph();
+  }
+  return endpointBase;
+}
 
 function itemList(root,items,active,onClick,empty){
   root.innerHTML="";
@@ -292,6 +333,7 @@ function panels(){
   $("goal-structure-count-chip").textContent=`${L.server.length} Goals`;
   const selectedGoal=L.byIndex.get(L.selected);
   $("goal-structure-selected-chip").textContent=selectedGoal?selectedGoal.title:"No Selection";
+  $("message-panel-status").textContent=`POST ${EP.msg}`;
 }
 
 function activeResearch(){return (R.sessions||[]).find(session=>session.id===R.active)?.events||[]}
@@ -1132,6 +1174,24 @@ async function submitMsg(event){
   }
 }
 
+async function submitEndpoint(event){
+  event.preventDefault();
+  const nextValue=$("endpoint-base-input").value.trim();
+  $("apply-endpoint").disabled=true;
+  $("reset-endpoint").disabled=true;
+  try{
+    await applyEndpointChange(nextValue,{reloadGraph:true});
+    toast("Server endpoint updated");
+  }catch(error){
+    const message=transport(error);
+    syncEndpointUi(message,false);
+    toast(message,false);
+  }finally{
+    $("apply-endpoint").disabled=false;
+    $("reset-endpoint").disabled=endpointBase===defaultEndpointBase();
+  }
+}
+
 $("graph-confirm-cancel").onclick=()=>closeConfirm(false);
 $("graph-confirm-accept").onclick=()=>closeConfirm(true);
 $("graph-confirm-backdrop").addEventListener("click",event=>{if(event.target===$("graph-confirm-backdrop"))closeConfirm(false)});
@@ -1156,6 +1216,30 @@ $("message-input").addEventListener("keydown",event=>{
   if(event.key==="Enter"){
     event.preventDefault();
     $("message-form").requestSubmit();
+  }
+});
+$("endpoint-form").onsubmit=submitEndpoint;
+$("endpoint-form").addEventListener("pointerdown",event=>event.stopPropagation());
+$("endpoint-form").addEventListener("mousedown",event=>event.stopPropagation());
+$("reset-endpoint").onclick=async()=>{
+  $("apply-endpoint").disabled=true;
+  $("reset-endpoint").disabled=true;
+  try{
+    await applyEndpointChange(defaultEndpointBase(),{reloadGraph:true});
+    toast("Server endpoint reset");
+  }catch(error){
+    const message=transport(error);
+    syncEndpointUi(message,false);
+    toast(message,false);
+  }finally{
+    $("apply-endpoint").disabled=false;
+    $("reset-endpoint").disabled=endpointBase===defaultEndpointBase();
+  }
+};
+$("endpoint-base-input").addEventListener("keydown",event=>{
+  if(event.key==="Enter"){
+    event.preventDefault();
+    $("endpoint-form").requestSubmit();
   }
 });
 $("research-form").onsubmit=startResearch;
@@ -1208,6 +1292,7 @@ function initGoalView(){
 }
 
   try{
+    syncEndpointUi(`Using ${endpointBase}`,true);
     panels();
     drawResearchTimeline();
     drawGoalTimeline();
