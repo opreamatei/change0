@@ -137,14 +137,19 @@ Goal* CreateUserGoal(String *input1, String *input2, start_ds_session_like_func*
 	random_id(goalId, GOAL_ID_SIZE + 1);
 	goalId[32] = '\0';
 
-	PersonalizeGoal(input1, input2, &deep_search_result, goalId, start_ds_session);
-	goal_emit(goalId, "deep-search-final-recomandation", deep_search_result.p, deep_search_result.len);
+	InitString(&deep_search_result, 2048);
 	
 	_Bool success = 0;
 	size_t depth_error = 0;
 	String feedback_intervention; InitString(&feedback_intervention, 512);
 
 	while (!success){
+		EmptyString(&deep_search_result);
+
+		PersonalizeGoal(input1, input2, &deep_search_result, goalId, &feedback_intervention, start_ds_session);
+
+		goal_emit(goalId, "deep-search-final-recomandation", deep_search_result.p, deep_search_result.len);
+
 		success = ExtractGoalFromText(&deep_search_result, &title, &extra_info, &estimated_time, 1, &feedback_intervention);
 
 		if (estimated_time == 0){
@@ -229,8 +234,10 @@ _Bool DecomposeGoal(Goal *g){
 		String title;
 		String extrainfo;
 		size_t estimated_time = 0;
+		time_t min_pause_to_next = 0;
+		time_t pause_to_next = 0;
 
-		ParseDecompositionSubgoal(item, &title, &extrainfo, &estimated_time);
+		ParseDecompositionSubgoal(item, &title, &extrainfo, &estimated_time, &min_pause_to_next, &pause_to_next);
 
 		char child_goal_id[33];
 		CreateSubgoalId(g, i, child_goal_id);
@@ -243,6 +250,8 @@ _Bool DecomposeGoal(Goal *g){
 			g->globalIndex,
 			g->depth + 1
 		);
+		child->minPauseToNext = min_pause_to_next;
+		child->pauseToNext = pause_to_next;
 
 		subgoal_indexes[i] = child->globalIndex;
 
@@ -287,5 +296,3 @@ Goal* ComputePartialDecomposition(Goal *goal){
 
 	return g;
 }
-
-

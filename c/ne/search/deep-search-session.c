@@ -63,7 +63,7 @@ _Bool try_terminate(DS_memory *mem, String *out, size_t depth, Task* task, Strin
 
 static inline void write_feedback(DS_memory* mem, String* out, String* reason){
 	printf("\n%s\n\n", reason->p);
-	CatTemplateString(&mem->persistent, "{ Server Intervention :  You had previously tried to execute this task, but failed the automatic validation, here is feedback: [%s]. Your previous response that caused the failing is [%s]. You may repeat the round with this hint. }", c_str(reason), &mem->dynamic.p);
+	CatTemplateString(&mem->persistent, "{ Server Intervention :  You had previously tried to execute this task, but failed the automatic validation, here is feedback: [%s]. Your previous response that caused the failing is [%s]. You may repeat the round with this hint. }", c_str(reason), c_str(&mem->dynamic));
 	EmptyString(&mem->dynamic);
 }
 

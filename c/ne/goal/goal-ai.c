@@ -12,9 +12,12 @@ static void AICallExtractionGoalSchema(String *input, String *out, String* feedb
     String prompt;
     InitString(&prompt, input->len + 2048);
 
+    /*
+     * Feedback should only be necesary on the personalize goal
     if (feedback != NULL){
 	    CatString(&prompt, feedback->p, feedback->len);
     }
+    */
 
     CatTemplateString(&prompt, GOAL_JSON_EXTRACT_PROMPT, c_str(input));
 
@@ -49,6 +52,9 @@ _Bool ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t
 	InitString(title, 256); InitString(extrainfo, 1024);
 	InitString(&json_extract_result, 2048);
 
+	if (feedback)
+		EmptyString(feedback);
+
 	printf("Extracing goal... \n\n");
 
 	AICallExtractionGoalSchema(text, &json_extract_result, feedback);
@@ -82,6 +88,16 @@ _Bool ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t
 			*estimated_time = candidate.value->u.integer;
 		}
 	}
+
+	if (extrainfo->len < 3)
+		CatFixed(feedback, "\nFeedback Error : Extra info length is too small or you haven't passed an extra info.\n");
+	
+	if (title->len < 3)
+		CatFixed(feedback, "\nFeedback Error : Title length is too small or you haven't passed a title.\n");
+
+	if (estimated_time == 0 && forceEstTime)
+		CatFixed(feedback, "\nFeedback Error : You either forgot to pass estimated_time or its length was set to 0 which is not allowed.\n");
+	
 
 	json_value_free(doc);
 
@@ -207,21 +223,29 @@ void ParseDecompositionSubgoal(
 	json_value *item,
 	String *title,
 	String *extrainfo,
-	size_t *estimated_time
+	size_t *estimated_time,
+	time_t *min_pause_to_next,
+	time_t *pause_to_next
 ) {
 	change_assert(item && item->type == json_object, "Subgoal item is not an object.\n");
 
 	json_value *title_json = json_object_get(item, "title");
 	json_value *extrainfo_json = json_object_get(item, "extrainfo");
 	json_value *estimated_time_json = json_object_get(item, "estimated_time");
+	json_value *min_pause_to_next_json = json_object_get(item, "min_pause_to_next");
+	json_value *pause_to_next_json = json_object_get(item, "pause_to_next");
 
 	change_assert(title_json && title_json->type == json_string, "Subgoal title missing or invalid.\n");
 	change_assert(extrainfo_json && extrainfo_json->type == json_string, "Subgoal extrainfo missing or invalid.\n");
 	change_assert(estimated_time_json && estimated_time_json->type == json_integer, "Subgoal estimated_time missing or invalid.\n");
+	change_assert(min_pause_to_next_json && min_pause_to_next_json->type == json_integer, "Subgoal min_pause_to_next missing or invalid.\n");
+	change_assert(pause_to_next_json && pause_to_next_json->type == json_integer, "Subgoal pause_to_next missing or invalid.\n");
 
 	change_assert(title_json->u.string.length >= 3, "Subgoal title is too short.\n");
 	change_assert(extrainfo_json->u.string.length >= 10, "Subgoal extrainfo is too short.\n");
 	change_assert(estimated_time_json->u.integer > 0, "Subgoal estimated_time must be positive.\n");
+	change_assert(min_pause_to_next_json->u.integer >= 0, "Subgoal min_pause_to_next must be non-negative.\n");
+	change_assert(pause_to_next_json->u.integer >= 0, "Subgoal pause_to_next must be non-negative.\n");
 
 	InitString(title, title_json->u.string.length + 64);
 	CatString(title, title_json->u.string.ptr, title_json->u.string.length);
@@ -230,6 +254,8 @@ void ParseDecompositionSubgoal(
 	CatString(extrainfo, extrainfo_json->u.string.ptr, extrainfo_json->u.string.length);
 
 	*estimated_time = (size_t)estimated_time_json->u.integer;
+	*min_pause_to_next = (time_t)MIN(min_pause_to_next_json->u.integer, pause_to_next_json->u.integer);
+	*pause_to_next = (time_t)pause_to_next_json->u.integer;
 }
 
 // AI generated function

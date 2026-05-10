@@ -81,11 +81,11 @@ static _Bool ProcessArrayLinkage(json_value *entry, double weight, double activa
 	change_assert(a->type == json_string && b->type == json_string, "Error: Nodes are not strings");
 
 	Node* A = FindNode(a->u.string.ptr, a->u.string.length, NodeAt(context));
-	change_assert(A, "Node A doesn't not exist. [%s]", a->u.string.ptr);
+	//change_assert(A, "Node A doesn't not exist. [%s]", a->u.string.ptr);
 	if (!A) return 0;
 	A->lastTouched = time(NULL);
 	Node* B = FindNode(b->u.string.ptr, b->u.string.length, NodeAt(context));
-	change_assert(B, "Node B doesn't not exist. [%s]", a->u.string.ptr);
+	//change_assert(B, "Node B doesn't not exist. [%s]", a->u.string.ptr);
 	if (!B) return 0;
 	B->lastTouched = time(NULL);
 

@@ -382,6 +382,23 @@ function formatGoalLength(goal){
 
   return parts.slice(0,3).join(" ");
 }
+function formatDurationSeconds(totalSeconds){
+  const seconds=Math.max(0,Math.round(Number(totalSeconds)||0));
+  if(!seconds)return"0s";
+
+  const days=Math.floor(seconds/86400);
+  const hours=Math.floor((seconds%86400)/3600);
+  const minutes=Math.floor((seconds%3600)/60);
+  const leftoverSeconds=seconds%60;
+  const parts=[];
+
+  if(days)parts.push(`${days}d`);
+  if(hours)parts.push(`${hours}h`);
+  if(minutes)parts.push(`${minutes}m`);
+  if(!parts.length||leftoverSeconds)parts.push(`${leftoverSeconds}s`);
+
+  return parts.slice(0,3).join(" ");
+}
 function closeGoalStructureInspector(){
   $("goal-structure-inspector").classList.remove("is-visible");
   $("goal-structure-inspector").setAttribute("aria-hidden","true");
@@ -394,7 +411,9 @@ function openGoalStructureInspector(goal){
   const rows=[
     ["title",goal.title||"Untitled goal"],
     ["extra info",(goal.extra_info||"No extra info").trim()||"No extra info"],
-    ["length",formatGoalLength(goal)]
+    ["length",formatGoalLength(goal)],
+    ["min pause to next",formatDurationSeconds(goal.min_pause_to_next)],
+    ["pause to next",formatDurationSeconds(goal.pause_to_next)]
   ];
   $("goal-structure-inspector-title").textContent=goal.title||"Goal details";
   $("goal-structure-inspector-body").innerHTML=rows.map(([label,value])=>`
@@ -785,6 +804,8 @@ function normGoal(raw){
     start_date:Number(raw?.start_date||0),
     end_date:Number(raw?.end_date||0),
     required_time:Number(raw?.required_time||0),
+    min_pause_to_next:Number(raw?.min_pause_to_next||0),
+    pause_to_next:Number(raw?.pause_to_next||0),
     subgoals:Array.isArray(raw?.subgoals)?raw.subgoals.map(Number).filter(Number.isFinite):[],
     parent:Number(raw?.parent||0),
     depth:Number(raw?.depth||0)

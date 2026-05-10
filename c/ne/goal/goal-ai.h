@@ -36,7 +36,7 @@
       "\"items\":{" \
         "\"type\":\"object\"," \
         "\"additionalProperties\":false," \
-        "\"required\":[\"title\",\"extrainfo\",\"estimated_time\"]," \
+        "\"required\":[\"title\",\"extrainfo\",\"estimated_time\",\"min_pause_to_next\",\"pause_to_next\"]," \
         "\"properties\":{" \
           "\"title\":{" \
             "\"type\":\"string\"," \
@@ -49,6 +49,14 @@
           "\"estimated_time\":{" \
             "\"type\":\"integer\"," \
             "\"minimum\":1" \
+          "}," \
+          "\"min_pause_to_next\":{" \
+            "\"type\":\"integer\"," \
+            "\"minimum\":0" \
+          "}," \
+          "\"pause_to_next\":{" \
+            "\"type\":\"integer\"," \
+            "\"minimum\":0" \
           "}" \
         "}" \
       "}" \
@@ -60,6 +68,6 @@ _Bool ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t
 void SetGoalShortenPrompt(Goal* g, String* prompt, time_t now);
 void SetGoalDecompositionPrompt(Goal* g, String* prompt, time_t now);
 String *CallGoalDecompositionAI(String *prompt);
-void ParseDecompositionSubgoal(json_value *item,String *title,String *extrainfo,size_t *estimated_time);
+void ParseDecompositionSubgoal(json_value *item,String *title,String *extrainfo,size_t *estimated_time,time_t *min_pause_to_next,time_t *pause_to_next);
 
 #endif

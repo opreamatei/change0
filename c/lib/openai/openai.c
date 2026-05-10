@@ -19,6 +19,7 @@
 #define AI_OPENAI_HOST "api.openai.com"
 #define AI_OPENAI_PORT "443"
 #define AI_OPENAI_RAW_CAP (4 * 1024 * 1024)
+#define AI_OPENAI_MAX_RETRIES 5
 
 typedef struct {
     int fd;
@@ -189,6 +190,27 @@ static int ai_http_status_code(const char *http_response) {
     return 0;
 }
 
+static void ai_force_ascii_buffer(char *buf, size_t len) {
+    if (!buf) return;
+
+    for (size_t i = 0; i < len; i++) {
+        unsigned char ch = (unsigned char)buf[i];
+
+        if (ch == '\n' || ch == '\r' || ch == '\t') {
+            continue;
+        }
+
+        if (ch < 0x20 || ch > 0x7E) {
+            buf[i] = '?';
+        }
+    }
+}
+
+static void ai_force_ascii_string(String *s) {
+    if (!s || !s->p) return;
+    ai_force_ascii_buffer(s->p, s->len);
+}
+
 static int ai_extract_json_string_field(
     const char *json,
     const char *field,
@@ -241,6 +263,14 @@ static ai_openai_status ai_dup_string(const char *src, String *dst) {
     return AI_OPENAI_OK;
 }
 
+static _Bool ai_should_retry_status(ai_openai_status st) {
+    return st == AI_OPENAI_ERR_DNS ||
+           st == AI_OPENAI_ERR_CONNECT ||
+           st == AI_OPENAI_ERR_TLS ||
+           st == AI_OPENAI_ERR_WRITE ||
+           st == AI_OPENAI_ERR_READ;
+}
+
 static ai_openai_status ai_openai_request(
     const char *request,
     ai_openai_response *out,
@@ -248,74 +278,98 @@ static ai_openai_status ai_openai_request(
 ) {
     if (!request || !out) return AI_OPENAI_ERR_ARG;
 
-    memset(out, 0, sizeof(*out));
+    ai_openai_status last_status = AI_OPENAI_ERR_ARG;
 
-    ai_tls_conn conn;
+    for (int attempt = 0; attempt < AI_OPENAI_MAX_RETRIES; attempt++) {
+        memset(out, 0, sizeof(*out));
 
-    ai_openai_status st = ai_tls_connect(&conn);
-    if (st != AI_OPENAI_OK) {
-        return st;
-    }
+        ai_tls_conn conn;
 
-    st = ai_ssl_write_all(conn.ssl, request, strlen(request));
-    if (st != AI_OPENAI_OK) {
+        ai_openai_status st = ai_tls_connect(&conn);
+        if (st != AI_OPENAI_OK) {
+            last_status = st;
+            if (ai_should_retry_status(st) && attempt + 1 < AI_OPENAI_MAX_RETRIES) {
+                sleep(1);
+                continue;
+            }
+            return st;
+        }
+
+        st = ai_ssl_write_all(conn.ssl, request, strlen(request));
+        if (st != AI_OPENAI_OK) {
+            ai_tls_close(&conn);
+            last_status = st;
+            if (ai_should_retry_status(st) && attempt + 1 < AI_OPENAI_MAX_RETRIES) {
+                sleep(1);
+                continue;
+            }
+            return st;
+        }
+
+        String raw = {0};
+
+        st = ai_read_all(conn.ssl, &raw);
+
         ai_tls_close(&conn);
-        return st;
-    }
 
-    String raw = {0};
+        if (st != AI_OPENAI_OK) {
+            last_status = st;
+            if (ai_should_retry_status(st) && attempt + 1 < AI_OPENAI_MAX_RETRIES) {
+                sleep(1);
+                continue;
+            }
+            return st;
+        }
 
-    st = ai_read_all(conn.ssl, &raw);
+        int code = ai_http_status_code(c_str(&raw));
 
-    ai_tls_close(&conn);
+        if (code < 200 || code >= 300) {
+            dump_to_file(PROJECT_ROOT "sent.txt", request, strlen(request));
+            dump_to_file(PROJECT_ROOT "received.txt", c_str(&raw), raw.len);
 
-    if (st != AI_OPENAI_OK) {
-        return st;
-    }
+            out->raw_http = raw;
 
-    int code = ai_http_status_code(c_str(&raw));
+            char *body = ai_find_body(c_str(&out->raw_http));
+            if (body) {
+                ai_dup_string(body, &out->body);
+                ai_force_ascii_string(&out->body);
+            }
 
-    if (code < 200 || code >= 300) {
-        dump_to_file(PROJECT_ROOT "sent.txt", request, strlen(request));
-        dump_to_file(PROJECT_ROOT "received.txt", c_str(&raw), raw.len);
+            return AI_OPENAI_ERR_HTTP;
+        }
+
+        char *body = ai_find_body(c_str(&raw));
+        if (!body) {
+            FreeString(&raw);
+            return AI_OPENAI_ERR_PARSE;
+        }
 
         out->raw_http = raw;
 
-        char *body = ai_find_body(c_str(&out->raw_http));
-        if (body) {
-            ai_dup_string(body, &out->body);
-        }
-
-        return AI_OPENAI_ERR_HTTP;
-    }
-
-    char *body = ai_find_body(c_str(&raw));
-    if (!body) {
-        FreeString(&raw);
-        return AI_OPENAI_ERR_PARSE;
-    }
-
-    out->raw_http = raw;
-
-    st = ai_dup_string(body, &out->body);
-    if (st != AI_OPENAI_OK) {
-        ai_openai_response_free(out);
-        return st;
-    }
-
-    if (expect_id) {
-        if (!ai_extract_json_string_field(
-                c_str(&out->body),
-                "id",
-                out->id,
-                sizeof(out->id)
-            )) {
+        st = ai_dup_string(body, &out->body);
+        if (st != AI_OPENAI_OK) {
             ai_openai_response_free(out);
-            return AI_OPENAI_ERR_PARSE;
+            return st;
         }
+
+        ai_force_ascii_string(&out->body);
+
+        if (expect_id) {
+            if (!ai_extract_json_string_field(
+                    c_str(&out->body),
+                    "id",
+                    out->id,
+                    sizeof(out->id)
+                )) {
+                ai_openai_response_free(out);
+                return AI_OPENAI_ERR_PARSE;
+            }
+        }
+
+        return AI_OPENAI_OK;
     }
 
-    return AI_OPENAI_OK;
+    return last_status;
 }
 
 ai_openai_status ai_openai_create_response(
@@ -503,6 +557,7 @@ char *openai_extract_output_text_dup(json_value *root, size_t *out_len) {
 
                 memcpy(dup, text->u.string.ptr, len);
                 dup[len] = '\0';
+                ai_force_ascii_buffer(dup, len);
 
                 if (out_len) {
                     *out_len = len;

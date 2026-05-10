@@ -32,6 +32,9 @@ typedef struct GoalType {
 	size_t parent;
 	size_t prev;
 	size_t next;
+
+	time_t minPauseToNext;
+	time_t pauseToNext;
 	
 	size_t globalIndex;
 	size_t depth;
@@ -63,9 +66,16 @@ static inline void link_goals(Goal* a, Goal* b){
 	b->prev = a->globalIndex;
 }
 
-static void create_goal_task(String* input1, String* input2, Task *task){
-	ResizeString(&task->name, sizeof(GOAL_ADAPTATION_PROMPT) + input1->len + input2->len + 10);
-	size_t new_len = sprintf(c_str(&task->name), GOAL_ADAPTATION_PROMPT, c_str(input1), c_str(input2));
+static void create_goal_task(String* input1, String* input2, String *feedback, Task *task){
+	size_t feedback_len = feedback ? feedback->len : 0;
+	ResizeString(&task->name, sizeof(GOAL_ADAPTATION_PROMPT) + input1->len + input2->len + feedback_len + 32);
+	size_t new_len = sprintf(
+		c_str(&task->name),
+		GOAL_ADAPTATION_PROMPT,
+		c_str(input1),
+		c_str(input2),
+		feedback ? c_str(feedback) : ""
+	);
 	cassert(new_len < task->name.cap, "This should be impossible...\n");
 
 	task->name.len = new_len;
@@ -81,11 +91,14 @@ Goal *ExternalFindGoal(size_t id);
 time_t CalcGoalRequiredTime(Goal *g);
 enum GOAL_STATUS ValidateGoal(Goal *g, time_t now);
 void CreateGoalDSId(char* name, char* deep_search_id);
-void PersonalizeGoal(String* input1, String *input2, String* out, char* goalId, start_ds_session_like_func start_ds_session);
+void PersonalizeGoal(String* input1, String *input2, String* out, char* goalId, String *feedback, start_ds_session_like_func start_ds_session);
 
 Goal **GetGoalsContainer(size_t *len);
 Goal *CalcGoalRoot(Goal *g);
 Goal *FindGoalByID(goalIDType id);
+void SerializeAllGoals(String *buffer);
+void ExportGoalsTo(char* path);
+void LoadGoalsFromFile(char* path);
 
 time_t StartGoal(goalIDType goalID);
 time_t EndGoal(goalIDType goalID);

@@ -30,7 +30,7 @@
     "\"command\":{\"type\":[\"integer\",\"null\"],\"enum\":[1,2,3,4,5,6,null]}," \
     "\"finished\":{\"type\":[\"boolean\",\"null\"]}," \
     "\"conclusion\":{\"type\":[\"string\",\"null\"]}," \
-    "\"percentage\":{\"type\":[\"integer\",\"null\"],\"minimum\":0,\"maximum\":100}," \
+    "\"percentage\":{\"type\":[\"integer\",\"null\"],\"minimum\":1,\"maximum\":100}," \
     "\"criteria\":{\"type\":[\"string\",\"null\"],\"enum\":[\"activation\",\"weight\",null]}," \
     "\"node\":{\"type\":[\"string\",\"null\"]}," \
     "\"context\":{\"type\":[\"string\",\"null\"],\"enum\":[\"profesie\",\"emotie\",\"pasiuni\",\"generalitati\",\"subiectiv\",null]}," \

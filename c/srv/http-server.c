@@ -674,6 +674,8 @@ static void append_goal_json(String* out, Goal* g) {
 			"\"start_date\":%lld,"
 			"\"end_date\":%lld,"
 			"\"required_time\":%lld,"
+			"\"min_pause_to_next\":%lld,"
+			"\"pause_to_next\":%lld,"
 			"\"subgoals_len\":%zu,"
 			"\"subgoals\":[",
 		esc_id,
@@ -685,6 +687,8 @@ static void append_goal_json(String* out, Goal* g) {
 		(long long)g->start_date,
 		(long long)g->end_date,
 		(long long)g->required_time,
+		(long long)g->minPauseToNext,
+		(long long)g->pauseToNext,
 		g->subgoals_len
 	);
 

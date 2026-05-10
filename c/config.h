@@ -74,6 +74,8 @@
 "Your objective:" \
 "Investigate the following task inside these structures and extract the most relevant structural and contextual evidence:" \
 "[%s]" \
+"Your standard is depth, not speed." \
+"Superficial, generic, or lightly-supported conclusions are failures." \
 "Your role:" \
 "- investigate" \
 "- reduce uncertainty" \
@@ -131,12 +133,19 @@
 "At every step:" \
 "- choose EXACTLY ONE next action" \
 "- base the decision ONLY on already observed evidence" \
+"- output EXACTLY ONE JSON object matching exactly one valid action shape" \
+"- do NOT emit placeholder null fields for parameters that do not belong to the chosen action" \
 "Runtime evidence may include:" \
 "- command outputs" \
 "- warnings" \
 "- errors" \
 "Runtime evidence is authoritative." \
 "All next decisions must follow it." \
+"Depth requirement:" \
+"Before finishing, you should usually inspect multiple evidence sources or multiple structural angles unless runtime evidence makes that impossible." \
+"A strong investigation usually combines at least one graph-discovery step with at least one follow-up validation, refinement, or behavioral-evidence step." \
+"Do not stop after one weak lead, one generic interpretation, or one shallow command result." \
+"If the evidence is sparse, your job is to prove that it is sparse through targeted exploration, not to assume that it is sparse too early." \
 "AVAILABLE ACTIONS" \
 "COMMAND 1 — GLOBAL GRAPH FILTERING" \
 "Purpose:" \
@@ -295,6 +304,8 @@
 "Use only when:" \
 "Further exploration is unlikely to improve insight significantly." \
 "Parameters:" \
+"- command:" \
+"  may be omitted or set to null" \
 "- finished:" \
 "  must be true" \
 "- conclusion:" \
@@ -302,7 +313,10 @@
 "Terminal action contract:" \
 "- If finished is true, conclusion must be a non-empty string." \
 "- Never return finished=true with conclusion=null or an empty conclusion." \
-"- For non-terminal actions, conclusion must be null." \
+"- For non-terminal actions, do not emit finished or conclusion at all." \
+"- For terminal actions, do not emit unrelated command parameters such as percentage, node, context, percA, percW, depth, criteria, mode, max, goal_id, or method." \
+"- Never output an object where every field is null." \
+"- Never finish just because you have a plausible story. Finish only after you have concrete inspected evidence that materially supports the conclusion." \
 "The conclusion MUST include:" \
 "- main findings" \
 "- relevant contexts" \
@@ -312,6 +326,12 @@
 "- how weight affected interpretation" \
 "- how goals supported or contradicted graph evidence" \
 "- why stopping is justified" \
+"Conclusion quality rules:" \
+"- Be concrete, specific, and evidence-dense." \
+"- Mention exact explored signals, nodes, contexts, patterns, goal structures, or evidence gaps that drove the interpretation." \
+"- Avoid generic motivational summaries that could fit many users." \
+"- If evidence is mixed or thin, explain exactly what was thin and why the remaining evidence was still enough or not enough." \
+"- A downstream agent should be able to tell what you actually inspected, not just what you inferred." \
 "STRATEGIC GRAPH RULES" \
 "- Start with command 1 unless a justified starting node already exists." \
 "- Use command 2 for focused local validation." \
@@ -337,6 +357,13 @@
 "- Treat warnings and errors as authoritative evidence." \
 "- Avoid redundant exploration." \
 "- Continuously refine the working hypothesis using ONLY observed evidence." \
+"- If you choose a non-terminal action, command must be a real integer from 1 to 6, not null." \
+"- If you choose a terminal action, finished must be true and conclusion must be present in the same object." \
+"- Never output finished=true without a conclusion string." \
+"- Never output command=null unless this is a terminal action." \
+"- Prefer one more targeted evidence-gathering step over a shallow conclusion." \
+"- Before finishing, challenge your current hypothesis by checking whether another context, another node neighborhood, or another goal view could change the interpretation." \
+"- If your current summary still sounds generic, you are not done investigating." \
 "Stop ONLY when:" \
 "Additional graph operations or goal inspections are unlikely to improve insight significantly." \
 "Do NOT:" \
@@ -380,6 +407,10 @@
 "merge near-duplicates across tense/plural/variation forms." \
 "connection rules:" \
 "each connection must contain a field named nodes with exactly two node names from the same context." \
+"both referenced node names must already exist verbatim in that same context's nodes array." \
+"never reference a node that is missing, inferred but not emitted, misspelled, pluralized differently, or placed in another context." \
+"if either endpoint node does not exist exactly as a declared node.name in that context, omit the connection instead of guessing." \
+"before outputting each connection, verify that both endpoint names exactly match two emitted node.name values from the same context." \
 "connections must be meaningful semantic relations, not simple co-occurrence." \
 "each connection may optionally contain weight and activation numeric fields." \
 "inference rules:" \
@@ -397,6 +428,8 @@
 "output constraints:" \
 "each context must contain the keys nodes and connections (arrays can be empty)." \
 "each connection nodes array must contain exactly two valid node names." \
+"a valid node name means an exact string match with some emitted node.name from that same context." \
+"do not output dangling, approximate, or cross-context connections." \
 "return only one valid json object and nothing else."\
 
 // Also this is one big line, I don't recommend reading in a code editor
@@ -492,6 +525,7 @@
 "RETRY REASON RULES:"\
 "If you FAIL:"\
 "* return one short operational retry hint,"\
+"* explicitly push the agent toward deeper, more concrete investigation when the problem is superficiality,"\
 "* focus only on the most important missing element,"\
 "* do not invent evidence,"\
 "* do not request unsupported investigative branches,"\
@@ -523,6 +557,7 @@
  * */
 #define GOAL_ADAPTATION_PROMPT \
 "Adapt the proposed goal [%s] to the specific user, using the stated extrainfo [%s]. " \
+"Server retry feedback and hard constraints for this regeneration: [%s]. Treat this feedback as mandatory correction guidance for the next answer, not as optional context. " \
 "The stated extrainfo explains why the goal may be useful, valuable, or important for the user. " \
 "Investigate the user's identity graph and determine how this goal should be realistically personalized. " \
 "Ground your reasoning in observed patterns such as motivations, emotional tendencies, professional context, passions, general behaviors, and subjective interpretations. " \
@@ -531,6 +566,9 @@
 "If the original goal is already specific, preserve its core intent and refine only what improves fit, realism, or usefulness. " \
 "Identify supporting signals, but also constraints, risks, or friction points that may affect execution. " \
 "Estimate the total elapsed time required for the user to meaningfully reach this goal. This must be expressed in seconds and represent real-world elapsed time, not only active work time. " \
+"This is calendar-like elapsed duration from starting the goal until the goal is realistically done, including normal breaks, sleep, context switching, learning friction, iteration, debugging, and waiting that is naturally part of the work. " \
+"Do not interpret estimated_time as pure hands-on keyboard time, ideal uninterrupted focus time, or best-case implementation speed. " \
+"A playable game, app, tool, or prototype should almost never be estimated in only one or two hours unless the scope is explicitly tiny to that degree. " \
 "Be pragmatic and avoid idealized assumptions. " \
 \
 "Your final answer is consumed by a strict downstream extractor. " \
@@ -546,11 +584,18 @@
 "Do not leave the duration implicit inside EXTRA_INFO. Do not describe it with words only. Always emit the final numeric duration on the ESTIMATED_TIME line. " \
 "ESTIMATED_TIME must be a plain integer in seconds with no words, punctuation, or explanation. " \
 "ESTIMATED_TIME is mandatory and must never be omitted or replaced with text like n/a, unknown, or approximate. " \
+"For this personalized create-goal flow, ESTIMATED_TIME must always be greater than 0. Never use 0 in this flow. " \
 "ESTIMATED_TIME must represent total real-world elapsed time for this exact personalized goal, not just focused work time. " \
+"Use realistic end-to-end duration, not optimistic build time. Include planning, implementation, debugging, iteration, asset/content setup when implied by scope, testing, and polishing needed to reach the stated outcome. " \
+"You must produce your best realistic positive estimate even under uncertainty. Uncertainty is not a reason to output 0. " \
+"If the scope is described qualitatively, convert that qualitative scope into a positive second count that matches the chosen scope. " \
+"If the title or extrainfo says prototype, MVP, playable demo, vertical slice, small game, or app, the estimate must still reflect the full elapsed duration to reach that outcome realistically for one user. " \
 "If you describe a scope like weekend project, one week, two weeks, one month, or three days, convert that scope into integer seconds and output only that integer. " \
 "Do not output ranges, qualifiers, units, prose, or symbolic forms such as 2-3 weeks, ~604800, 604800 seconds, or about a week. Output only one integer. " \
-"Use 0 only if the goal text is truly too incomplete to estimate after personalization. Otherwise provide your best concrete integer estimate. " \
+"When the project is described as small, tiny, quick, prototype, MVP, vertical slice, demo, weekend, or one-week scale, still output a realistic positive integer rather than 0. " \
+"Before writing ESTIMATED_TIME, sanity-check it against the scope you wrote. If the scope implies multiple parts such as mechanics, UI, debugging, audio, visuals, progression, or integration, do not give an unrealistically tiny number. " \
 "For a one-week project, provide a realistic one-week scale estimate in seconds rather than 0. " \
+"If you would otherwise output 0, stop and replace it with the most plausible positive estimate for the exact scope you wrote in TITLE and EXTRA_INFO. " \
 "Structure your final conclusion in clearly separated sections so another system can extract them reliably: " \
 \
 "TITLE: " \
@@ -591,9 +636,12 @@
 "If the message contains headings such as Main findings, Relevant contexts, Strongest graph structures, Strongest behavioral goal evidence, How activation affected interpretation, How weight affected interpretation, Goals support/contradict graph evidence, or Stopping is justified, treat that material as extrainfo, not title."\
 "If extrainfo contains long investigation-style analysis, compress it into practical goal context rather than preserving the full investigation wording."\
 "Title must contain only the adapted goal itself, not evidence, reasons, or analysis."\
-"Do not invent or infer missing information beyond what is explicitly supported."\
+"Do not invent unsupported product details, but you MUST infer a realistic elapsed-time estimate from the concrete project scope when the message clearly describes a specific app, game, tool, prototype, MVP, demo, or vertical slice."\
 "estimated_time must be a JSON integer in seconds."\
 "If the message gives an explicit timeframe such as one week, seven days, weekend, two weeks, or one month, convert it into the corresponding integer number of seconds."\
+"If the message describes a concrete software project scope but omits an explicit numeric duration, derive a realistic positive total elapsed-time estimate from the described scope instead of using 0."\
+"For create-goal style messages describing a concrete project, 0 is invalid. Use 0 only when the message is truly too incomplete to estimate even at a coarse level."\
+"Estimated time means total real-world elapsed time, not pure implementation hours. Include iteration, debugging, setup, and normal friction implied by the described scope."\
 "If time is not explicitly numeric and no explicit timeframe is given, set estimated_time to 0."\
 "Output must be valid JSON with double quotes."\
 "Message: [%s]"
@@ -666,8 +714,19 @@
 "Each child goal must reduce scope compared to the parent goal while remaining meaningful (avoid overly trivial tasks). "\
 "Use this priority order for decisions: (1) parent goal chain, (2) current goal intent, (3) user personalization context. "\
 "If personalization conflicts with goal hierarchy or sibling/uncle constraints, ignore personalization for that case. "\
-"Estimated_time values are required, must be positive integers, and represent approximate seconds of effort. "\
+"Estimated_time values are required, must be positive integers, and represent approximate real-world elapsed seconds needed to complete that child goal itself. "\
+"Do not interpret estimated_time as pure focused work time or best-case coding speed. Include realistic implementation, iteration, debugging, validation, and normal friction inside the child goal. "\
+"Min_pause_to_next and pause_to_next values are required, must be non-negative integers, and represent two levels of spacing before the next child goal. "\
+"Pause fields are separate from estimated_time. Use estimated_time for the child goal's own elapsed completion duration, and use pause fields only for the extra gap before the following child goal. "\
+"Min_pause_to_next is the smallest reasonable buffer before the next child goal. Pause_to_next is the recommended normal buffer. Always ensure min_pause_to_next <= pause_to_next. "\
+"Scale the pause to the intensity and duration of the child goal. Short tasks may justify short pauses, but long or cognitively heavy tasks should usually be followed by much larger recovery buffers. "\
+"If a child goal is roughly half a day or more of real work, do not recommend a trivial pause like 10 or 30 minutes as the normal buffer unless there is a very strong reason. In such cases, the normal pause should usually be at least sleep-scale or next-day-scale. "\
+"For example, after a child goal around 8 to 12 hours, pause_to_next will usually be closer to many hours or about one day, not a coffee break. "\
+"Use min_pause_to_next for the smallest still-plausible recovery gap, and use pause_to_next for the actually recommended healthier default. "\
+"These buffers are not mandatory for the user, but should be used when they help pacing, recovery, realism, or burnout prevention. "\
+"Use these fields mainly on the first n-1 child goals because they represent the gap before the following goal. The last child goal should usually have min_pause_to_next = 0 and pause_to_next = 0 unless a non-zero value is clearly still useful. "\
 "Child time estimates must be internally consistent in scale, but do not require exact summation correctness. "\
+"When useful, recommend substantial buffers such as sleep, a day of recovery, or waiting for external feedback. When no meaningful buffer is needed, use 0 for both. "\
 "All child goals together must fully cover the parent goal intent without introducing unrelated work. "\
 "Each child goal must have a unique responsibility and a clear transition to the next child goal when applicable. "\
 "Do NOT use vague titles such as 'work on it', 'continue', 'improve', or 'finish'. "\
@@ -678,7 +737,7 @@
 "Each title must be concise and action-oriented. "\
 "Each extrainfo must include: scope of the child goal, success condition, boundary relative to sibling/uncle goals, and handoff to next child goal if applicable. "\
 "Return JSON only with exactly this structure and no extra text: "\
-"{\"subgoals\":[{\"title\":\"string\",\"extrainfo\":\"string\",\"estimated_time\":1}]}"\
+"{\"subgoals\":[{\"title\":\"string\",\"extrainfo\":\"string\",\"estimated_time\":1,\"min_pause_to_next\":0,\"pause_to_next\":0}]}"\
 
 /*
  *
@@ -717,9 +776,10 @@
 "If remaining time is sufficient, avoid trivialization and keep meaningful complexity. " \
 "The title must be concise, action-oriented, and derived directly from the original goal. " \
 "The extrainfo must explain: reduced scope, success criteria, intentionally excluded parts, and how overlap is avoided. " \
-"The estimated_time field is required for schema compatibility. It must be a positive integer. If remaining time is positive, use it; otherwise use 1. " \
+"The estimated_time field is required for schema compatibility. It may be 0 on this shorten flow if no meaningful positive remaining time exists. If remaining time is positive, use it; otherwise use 0. " \
+"When estimated_time is positive on this shorten flow, it still means realistic elapsed duration for completing the shortened goal, not pure work time. " \
 "Return JSON only, with this exact structure and no extra text: " \
-"{\"title\":\"string\",\"extrainfo\":\"string\",\"estimated_time\":1}"\
+"{\"title\":\"string\",\"extrainfo\":\"string\",\"estimated_time\":0}"\
 
 
 #endif
