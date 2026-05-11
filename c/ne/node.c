@@ -139,7 +139,7 @@ _Bool UniLinkEx(Node* A, Node* B, double activation, double weight){
 
 	c->target = B->globalIndex;
 
-	c->lastTouched = time(NULL);
+	c->lastTouched = change_time_now();
 	c->pendingTouches = 0;
 
 	A->ncount ++;

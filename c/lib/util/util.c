@@ -16,7 +16,7 @@ static const char charset[] =
 "0123456789";
 
 void random_id(char *out, size_t len){
-	srand((unsigned int)time(NULL));
+	srand((unsigned int)change_time_now());
 	size_t charset_size = sizeof(charset) - 1;
 
 	out[0] = 'g';

@@ -76,6 +76,7 @@ function GoalActionRow({
 function GoalCard({
   goal,
   label,
+  current = false,
   pendingGoalId,
   onNavigate,
   onStartGoal,
@@ -83,13 +84,20 @@ function GoalCard({
 }: {
   goal: Goal
   label: string
+  current?: boolean
   pendingGoalId: string | null
   onNavigate: (goalId: string) => void
   onStartGoal: (goalId: string) => void
   onEndGoal: (goalId: string) => void
 }) {
   return (
-    <article className="space-y-2">
+    <article
+      className={
+        current
+          ? 'space-y-2 rounded-xl border border-neutral-200 px-4 py-4'
+          : 'space-y-2'
+      }
+    >
       <p className="text-sm text-neutral-500">{label}</p>
       <h3 className="text-lg">{goal.title}</h3>
       <GoalStateText goal={goal} />
@@ -143,14 +151,17 @@ export default function GoalViewer(props: GoalViewerProps) {
       <p className="text-sm text-neutral-600">{statusMessage}</p>
 
       {parentGoal ? (
-        <GoalCard
-          goal={parentGoal}
-          label="Current goal"
-          pendingGoalId={pendingGoalId}
-          onNavigate={onNavigate}
-          onStartGoal={onStartGoal}
-          onEndGoal={onEndGoal}
-        />
+        <section className="space-y-2">
+          <GoalCard
+            goal={parentGoal}
+            label="Current goal"
+            current
+            pendingGoalId={pendingGoalId}
+            onNavigate={onNavigate}
+            onStartGoal={onStartGoal}
+            onEndGoal={onEndGoal}
+          />
+        </section>
       ) : null}
 
       <div className="space-y-1">

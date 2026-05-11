@@ -17,4 +17,7 @@ void UpdateGoal(Goal *g, time_t now);
 Goal* ComputePartialDecomposition(Goal *goal);
 
 
+time_t StartGoal(goalIDType goalID);
+time_t EndGoal(goalIDType goalID);
+
 #endif

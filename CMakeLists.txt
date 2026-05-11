@@ -9,6 +9,11 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 find_package(OpenSSL REQUIRED)
 
+add_library(timeutil SHARED ${CMAKE_SOURCE_DIR}/c/lib/util/time-util.c)
+target_include_directories(timeutil PUBLIC
+	${CMAKE_SOURCE_DIR}/c/lib/util
+)
+
 add_library(hd SHARED ${CMAKE_SOURCE_DIR}/c/lib/hd/hashdict.c)
 target_include_directories(hd PUBLIC ${CMAKE_SOURCE_DIR}/c/lib/hd)
 
@@ -22,13 +27,14 @@ target_include_directories(util PUBLIC
 	${CMAKE_SOURCE_DIR}/c/lib/jsonp
 	${CMAKE_SOURCE_DIR}/c
 )
-target_link_libraries(util PUBLIC jsonp change-errors)
+target_link_libraries(util PUBLIC jsonp change-errors timeutil)
 
 add_library(change-errors SHARED ${CMAKE_SOURCE_DIR}/c/lib/util/change-errors.c)
 target_include_directories(change-errors PUBLIC 
 	${CMAKE_SOURCE_DIR}/c
 	${CMAKE_SOURCE_DIR}/c/lib/util
 )
+target_link_libraries(change-errors PUBLIC timeutil)
 
 add_library(openai SHARED ${CMAKE_SOURCE_DIR}/c/lib/openai/openai.c)
 target_include_directories(openai PUBLIC 
@@ -71,6 +77,19 @@ target_include_directories(graphexport PUBLIC
 target_link_libraries(graphexport PUBLIC
     util
     node
+)
+
+add_library(user-schedule SHARED ${CMAKE_SOURCE_DIR}/c/ne/goal/user-schedule.c)
+target_include_directories(user-schedule PUBLIC
+    ${CMAKE_SOURCE_DIR}/c/ne/goal
+    ${CMAKE_SOURCE_DIR}/c/ne
+    ${CMAKE_SOURCE_DIR}/c/lib/hd
+    ${CMAKE_SOURCE_DIR}/c/lib/util
+    ${CMAKE_SOURCE_DIR}/c/lib/jsonp
+    ${CMAKE_SOURCE_DIR}/c
+)
+target_link_libraries(graphexport PUBLIC
+	goal-util
 )
 
 add_library(graphengine SHARED ${CMAKE_SOURCE_DIR}/c/ne/graph/graph-engine.c)
@@ -167,6 +186,7 @@ target_link_libraries(aiaction PUBLIC
     util
     search
     goal-info
+    user-schedule
     comparsing
     globals
 )
@@ -227,7 +247,7 @@ target_include_directories(goal PUBLIC
 	${CMAKE_SOURCE_DIR}/c/ne/goal
 	${CMAKE_SOURCE_DIR}/c/ne/search
 )
-target_link_libraries(goal PUBLIC goal-ai goal-info goal-util util openai jsonp node)
+target_link_libraries(goal PUBLIC user-schedule goal-ai goal-info goal-util util openai jsonp node)
 
 add_library(goal-util SHARED ${CMAKE_SOURCE_DIR}/c/ne/goal/goal-util.c)
 target_include_directories(goal-util 

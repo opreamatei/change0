@@ -54,7 +54,7 @@ void RefreshGraph(){
 	if (!Nodes.init || Nodes.count == 0) return;
 	
 	// decrease connection and activation on every instance
-	time_t currTime = time(NULL);
+	time_t currTime = change_time_now();
 
 	double k = ACTIVATION_IMPORTANCE_TO_NODE_WEIGHT;
 	double c = NCOUNT_PENALTY_TO_NODE_WEIGHT; 
@@ -117,4 +117,3 @@ void RefreshGraph(){
 	free(support_buffer);
 	Nodes.needsRefresh = 0;
 }
-

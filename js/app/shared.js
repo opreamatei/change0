@@ -18,6 +18,8 @@ export function buildEndpoints(base){
     goalCreate:`${base}/goal/create`,
     goalEvents:`${base}/goal/events`,
     goalList:`${base}/goal/list`,
+    goalExport:`${base}/goal/export`,
+    goalLoad:`${base}/goal/load`,
     goalDecompose:`${base}/goal/decompose`
   };
 }

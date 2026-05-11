@@ -9,6 +9,7 @@
 #include "json.h"
 #include "openai.h"
 #include "goal-ai.h"
+#include "user-schedule.h"
 
 static goal_emit_like_func goal_emit = NULL;
 
@@ -38,7 +39,7 @@ static void shorten_goal(Goal *g, time_t now){
 	
 	change_assert(new_title.len > 1 && new_extra_info.len > 1, "Goal title or extra info is broken. title : [%s], info : [%s]\n", new_title.p, new_extra_info.p);
 
-	CatTemplateString(&g->extra_info, "\n user failed to finish goal [%s] so was shortened to [%s] in date [%s]\n", g->title.p, new_title.p, ctime(&now));
+	CatTemplateString(&g->extra_info, "\n user failed to finish goal [%s] so was shortened to [%s] in date [%s]\n", g->title.p, new_title.p, change_ctime(&now));
 
 	CopyString(&g->title, &new_title);
 	CopyString(&g->extra_info, &new_extra_info);
@@ -52,7 +53,7 @@ static void repair_goal_leaf(Goal *g)
 	change_assert(g->subgoals_len == 0, "Only leaf goals can be repaired directly [%s]\n", g->title.p);
 	
 	time_t max_end_date = g->start_date + g->required_time * (1 + GOAL_REQUIRED_TIME_ERROR_MARGIN);
-	time_t now = time(NULL);
+	time_t now = change_time_now();
 
 	time_t delta = (max_end_date - now) * (max_end_date - g->start_date);
 	
@@ -65,7 +66,7 @@ static void repair_goal_leaf(Goal *g)
 		time_t new_time = (old_time * 125) / 100;
 
 		g->required_time = new_time;
-		CatTemplateString(&g->extra_info, "\n[Goal was extended on date [%s] from [%zu] to [%zu]]\n", ctime(&now), old_time, new_time);
+		CatTemplateString(&g->extra_info, "\n[Goal was extended on date [%s] from [%zu] to [%zu]]\n", change_ctime(&now), old_time, new_time);
 	}else{
 		shorten_goal(g, now);
 		g->retry_depth = 0;
@@ -206,7 +207,7 @@ _Bool DecomposeGoal(Goal *g){
 	String prompt;
 	InitString(&prompt, 2048);
 
-	SetGoalDecompositionPrompt(g, &prompt, time(NULL));
+	SetGoalDecompositionPrompt(g, &prompt, change_time_now());
 
 	String *out = CallGoalDecompositionAI(&prompt);
 	cassert(out, "Goal decomposition returned NULL.\n");
@@ -295,4 +296,29 @@ Goal* ComputePartialDecomposition(Goal *goal){
 	}
 
 	return g;
+}
+
+
+time_t StartGoal(goalIDType goalID){
+	Goal* g = FindGoalByID(goalID);
+	change_assert(g, "Goal not found, target goal id %s, serialized goals.", goalID);
+
+	time_t now = change_time_now();
+
+	g->start_date = now;
+
+	return now;
+}
+
+time_t EndGoal(goalIDType goalID){
+	Goal* g = FindGoalByID(goalID);
+	change_assert(g, "Goal not found, target goal id %s, serialized goals.", goalID);
+
+	time_t now = change_time_now();
+
+	g->end_date = now;
+
+	SCHEDULE_NEEDS_REFRESH = 1;
+
+	return now;
 }

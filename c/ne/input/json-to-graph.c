@@ -60,7 +60,7 @@ static void AddNodesFromEntry(json_object_entry* entry, size_t context){
 	if (!entry->value) return;
 	if (entry->value->type != json_array || entry->value->u.array.length == 0) return;
 
-	time_t now = time(NULL);
+	time_t now = change_time_now();
 	for (size_t i = 0; i < entry->value->u.array.length; i++){
 		AddNodeFromEntry(entry->value->u.array.values[i], context, now);
 	}
@@ -83,11 +83,11 @@ static _Bool ProcessArrayLinkage(json_value *entry, double weight, double activa
 	Node* A = FindNode(a->u.string.ptr, a->u.string.length, NodeAt(context));
 	//change_assert(A, "Node A doesn't not exist. [%s]", a->u.string.ptr);
 	if (!A) return 0;
-	A->lastTouched = time(NULL);
+	A->lastTouched = change_time_now();
 	Node* B = FindNode(b->u.string.ptr, b->u.string.length, NodeAt(context));
 	//change_assert(B, "Node B doesn't not exist. [%s]", a->u.string.ptr);
 	if (!B) return 0;
-	B->lastTouched = time(NULL);
+	B->lastTouched = change_time_now();
 
 	Connection* existing = LinkExists(A, B);
 
@@ -147,7 +147,7 @@ static void AddConnectionsFromEntry(json_object_entry* entry, size_t context){
 	if (entry->value == NULL) return;
 	if (entry->value->type != json_array) return;
 
-	time_t now = time(NULL);
+	time_t now = change_time_now();
 	for (size_t i = 0; i < entry->value->u.array.length; i++)
 		// Adding a connection
 		AddConnectionFromEntry(entry->value->u.array.values[i], context, now);
@@ -191,7 +191,7 @@ void LoadGraphFromFile(char* path){
 	change_assert(doc, "Couldn't load object from file: [%s], len [%zu]\n", buff, len);
 	change_assert(doc->type == json_object, "Loaded file is JSON, but not an objects [%s]\n", buff);
 
-	time_t now = time(NULL);
+	time_t now = change_time_now();
 
 	for (size_t i = 0; i < doc->u.object.length; i++){
 		json_object_entry entry = doc->u.object.values[i];

@@ -51,7 +51,7 @@ const graphView=createGraphView({
 let endpointBase=loadEndpointBase();
 
 const R={sessions:local("graph-viewer.research-sessions.v5",[]),active:"",prepared:id("rs"),source:null,state:"disconnected",busy:false,first:0};
-const L={items:local("graph-viewer.goals.v5",[]),server:[],byIndex:new Map(),active:"",source:null,state:"disconnected",busy:false,load:false,decomp:false,selected:0,focus:0,explode:false,mode:"structure",first:0};
+const L={items:local("graph-viewer.goals.v5",[]),server:[],byIndex:new Map(),active:"",source:null,state:"disconnected",busy:false,load:false,copyBusy:false,decomp:false,selected:0,focus:0,explode:false,mode:"structure",first:0};
 const timelineState={
   canvas:$("timeline-canvas"),
   ctx:$("timeline-canvas").getContext("2d"),
@@ -322,6 +322,10 @@ function panels(){
   $("goal-status-detail").textContent=L.detail||"Ready.";
   $("start-research").disabled=R.busy||!$("research-task").value.trim();
   $("create-goal").disabled=L.busy||!$("goal-title").value.trim();
+  $("refresh-goals").disabled=L.load||L.copyBusy;
+  $("refresh-goals-sidebar").disabled=L.load||L.copyBusy;
+  $("save-goals-copy").disabled=L.load||L.copyBusy;
+  $("load-goals-copy").disabled=L.copyBusy;
   itemList($("research-session-list"),R.sessions||[],R.active,item=>selectResearchSession(item.id,true),"No saved deep-search sessions.");
   const goalItems=L.server.map(goal=>({...goal,title:goal.title,lengthLabel:formatGoalLength(goal),meta:`#${goal.globalIndex} · depth ${goal.depth} · ${goal.subgoals.length} children`,status:goalStatus(goal)}));
   itemList($("goal-list"),goalItems,L.selected,item=>selectGoal(item.globalIndex,{focus:false}),"No server goals loaded.");
@@ -840,6 +844,28 @@ async function loadGoals(selectNewest=false){
   }
 }
 
+async function copyGoals(method,url,done,{reload=false}={}){
+  if(L.copyBusy)return;
+  L.copyBusy=true;
+  panels();
+  toast(`${method} ${url}`);
+  try{
+    const response=await fetch(url,{method,cache:"no-store"});
+    const text=await response.text();
+    let payload=null;
+    try{payload=text?JSON.parse(text):null}catch{}
+    if(!response.ok||payload?.ok===false)throw new Error(payload?.error||text||`HTTP ${response.status}`);
+    toast(done+(payload?.path?`: ${payload.path}`:""),true);
+    if(reload)await loadGoals(false);
+  }catch(error){
+    console.error(error);
+    toast(transport(error),false);
+  }finally{
+    L.copyBusy=false;
+    panels();
+  }
+}
+
 async function createGoal(event){
   event.preventDefault();
   const title=$("goal-title").value.trim();
@@ -1298,6 +1324,8 @@ function initGoalView(){
   $("goal-form").addEventListener("mousedown",event=>event.stopPropagation());
   $("refresh-goals").onclick=()=>loadGoals(false);
   $("refresh-goals-sidebar").onclick=()=>loadGoals(false);
+  $("save-goals-copy").onclick=async()=>{if(await confirmGraphAction("Save goals copy?","This will overwrite the saved goals copy on disk. Continue only if this is intentional.","Save copy"))copyGoals("POST",EP.goalExport,"Goals copy saved")};
+  $("load-goals-copy").onclick=async()=>{if(await confirmGraphAction("Load saved goals copy?","This will replace the current in-memory goals with the saved copy. Unsaved current goal state may be lost.","Load copy"))copyGoals("GET",EP.goalLoad,"Goals copy loaded",{reload:true})};
   $("decompose-selected-goal").onclick=decomposeGoal;
   $("decompose-selected-goal").addEventListener("pointerdown",event=>event.stopPropagation());
   $("decompose-selected-goal").addEventListener("mousedown",event=>event.stopPropagation());

@@ -40,7 +40,7 @@ static inline void clear(){
 }
 
 static void SetUpContexts(){
-	time_t now = time(NULL);
+	time_t now = change_time_now();
 	for (int i = 0; i < CONTEXT_COUNT; i++){
 		Node *n = AddNodeEx(context_labels[i], strlen(context_labels[i]), NODE_INIT_ACT, NODE_INIT_WGHT, PARENTLESS, -1, FERTILE, now);
 		if(!n){

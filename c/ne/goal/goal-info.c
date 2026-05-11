@@ -9,11 +9,11 @@ char* SerializeGoal(Goal* g, size_t *length, char* relation, _Bool showExtraInfo
 	cassert(main_buffer, "Coudln't malloc mem for main buffer\n");
 
 	char end_time_buffer[128];
-	size_t temp_len = sprintf(end_time_buffer, "%s", g->end_date == 0 ? "goal is not finished" : ctime(&g->end_date));
+	size_t temp_len = sprintf(end_time_buffer, "%s", g->end_date == 0 ? "goal is not finished" : change_ctime(&g->end_date));
 	cassert(temp_len < 128, "Buffer too small 0\n");
 
 	char start_time_buffer[128];
-	temp_len = sprintf(start_time_buffer, "%s", g->start_date == 0 ? "goal is not started" : ctime(&g->start_date));
+	temp_len = sprintf(start_time_buffer, "%s", g->start_date == 0 ? "goal is not started" : change_ctime(&g->start_date));
 	cassert(temp_len < 128, "Buffer too small 0\n");
 
 	end_time_buffer[strcspn(end_time_buffer, "\n")] = '\0';
@@ -180,6 +180,40 @@ void SerializeGoalParentSlibings(Goal *g, String *buffer, _Bool displayInfo){
 
 // AI Generated
 void SerializeDueGoals(String *buffer, size_t max){
+
+	size_t emitted = 0;
+
+	for (size_t currentIndex = GOAL_CONTAINER_COUNT;
+			currentIndex-- > INITIAL_GOAL_INDEX && emitted < max;){
+
+		Goal *g = FindGoalFromIndex(currentIndex);
+
+		if (!g) continue;
+
+		// due / unfinished goals only
+		if (g->end_date == 0){
+
+			size_t len = 0;
+
+			char* info = SerializeGoal(
+					g,
+					&len,
+					"due-goal",
+					1
+					);
+
+			cassert(info, "Something failed when serializing due goal.\n");
+
+			CatString(buffer, info, len);
+
+			free(info);
+
+			emitted++;
+		}
+	}
+}
+
+void SerializeLeafDueGoals(String *buffer, size_t max){
 
 	size_t emitted = 0;
 

@@ -17,6 +17,7 @@ size_t mystrnlen(const char* s, size_t maxlen);
 #include <stdio.h>
 #include "change-errors.h"
 #include "json.h"
+#include "time-util.h"
 
 char* readFile(char* filename, size_t *bytes);
 

@@ -702,7 +702,7 @@
 "The goal to decompose is titled [%s], with extrainfo [%s]. "\
 "The goal estimated time is [%zu] seconds. Treat this as an approximate scale signal, not an exact budget. "\
 "The current depth is [%zu]. Generated child goals will be one level deeper in the goal hierarchy. "\
-"Local user goal history: [%s]. Use only explicit signals from this history that relate to timing, completion status, scope size, or prior goal structure. Ignore weak or irrelevant history signals. "\
+"Local user goal history: [%s]. Use only explicit signals from this history that relate to timing, completion status, scope size, prior decomposition style, pacing, pauses, or observed efficiency. Ignore weak or irrelevant history signals. "\
 "User personalization context: [%s]. This may include the user's interests, preferred concepts, motivations, and thinking style. Use it only to adjust framing, wording, and granularity of child goals. Do NOT change the objective or direction of the parent goal. "\
 "Parent goal chain with extrainfo: [%s]. The child goals must remain strictly consistent with this hierarchy and preserve the same strategic direction. "\
 "Sibling goals of the current goal: [%s]. Do not create child goals that duplicate, conflict with, overlap significantly with, or replace the function of these sibling goals. "\
@@ -716,21 +716,34 @@
 "If personalization conflicts with goal hierarchy or sibling/uncle constraints, ignore personalization for that case. "\
 "Estimated_time values are required, must be positive integers, and represent approximate real-world elapsed seconds needed to complete that child goal itself. "\
 "Do not interpret estimated_time as pure focused work time or best-case coding speed. Include realistic implementation, iteration, debugging, validation, and normal friction inside the child goal. "\
+"Use the local user goal history to calibrate realistic elapsed duration for this specific user. If the history suggests slower execution, larger spillover, repeated retries, or lower throughput, estimate more conservatively. If the history suggests stronger throughput on similar scopes, you may tighten estimates modestly, but do not use optimistic best-case assumptions. "\
+"Do not estimate as if an experienced person could brute-force everything in one sitting. Estimate for sustainable real execution by the user represented in the available history. "\
+"Prefer human-sustainable pacing over compact schedules. A decomposition that looks efficient on paper but creates unrealistic back-to-back heavy sessions is wrong. "\
+"Child goals should usually be sized as atomic sessions or compact multi-session chunks, not giant undifferentiated work blocks. If a candidate child goal would naturally require a very long session or multiple heavy sessions, split it further unless the hierarchy would clearly become trivial. "\
+"As a strong default, avoid child goals above roughly 3 to 5 hours of elapsed effort. If a child goal would exceed about 5 hours, treat that as evidence it probably needs to be decomposed further. Very long child goals should be rare and justified only when the work is intrinsically indivisible at this hierarchy level. "\
+"Avoid consecutive heavy child goals. If one child goal is already large or cognitively intense, the next child goal should usually be lighter, narrower, or separated by a substantial recovery buffer. Do not emit multiple 6 to 8 hour style child goals in a row unless the available history strongly proves the user can sustain that pattern on similar work. "\
 "Min_pause_to_next and pause_to_next values are required, must be non-negative integers, and represent two levels of spacing before the next child goal. "\
 "Pause fields are separate from estimated_time. Use estimated_time for the child goal's own elapsed completion duration, and use pause fields only for the extra gap before the following child goal. "\
 "Min_pause_to_next is the smallest reasonable buffer before the next child goal. Pause_to_next is the recommended normal buffer. Always ensure min_pause_to_next <= pause_to_next. "\
 "Scale the pause to the intensity and duration of the child goal. Short tasks may justify short pauses, but long or cognitively heavy tasks should usually be followed by much larger recovery buffers. "\
+"Use user history when setting pauses too. If the history shows that similar goals stretched, were retried, or caused low efficiency, prefer larger pauses and smaller next steps. "\
+"For very short goals under about 1 hour, normal pauses may be short but should still usually be at least a small reset, often around 15 to 45 minutes unless the next step is truly trivial. "\
+"For goals around 1 to 3 hours, normal pauses often belong in the rough range of 30 minutes to a few hours depending on intensity. "\
+"For goals around 3 to 5 hours, normal pauses are often several hours and may reasonably push the next step later the same day or the next day. "\
 "If a child goal is roughly half a day or more of real work, do not recommend a trivial pause like 10 or 30 minutes as the normal buffer unless there is a very strong reason. In such cases, the normal pause should usually be at least sleep-scale or next-day-scale. "\
 "For example, after a child goal around 8 to 12 hours, pause_to_next will usually be closer to many hours or about one day, not a coffee break. "\
+"Likewise, min_pause_to_next must stay realistic. After a long or cognitively heavy child goal, the minimum pause should not be absurdly tiny. A 5 hour plus child goal will rarely justify a minimum pause below roughly 30 to 60 minutes, and often the realistic minimum is much larger. "\
 "Use min_pause_to_next for the smallest still-plausible recovery gap, and use pause_to_next for the actually recommended healthier default. "\
 "These buffers are not mandatory for the user, but should be used when they help pacing, recovery, realism, or burnout prevention. "\
 "Use these fields mainly on the first n-1 child goals because they represent the gap before the following goal. The last child goal should usually have min_pause_to_next = 0 and pause_to_next = 0 unless a non-zero value is clearly still useful. "\
 "Child time estimates must be internally consistent in scale, but do not require exact summation correctness. "\
 "When useful, recommend substantial buffers such as sleep, a day of recovery, or waiting for external feedback. When no meaningful buffer is needed, use 0 for both. "\
+"A good decomposition may alternate shorter and heavier child goals when appropriate, instead of stacking uniformly heavy steps. Use this to create a more realistic cadence when the work naturally allows it. "\
 "All child goals together must fully cover the parent goal intent without introducing unrelated work. "\
 "Each child goal must have a unique responsibility and a clear transition to the next child goal when applicable. "\
 "Do NOT use vague titles such as 'work on it', 'continue', 'improve', or 'finish'. "\
 "Prefer between 3 and 7 child goals depending on complexity; do not force a fixed number. "\
+"If you cannot produce realistic pauses without creating overlarge child goals, that is a sign the decomposition is too coarse; split the work further. "\
 "The first child goal should handle clarification, setup, or preparation if needed. "\
 "Middle child goals should perform the main transformation or work steps in order. "\
 "The final child goal should handle validation, integration, review, or usability preparation. "\

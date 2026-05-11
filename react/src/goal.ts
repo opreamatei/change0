@@ -15,6 +15,8 @@ export interface GoalInit {
   startDate: number | null
   endDate: number | null
   requiredTime: number
+  minPauseToNext: number
+  pauseToNext: number
   subgoals: number[]
   parent: number | null
   prev: number | null
@@ -41,6 +43,8 @@ export interface GoalListResponseItem {
   start_date: number
   end_date: number
   required_time: number
+  min_pause_to_next: number
+  pause_to_next: number
   subgoals: number[]
   parent: number
   prev: number
@@ -89,6 +93,8 @@ export class Goal implements GoalInit {
     'startDate',
     'endDate',
     'requiredTime',
+    'minPauseToNext',
+    'pauseToNext',
     'subgoals',
     'parent',
     'prev',
@@ -105,6 +111,8 @@ export class Goal implements GoalInit {
   startDate: number | null
   endDate: number | null
   requiredTime: number
+  minPauseToNext: number
+  pauseToNext: number
   subgoals: number[]
   parent: number | null
   prev: number | null
@@ -121,6 +129,8 @@ export class Goal implements GoalInit {
     this.startDate = init.startDate
     this.endDate = init.endDate
     this.requiredTime = init.requiredTime
+    this.minPauseToNext = init.minPauseToNext
+    this.pauseToNext = init.pauseToNext
     this.subgoals = [...init.subgoals]
     this.parent = init.parent
     this.prev = init.prev
@@ -143,6 +153,8 @@ export class Goal implements GoalInit {
       startDate: item.start_date > 0 ? item.start_date : null,
       endDate: item.end_date > 0 ? item.end_date : null,
       requiredTime: item.required_time,
+      minPauseToNext: item.min_pause_to_next,
+      pauseToNext: item.pause_to_next,
       subgoals: [...item.subgoals],
       parent: item.parent > 0 ? item.parent : null,
       prev: item.prev > 0 ? item.prev : null,
@@ -485,6 +497,8 @@ export function createMockGoals(template: MockGoalTemplate): Goal[] {
       startDate: node.startDate ?? null,
       endDate: node.endDate ?? null,
       requiredTime: node.requiredTime,
+      minPauseToNext: 0,
+      pauseToNext: 0,
       subgoals: childIndexes,
       parent,
       prev: null,
@@ -581,6 +595,54 @@ export function inferGoalState(goal: Goal): InferredGoalState {
   if (goal.startDate && goal.endDate) return 'finished'
   if (goal.startDate && !goal.endDate) return 'started'
   return 'idle'
+}
+
+export function isLeafGoal(goal: Goal) {
+  return goal.subgoals.length === 0
+}
+
+export function getLeafGoals(goals: Goal[]) {
+  return goals.filter(isLeafGoal)
+}
+
+export function getCurrentLeafGoals(goals: Goal[]) {
+  return getLeafGoals(goals).filter((goal) => inferGoalState(goal) === 'started')
+}
+
+export function getGoalStartGate(goals: Goal[], goal: Goal, now = Math.floor(Date.now() / 1000)) {
+  const previousGoal = getGoalPrev(goals, goal)
+
+  if (!previousGoal) {
+    return {
+      ready: true,
+      previousGoal: null as Goal | null,
+      minPauseUntil: null as number | null,
+      normalPauseUntil: null as number | null,
+      remainingMinPause: 0,
+    }
+  }
+
+  if (!previousGoal.endDate) {
+    return {
+      ready: false,
+      previousGoal,
+      minPauseUntil: null as number | null,
+      normalPauseUntil: null as number | null,
+      remainingMinPause: Number.POSITIVE_INFINITY,
+    }
+  }
+
+  const minPauseUntil = previousGoal.endDate + previousGoal.minPauseToNext
+  const normalPauseUntil = previousGoal.endDate + previousGoal.pauseToNext
+  const remainingMinPause = Math.max(0, minPauseUntil - now)
+
+  return {
+    ready: remainingMinPause <= 0,
+    previousGoal,
+    minPauseUntil,
+    normalPauseUntil,
+    remainingMinPause,
+  }
 }
 
 export function getGoalPrev(goals: Goal[], goal: Goal | number) {

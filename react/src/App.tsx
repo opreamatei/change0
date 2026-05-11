@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import GoalViewer from './section/goal-view'
+import CurrentGoalsView from './section/current-goals-view'
 import {
   applyGoalEvent,
   endGoalOnServer,
@@ -16,6 +17,11 @@ import {
 import { SERVER_ENDPOINTS } from './config/server'
 import { buildGoalPath, getLocationState, ROOT_GOAL_ID, type RouteName } from './config/utils'
 
+interface DevTimeState {
+  now: number
+  offsetSeconds: number
+}
+
 function App() {
   const initialLocation = getLocationState()
   const [route, setRoute] = useState<RouteName>(initialLocation.route)
@@ -25,6 +31,9 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState('Loading goals from server...')
   const [pendingGoalId, setPendingGoalId] = useState<string | null>(null)
+  const [goalPanel, setGoalPanel] = useState<'structure' | 'current'>('structure')
+  const [devTime, setDevTime] = useState<DevTimeState | null>(null)
+  const [devTimeBusy, setDevTimeBusy] = useState(false)
   const pendingActionRef = useRef<{ goalId: string } | null>(null)
 
   const selectedParentGoal = useMemo<Goal | null>(() => {
@@ -58,32 +67,59 @@ function App() {
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
+  async function refreshGoals(options?: { silent?: boolean }) {
+    try {
+      if (!options?.silent) {
+        setLoading(true)
+      }
+
+      const loadedGoals = await loadGoalsFromServer()
+      setGoals(loadedGoals)
+      setError(null)
+      setMessage(`Loaded ${loadedGoals.length} goals from server.`)
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : String(loadError))
+      setMessage('Failed to load goals from server.')
+    } finally {
+      if (!options?.silent) {
+        setLoading(false)
+      }
+    }
+  }
+
+  async function refreshDevTime() {
+    try {
+      const response = await fetch(SERVER_ENDPOINTS.devTime, {
+        method: 'GET',
+        cache: 'no-store',
+      })
+
+      if (!response.ok) {
+        throw new Error(`Failed to load dev time: ${response.status}`)
+      }
+
+      const payload = (await response.json()) as { now: number; offset_seconds: number }
+
+      setDevTime({
+        now: payload.now,
+        offsetSeconds: payload.offset_seconds,
+      })
+    } catch {
+      setDevTime(null)
+    }
+  }
+
   useEffect(() => {
     let cancelled = false
 
     async function run() {
-      try {
-        setLoading(true)
-        setError(null)
+      await Promise.all([
+        refreshGoals(),
+        refreshDevTime(),
+      ])
 
-        const loadedGoals = await loadGoalsFromServer()
-        if (cancelled) {
-          return
-        }
-
-        setGoals(loadedGoals)
-        setMessage(`Loaded ${loadedGoals.length} goals from server.`)
-      } catch (loadError) {
-        if (cancelled) {
-          return
-        }
-
-        setError(loadError instanceof Error ? loadError.message : String(loadError))
-        setMessage('Failed to load goals from server.')
-      } finally {
-        if (!cancelled) {
-          setLoading(false)
-        }
+      if (cancelled) {
+        return
       }
     }
 
@@ -176,6 +212,48 @@ function App() {
     }
   }
 
+  async function runDevTimeAction(action: 'reset' | number) {
+    try {
+      setDevTimeBusy(true)
+
+      const isReset = action === 'reset'
+      const response = await fetch(
+        isReset ? SERVER_ENDPOINTS.devTimeReset : SERVER_ENDPOINTS.devTimeAdvance,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: isReset ? JSON.stringify({}) : JSON.stringify({ seconds: action }),
+        },
+      )
+
+      if (!response.ok) {
+        throw new Error(`Dev time action failed: ${response.status}`)
+      }
+
+      const payload = (await response.json()) as { now: number; offset_seconds: number }
+
+      setDevTime({
+        now: payload.now,
+        offsetSeconds: payload.offset_seconds,
+      })
+
+      await refreshGoals({ silent: true })
+      setMessage(isReset ? 'Simulated time reset.' : 'Simulated time advanced.')
+    } catch (actionError) {
+      const nextError = actionError instanceof Error ? actionError.message : String(actionError)
+      setError(nextError)
+      setMessage(nextError)
+    } finally {
+      setDevTimeBusy(false)
+    }
+  }
+
+  const devTimeLabel = devTime
+    ? new Date(devTime.now * 1000).toLocaleString()
+    : 'Time unavailable'
+
   function viewRootGoal() {
     navigateToGoal(ROOT_GOAL_ID)
   }
@@ -210,16 +288,94 @@ function App() {
 
     return (
       <main className="min-h-full bg-white px-4 py-8 text-black sm:px-6">
-        <GoalViewer
-          parentGoal={selectedParentGoal}
-          childrenGoals={visibleGoals}
-          globalGoals={goals}
-          statusMessage={error ?? message}
-          pendingGoalId={pendingGoalId}
-          onNavigate={navigateToGoal}
-          onStartGoal={(targetGoalId) => void runGoalAction(targetGoalId, 'start')}
-          onEndGoal={(targetGoalId) => void runGoalAction(targetGoalId, 'end')}
-        />
+        <aside className="fixed right-4 top-4 z-50 space-y-2 rounded-lg border border-neutral-200 bg-white/95 px-3 py-3 text-right shadow-sm backdrop-blur sm:right-6 sm:top-6">
+          <div className="space-y-1">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-neutral-500">Server time</p>
+            <p className="text-sm text-black">{devTimeLabel}</p>
+            <p className="text-xs text-neutral-500">
+              Offset: {devTime ? `${devTime.offsetSeconds}s` : 'n/a'}
+            </p>
+          </div>
+          <div className="flex flex-wrap justify-end gap-2 text-xs">
+            <button
+              type="button"
+              className="border-b border-neutral-400 text-neutral-700 disabled:text-neutral-300"
+              disabled={devTimeBusy}
+              onClick={() => void refreshDevTime()}
+            >
+              Now
+            </button>
+            <button
+              type="button"
+              className="border-b border-neutral-400 text-neutral-700 disabled:text-neutral-300"
+              disabled={devTimeBusy}
+              onClick={() => void runDevTimeAction(600)}
+            >
+              +10m
+            </button>
+            <button
+              type="button"
+              className="border-b border-neutral-400 text-neutral-700 disabled:text-neutral-300"
+              disabled={devTimeBusy}
+              onClick={() => void runDevTimeAction(3600)}
+            >
+              +1h
+            </button>
+            <button
+              type="button"
+              className="border-b border-neutral-400 text-neutral-700 disabled:text-neutral-300"
+              disabled={devTimeBusy}
+              onClick={() => void runDevTimeAction(86400)}
+            >
+              +1d
+            </button>
+            <button
+              type="button"
+              className="border-b border-neutral-400 text-neutral-700 disabled:text-neutral-300"
+              disabled={devTimeBusy}
+              onClick={() => void runDevTimeAction('reset')}
+            >
+              Reset
+            </button>
+          </div>
+        </aside>
+        <section className="mx-auto flex w-full max-w-5xl justify-end gap-3 pb-6">
+          <button
+            type="button"
+            className={goalPanel === 'structure' ? 'rounded border border-black px-3 py-2 text-sm' : 'px-3 py-2 text-sm text-neutral-500'}
+            onClick={() => setGoalPanel('structure')}
+          >
+            Structure
+          </button>
+          <button
+            type="button"
+            className={goalPanel === 'current' ? 'rounded border border-black px-3 py-2 text-sm' : 'px-3 py-2 text-sm text-neutral-500'}
+            onClick={() => setGoalPanel('current')}
+          >
+            Current Session
+          </button>
+        </section>
+        {goalPanel === 'current' ? (
+          <CurrentGoalsView
+            goals={goals}
+            statusMessage={error ?? message}
+            pendingGoalId={pendingGoalId}
+            onNavigate={navigateToGoal}
+            onStartGoal={(targetGoalId) => void runGoalAction(targetGoalId, 'start')}
+            onEndGoal={(targetGoalId) => void runGoalAction(targetGoalId, 'end')}
+          />
+        ) : (
+          <GoalViewer
+            parentGoal={selectedParentGoal}
+            childrenGoals={visibleGoals}
+            globalGoals={goals}
+            statusMessage={error ?? message}
+            pendingGoalId={pendingGoalId}
+            onNavigate={navigateToGoal}
+            onStartGoal={(targetGoalId) => void runGoalAction(targetGoalId, 'start')}
+            onEndGoal={(targetGoalId) => void runGoalAction(targetGoalId, 'end')}
+          />
+        )}
       </main>
     )
   }

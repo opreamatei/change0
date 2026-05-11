@@ -6,6 +6,11 @@
 Goal *GOAL_CONTAINER[1024];
 size_t GOAL_CONTAINER_COUNT = INITIAL_GOAL_INDEX;
 
+static inline _Bool is_leaf(Goal *g){
+	return g->subgoals_len == 0;
+}
+
+
 enum GOAL_STATUS ValidateGoal(Goal *g, time_t now)
 {
 	// parent goals are valid because they depend on children validation
@@ -153,28 +158,6 @@ Goal *FindGoalByID(goalIDType id){
 			return goal;
 	}
 	return NULL;
-}
-
-time_t StartGoal(goalIDType goalID){
-	Goal* g = FindGoalByID(goalID);
-	change_assert(g, "Goal not found, target goal id %s, serialized goals.", goalID);
-
-	time_t now = time(NULL);
-
-	g->start_date = now;
-
-	return now;
-}
-
-time_t EndGoal(goalIDType goalID){
-	Goal* g = FindGoalByID(goalID);
-	change_assert(g, "Goal not found, target goal id %s, serialized goals.", goalID);
-
-	time_t now = time(NULL);
-
-	g->end_date = now;
-
-	return now;
 }
 
 static void ClearGoalsContainer(void) {
@@ -455,3 +438,38 @@ void LoadGoalsFromFile(char* path) {
 	json_value_free(doc);
 	free(buff);
 }
+
+Goal** GetLeafDueGoals(size_t *size){
+
+	*size = 0;
+	size_t goals_len = 0;
+	Goal **goals = GetGoalsContainer(&goals_len);
+	
+	// first pass to determine size
+	for (size_t i = 0; i < goals_len; i++){
+		Goal *g = goals[i];
+		Goal *next = FindGoalFromIndex(g->next);
+
+		if (g->start_date && g->end_date && g->next && next > 0 && !next->start_date && !next->end_date){
+			(*size)++;
+		}
+	}
+
+	if (size == 0) return NULL;
+
+	Goal **out = malloc(*size * sizeof(Goal*));
+	change_assert(out, "Coudln't allocate memory for due leaf out.\n");
+	
+	for (size_t i = 0; i < goals_len; i++){
+		Goal *g = goals[i];
+		Goal *next = FindGoalFromIndex(g->next);
+
+		if (g->start_date && g->end_date && g->next && next > 0 && !next->start_date && !next->end_date){
+			out[i++] = g;
+		}
+
+	}
+	
+	return out;
+}
+

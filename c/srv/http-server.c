@@ -33,6 +33,7 @@
 #define GOAL_ID_LEN         32
 
 #define GRAPH_COPY_PATH     DEFAULT_GRAPH_EXPORT
+#define GOALS_COPY_PATH     DEFAULT_GOALS_DIRECTORY
 
 static _Bool started = 0;
 static int server_fd = -1;
@@ -43,6 +44,8 @@ static pthread_mutex_t server_lock = PTHREAD_MUTEX_INITIALIZER;
 
 extern _Bool ExportGraphTo(char* path);
 extern void LoadGraphFromFile(char* path);
+extern void ExportGoalsTo(char* path);
+extern void LoadGoalsFromFile(char* path);
 
 /* ========================= HTTP REQUEST ========================= */
 
@@ -1104,6 +1107,48 @@ static void handle_get_goal_list(int client_fd) {
 	free(goals_json);
 }
 
+static void handle_post_goal_export(int client_fd) {
+	ExportGoalsTo((char*)GOALS_COPY_PATH);
+
+	send_json_response(
+		client_fd,
+		200,
+		"OK",
+		"{\"ok\":true,\"path\":\"" GOALS_COPY_PATH "\"}"
+	);
+}
+
+static void handle_get_goal_load(int client_fd) {
+	if (access(GOALS_COPY_PATH, R_OK) != 0) {
+		if (errno == ENOENT) {
+			send_json_response(
+				client_fd,
+				404,
+				"Not Found",
+				"{\"ok\":false,\"error\":\"goals_copy_not_found\"}"
+			);
+			return;
+		}
+
+		send_json_response(
+			client_fd,
+			500,
+			"Internal Server Error",
+			"{\"ok\":false,\"error\":\"goals_copy_not_readable\"}"
+		);
+		return;
+	}
+
+	LoadGoalsFromFile((char*)GOALS_COPY_PATH);
+
+	send_json_response(
+		client_fd,
+		200,
+		"OK",
+		"{\"ok\":true,\"path\":\"" GOALS_COPY_PATH "\"}"
+	);
+}
+
 static void handle_post_goal_decompose(int client_fd, const HttpRequest* req) {
 	int goal_index_int = 0;
 	char goal_id[256];
@@ -1315,6 +1360,123 @@ static void handle_get_goal_events(int client_fd, const char* full_path) {
 	if (goal_id[0]) {
 		goal_emit_event(goal_id, "sse_connected", "connected", strlen("connected"));
 	}
+}
+
+static void handle_get_dev_time(int client_fd) {
+	char response_body[256];
+	int response_len = snprintf(
+		response_body,
+		sizeof(response_body),
+		"{\"ok\":true,\"now\":%lld,\"offset_seconds\":%lld}",
+		(long long)change_time_now(),
+		(long long)change_time_get_offset_seconds()
+	);
+
+	if (response_len < 0 || (size_t)response_len >= sizeof(response_body)) {
+		send_json_response(
+			client_fd,
+			500,
+			"Internal Server Error",
+			"{\"ok\":false,\"error\":\"response_too_large\"}"
+		);
+		return;
+	}
+
+	send_response(
+		client_fd,
+		200,
+		"OK",
+		"application/json",
+		response_body,
+		(size_t)response_len
+	);
+}
+
+static void handle_post_dev_time_advance(int client_fd, const HttpRequest* req) {
+	int delta_seconds = 0;
+	char response_body[256];
+	int response_len;
+
+	if (!req->body) {
+		send_json_response(
+			client_fd,
+			400,
+			"Bad Request",
+			"{\"ok\":false,\"error\":\"missing_body\"}"
+		);
+		return;
+	}
+
+	if (!json_get_int_field(req->body, "seconds", &delta_seconds)) {
+		send_json_response(
+			client_fd,
+			400,
+			"Bad Request",
+			"{\"ok\":false,\"error\":\"missing_seconds\"}"
+		);
+		return;
+	}
+
+	response_len = snprintf(
+		response_body,
+		sizeof(response_body),
+		"{\"ok\":true,\"now\":%lld,\"offset_seconds\":%lld}",
+		(long long)change_time_advance_seconds((time_t)delta_seconds),
+		(long long)change_time_get_offset_seconds()
+	);
+
+	if (response_len < 0 || (size_t)response_len >= sizeof(response_body)) {
+		send_json_response(
+			client_fd,
+			500,
+			"Internal Server Error",
+			"{\"ok\":false,\"error\":\"response_too_large\"}"
+		);
+		return;
+	}
+
+	send_response(
+		client_fd,
+		200,
+		"OK",
+		"application/json",
+		response_body,
+		(size_t)response_len
+	);
+}
+
+static void handle_post_dev_time_reset(int client_fd) {
+	char response_body[256];
+	int response_len;
+
+	change_time_reset();
+
+	response_len = snprintf(
+		response_body,
+		sizeof(response_body),
+		"{\"ok\":true,\"now\":%lld,\"offset_seconds\":%lld}",
+		(long long)change_time_now(),
+		(long long)change_time_get_offset_seconds()
+	);
+
+	if (response_len < 0 || (size_t)response_len >= sizeof(response_body)) {
+		send_json_response(
+			client_fd,
+			500,
+			"Internal Server Error",
+			"{\"ok\":false,\"error\":\"response_too_large\"}"
+		);
+		return;
+	}
+
+	send_response(
+		client_fd,
+		200,
+		"OK",
+		"application/json",
+		response_body,
+		(size_t)response_len
+	);
 }
 
 static void handle_post_goal_create(int client_fd, const HttpRequest* req) {
@@ -1675,6 +1837,31 @@ static int handle_request(int client_fd, const HttpRequest* req) {
 
 	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/goal/list") == 0) {
 		handle_get_goal_list(client_fd);
+		return 0;
+	}
+
+	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/goal/export") == 0) {
+		handle_post_goal_export(client_fd);
+		return 0;
+	}
+
+	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/goal/load") == 0) {
+		handle_get_goal_load(client_fd);
+		return 0;
+	}
+
+	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/dev/time") == 0) {
+		handle_get_dev_time(client_fd);
+		return 0;
+	}
+
+	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/dev/time/advance") == 0) {
+		handle_post_dev_time_advance(client_fd, req);
+		return 0;
+	}
+
+	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/dev/time/reset") == 0) {
+		handle_post_dev_time_reset(client_fd);
 		return 0;
 	}
 

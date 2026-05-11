@@ -100,7 +100,6 @@ void SerializeAllGoals(String *buffer);
 void ExportGoalsTo(char* path);
 void LoadGoalsFromFile(char* path);
 
-time_t StartGoal(goalIDType goalID);
-time_t EndGoal(goalIDType goalID);
+Goal** GetLeafDueGoals(size_t *size);
 
 #endif

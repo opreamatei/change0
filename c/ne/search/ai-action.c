@@ -267,7 +267,7 @@ void run4(json_value* doc, String *dynamic_mem, char* ds_id){
 			if (g->start_date == 0) {
 				started_on = "not started";
 			} else {
-				snprintf(started_buf, sizeof(started_buf), "%s", ctime(&g->start_date));
+				snprintf(started_buf, sizeof(started_buf), "%s", change_ctime(&g->start_date));
 				started_buf[strcspn(started_buf, "\n")] = 0;
 				started_on = started_buf;
 			}
@@ -275,7 +275,7 @@ void run4(json_value* doc, String *dynamic_mem, char* ds_id){
 			if (g->end_date == 0) {
 				finished_on = "not finished";
 			} else {
-				snprintf(finished_buf, sizeof(finished_buf), "%s", ctime(&g->end_date));
+				snprintf(finished_buf, sizeof(finished_buf), "%s", change_ctime(&g->end_date));
 				finished_buf[strcspn(finished_buf, "\n")] = 0;
 				finished_on = finished_buf;
 			}

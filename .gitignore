@@ -15,6 +15,7 @@ js/.codex
 *.json
 .codex
 graph-copy.json
+goals-copy.json
 
 react/*
 
