@@ -8,6 +8,7 @@
 
 #include "search/deep-search-session.h"
 #include "goal/goal.h"
+#include "goal/user-schedule.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -1208,6 +1209,16 @@ static void handle_post_goal_decompose(int client_fd, const HttpRequest* req) {
 		return;
 	}
 
+	if (goal->end_date) {
+		send_json_response(
+			client_fd,
+			409,
+			"Conflict",
+			"{\"ok\":false,\"error\":\"goal_already_completed\"}"
+		);
+		return;
+	}
+
 	result_json = serialize_goal_children_json(goal);
 
 	if (!result_json) {
@@ -1236,7 +1247,7 @@ static void handle_post_goal_status_action(
 	int client_fd,
 	const HttpRequest* req,
 	const char* event_type,
-	time_t (*action_fn)(goalIDType),
+	time_t (*action_fn)(Goal*),
 	const char* date_field_name
 ) {
 	char goal_id[GOAL_ID_LEN + 1];
@@ -1269,12 +1280,35 @@ static void handle_post_goal_status_action(
 		return;
 	}
 
-	action_time = action_fn(goal_id);
+	if (strcmp(event_type, "goal_ended") == 0) {
+		if (!goal->start_date) {
+			send_json_response(
+				client_fd,
+				409,
+				"Conflict",
+				"{\"ok\":false,\"error\":\"goal_not_started\"}"
+			);
+			return;
+		}
+
+		if (goal->end_date) {
+			send_json_response(
+				client_fd,
+				409,
+				"Conflict",
+				"{\"ok\":false,\"error\":\"goal_already_completed\"}"
+			);
+			return;
+		}
+	}
+
+	action_time = action_fn(goal);
 	event_len = snprintf(
 		event_body,
 		sizeof(event_body),
-		"{\"goal-id\":\"%s\",\"%s\":%lld,\"start_date\":%lld,\"end_date\":%lld}",
+		"{\"goal-id\":\"%s\",\"goal_index\":%zu,\"%s\":%lld,\"start_date\":%lld,\"end_date\":%lld}",
 		goal_id,
+		goal->globalIndex,
 		date_field_name,
 		(long long)action_time,
 		(long long)goal->start_date,
@@ -1289,8 +1323,9 @@ static void handle_post_goal_status_action(
 	response_len = snprintf(
 		response_body,
 		sizeof(response_body),
-		"{\"ok\":true,\"goal-id\":\"%s\",\"at\":%lld,\"start_date\":%lld,\"end_date\":%lld}",
+		"{\"ok\":true,\"goal-id\":\"%s\",\"goal_index\":%zu,\"at\":%lld,\"start_date\":%lld,\"end_date\":%lld}",
 		esc_goal_id,
+		goal->globalIndex,
 		(long long)action_time,
 		(long long)goal->start_date,
 		(long long)goal->end_date
@@ -1770,6 +1805,58 @@ static void handle_get_research_events(int client_fd, const char* full_path) {
 	}
 }
 
+static void handle_get_session_goals(int client_fd) {
+	size_t len = 0;
+	Goal **session = GetSessionGoals(&len);
+	String out;
+
+	InitString(&out, 512 + len * 512);
+	CatTemplateString(&out, "{\"ok\":true,\"count\":%zu,\"goals\":[", len);
+
+	for (size_t i = 0; i < len; i++) {
+		if (i > 0) CatString(&out, FSTRING_SIZE_PARAMS(","));
+		append_goal_json(&out, session[i]);
+	}
+
+	CatString(&out, FSTRING_SIZE_PARAMS("]}"));
+
+	if (session) free(session);
+
+	send_response(client_fd, 200, "OK", "application/json", c_str(&out), out.len);
+	free(out.p);
+}
+
+static void handle_get_schedule(int client_fd) {
+	size_t len = 0;
+	const struct ScheduleEntry* entries = GetSchedule(&len);
+	String out;
+
+	InitString(&out, 1024 + len * 256);
+	CatTemplateString(&out, "{\"ok\":true,\"count\":%zu,\"entries\":[", len);
+
+	for (size_t i = 0; i < len; i++) {
+		Goal* g = FindGoalFromIndex(entries[i].goal_id);
+		char* esc_title = json_escape_dup(g ? c_str(&g->title) : "");
+
+		if (i > 0) CatString(&out, FSTRING_SIZE_PARAMS(","));
+
+		CatTemplateString(
+			&out,
+			"{\"time\":%lld,\"goal_index\":%zu,\"title\":\"%s\"}",
+			(long long)entries[i].time,
+			entries[i].goal_id,
+			esc_title
+		);
+
+		free(esc_title);
+	}
+
+	CatString(&out, FSTRING_SIZE_PARAMS("]}"));
+
+	send_response(client_fd, 200, "OK", "application/json", c_str(&out), out.len);
+	free(out.p);
+}
+
 static void handle_not_found(int client_fd) {
 	send_json_response(
 		client_fd,
@@ -1840,6 +1927,11 @@ static int handle_request(int client_fd, const HttpRequest* req) {
 		return 0;
 	}
 
+	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/goal/session") == 0) {
+		handle_get_session_goals(client_fd);
+		return 0;
+	}
+
 	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/goal/export") == 0) {
 		handle_post_goal_export(client_fd);
 		return 0;
@@ -1866,12 +1958,55 @@ static int handle_request(int client_fd, const HttpRequest* req) {
 	}
 
 	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/goal/start") == 0) {
-		handle_post_goal_status_action(client_fd, req, "goal_started", StartGoal, "start_date");
+		char orig_goal_id[GOAL_ID_LEN + 1];
+		char leaf_id[GOAL_ID_LEN + 1];
+		char event_body[256];
+		char response_body[256];
+		char* esc_leaf_id;
+		int event_len, response_len;
+
+		if (!req->body) {
+			send_json_response(client_fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_body\"}");
+			return 0;
+		}
+
+		Goal* orig = find_goal_from_request_body(req, orig_goal_id);
+		if (!orig) {
+			send_json_response(client_fd, 404, "Not Found", "{\"ok\":false,\"error\":\"goal_not_found\"}");
+			return 0;
+		}
+
+		Goal* leaf = StartGoalDeepFromGoal(orig);
+		if (!leaf) {
+			send_json_response(client_fd, 409, "Conflict", "{\"ok\":false,\"error\":\"goal_not_startable\"}");
+			return 0;
+		}
+
+		goal_id_to_cstr(leaf, leaf_id);
+
+		event_len = snprintf(event_body, sizeof(event_body),
+			"{\"goal-id\":\"%s\",\"goal_index\":%zu,\"start_date\":%lld,\"end_date\":%lld}",
+			leaf_id, leaf->globalIndex, (long long)leaf->start_date, (long long)leaf->end_date);
+		if (event_len > 0 && (size_t)event_len < sizeof(event_body))
+			goal_emit_event(leaf_id, "goal_started", event_body, (size_t)event_len);
+
+		esc_leaf_id = json_escape_dup(leaf_id);
+		response_len = snprintf(response_body, sizeof(response_body),
+			"{\"ok\":true,\"goal-id\":\"%s\",\"goal_index\":%zu,\"at\":%lld,\"start_date\":%lld,\"end_date\":%lld}",
+			esc_leaf_id, leaf->globalIndex, (long long)leaf->start_date, (long long)leaf->start_date, (long long)leaf->end_date);
+		free(esc_leaf_id);
+
+		if (response_len < 0 || (size_t)response_len >= sizeof(response_body)) {
+			send_json_response(client_fd, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"response_too_large\"}");
+			return 0;
+		}
+
+		send_response(client_fd, 200, "OK", "application/json", response_body, (size_t)response_len);
 		return 0;
 	}
 
 	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/goal/end") == 0) {
-		handle_post_goal_status_action(client_fd, req, "goal_ended", EndGoal, "end_date");
+		handle_post_goal_status_action(client_fd, req, "goal_ended", EndGoalFromGoal, "end_date");
 		return 0;
 	}
 
@@ -1882,6 +2017,11 @@ static int handle_request(int client_fd, const HttpRequest* req) {
 
 	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/message") == 0) {
 		handle_post_message(client_fd, req);
+		return 0;
+	}
+
+	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/schedule") == 0) {
+		handle_get_schedule(client_fd);
 		return 0;
 	}
 

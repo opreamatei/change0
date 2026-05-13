@@ -12,5 +12,6 @@ struct ScheduleEntry {
 extern _Bool SCHEDULE_NEEDS_REFRESH;
 
 void RefreshSchedule();
+const struct ScheduleEntry* GetSchedule(size_t *out_len);
 
 #endif

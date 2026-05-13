@@ -144,6 +144,7 @@ async function applyEndpointChange(rawValue,{reloadGraph=true}={}){
   panels();
   if(reloadGraph){
     await graphView.loadGraph();
+    await loadGoals(false);
   }
   return endpointBase;
 }
@@ -812,6 +813,8 @@ function normGoal(raw){
     pause_to_next:Number(raw?.pause_to_next||0),
     subgoals:Array.isArray(raw?.subgoals)?raw.subgoals.map(Number).filter(Number.isFinite):[],
     parent:Number(raw?.parent||0),
+    prev:Number(raw?.prev||0),
+    next:Number(raw?.next||0),
     depth:Number(raw?.depth||0)
   };
 }
@@ -961,6 +964,33 @@ function drawGoals(){
   const hoveredIndex=goalStructureState.hoveredGoal?.globalIndex||0;
   let selectedPoint=null;
   c.lineCap="round";
+
+  c.save();
+  c.setLineDash([5,9]);
+  for(const point of positions){
+    if(!point.goal.next)continue;
+    const target=map.get(point.goal.next);
+    if(!target)continue;
+    const a=screen(point);
+    const b=screen(target);
+    const linkedHover=point.goal.globalIndex===hoveredIndex||target.goal.globalIndex===hoveredIndex;
+    const sameDepth=Math.abs(a.x-b.x)<4;
+    const bend=sameDepth?Math.max(36,Math.abs(a.y-b.y)*.28):0;
+    c.strokeStyle=linkedHover?"rgba(255,255,255,.28)":"rgba(255,255,255,.13)";
+    c.lineWidth=linkedHover?1.4:1;
+    c.beginPath();
+    if(sameDepth){
+      const side=Math.sign(b.y-a.y)||1;
+      c.moveTo(a.x+34,a.y);
+      c.bezierCurveTo(a.x+72+side*bend,a.y,a.x+72+side*bend,b.y,b.x+34,b.y);
+    }else{
+      c.moveTo(a.x,a.y);
+      c.bezierCurveTo((a.x+b.x)/2,a.y,(a.x+b.x)/2,b.y,b.x,b.y);
+    }
+    c.stroke();
+  }
+  c.restore();
+
   for(const point of positions){
     for(const childId of point.goal.subgoals){
       const target=map.get(childId);
@@ -1010,7 +1040,7 @@ function drawGoals(){
 function syncGoalContextAction(point=null){
   const button=$("decompose-selected-goal");
   if(!button)return;
-  const canShow=Boolean(point)&&L.mode!=="timeline"&&!L.decomp&&!point.hasChildren&&L.selected===point.goal.globalIndex;
+  const canShow=Boolean(point)&&L.mode!=="timeline"&&!L.decomp&&!point.hasChildren&&!point.goal.end_date&&L.selected===point.goal.globalIndex;
   if(!canShow){
     button.disabled=true;
     button.classList.remove("is-visible");
@@ -1031,6 +1061,12 @@ async function decomposeGoal(){
   if(!goal){
     L.detail="Ready.";
     toast("Select a goal first.",false);
+    panels();
+    return;
+  }
+  if(goal.end_date){
+    L.detail="Ready.";
+    toast("Cannot decompose a completed goal.",false);
     panels();
     return;
   }
@@ -1359,3 +1395,16 @@ function initGoalView(){
   }
 timelineState.canvas.style.cursor="grab";
 goalTimelineState.canvas.style.cursor="grab";
+
+(function(){
+  const app=document.querySelector(".app");
+  const btn=$("sidebar-toggle");
+  const hidden=localStorage.getItem("sidebar-hidden")==="1";
+  if(hidden)app.classList.add("sidebar-hidden");
+  btn.classList.toggle("is-active",hidden);
+  btn.onclick=()=>{
+    const isHidden=app.classList.toggle("sidebar-hidden");
+    btn.classList.toggle("is-active",isHidden);
+    try{localStorage.setItem("sidebar-hidden",isHidden?"1":"0")}catch{}
+  };
+}());

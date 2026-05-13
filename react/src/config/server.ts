@@ -12,6 +12,8 @@ export const SERVER_ENDPOINTS = {
   devTime: `${SERVER_BASE_URL}/dev/time`,
   devTimeAdvance: `${SERVER_BASE_URL}/dev/time/advance`,
   devTimeReset: `${SERVER_BASE_URL}/dev/time/reset`,
+  schedule: `${SERVER_BASE_URL}/schedule`,
+  sessionGoals: `${SERVER_BASE_URL}/goal/session`,
 } as const
 
 export function buildGoalDecomposeUrl(baseUrl = SERVER_BASE_URL) {

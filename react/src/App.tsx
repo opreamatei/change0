@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import GoalViewer from './section/goal-view'
 import CurrentGoalsView from './section/current-goals-view'
+import ScheduleView from './section/schedule-view'
 import {
   applyGoalEvent,
   endGoalOnServer,
@@ -30,11 +31,11 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState('Loading goals from server...')
-  const [pendingGoalId, setPendingGoalId] = useState<string | null>(null)
-  const [goalPanel, setGoalPanel] = useState<'structure' | 'current'>('structure')
+  const [pendingGoalIndex, setPendingGoalIndex] = useState<number | null>(null)
+  const [goalPanel, setGoalPanel] = useState<'structure' | 'current' | 'schedule'>('structure')
   const [devTime, setDevTime] = useState<DevTimeState | null>(null)
   const [devTimeBusy, setDevTimeBusy] = useState(false)
-  const pendingActionRef = useRef<{ goalId: string } | null>(null)
+  const pendingActionRef = useRef<{ goalId: string; goalIndex: number } | null>(null)
 
   const selectedParentGoal = useMemo<Goal | null>(() => {
     if (!goalId || goalId === ROOT_GOAL_ID) {
@@ -75,11 +76,16 @@ function App() {
 
       const loadedGoals = await loadGoalsFromServer()
       setGoals(loadedGoals)
-      setError(null)
-      setMessage(`Loaded ${loadedGoals.length} goals from server.`)
+
+      if (!options?.silent) {
+        setError(null)
+        setMessage(`Loaded ${loadedGoals.length} goals from server.`)
+      }
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : String(loadError))
-      setMessage('Failed to load goals from server.')
+      if (!options?.silent) {
+        setError(loadError instanceof Error ? loadError.message : String(loadError))
+        setMessage('Failed to load goals from server.')
+      }
     } finally {
       if (!options?.silent) {
         setLoading(false)
@@ -152,7 +158,7 @@ function App() {
 
       const goalIdFromEvent = getGoalIdFromEvent(envelope, payload)
 
-      if (!goalIdFromEvent) {
+      if (!goalIdFromEvent && !payload.goal_index) {
         return
       }
 
@@ -165,9 +171,15 @@ function App() {
       }
 
       const pendingAction = pendingActionRef.current
-      if (pendingAction?.goalId === goalIdFromEvent) {
+      const matchesPending = pendingAction
+        ? payload.goal_index
+          ? pendingAction.goalIndex === payload.goal_index
+          : pendingAction.goalId === goalIdFromEvent
+        : false
+
+      if (matchesPending) {
         const actionLabel = envelope.type === 'goal_started' ? 'Goal started.' : 'Goal ended.'
-        setPendingGoalId(null)
+        setPendingGoalIndex(null)
         setError(null)
         setMessage(actionLabel)
         pendingActionRef.current = null
@@ -191,22 +203,30 @@ function App() {
     window.history.pushState({}, '', buildGoalPath(nextGoalId))
   }
 
-  async function runGoalAction(targetGoalId: string, action: 'start' | 'end') {
+  async function runGoalAction(targetGoal: Goal, action: 'start' | 'end') {
     try {
-      pendingActionRef.current = { goalId: targetGoalId }
-      setPendingGoalId(targetGoalId)
+      pendingActionRef.current = { goalId: targetGoal.id, goalIndex: targetGoal.globalIndex }
+      setPendingGoalIndex(targetGoal.globalIndex)
       setError(null)
       setMessage(action === 'start' ? 'Starting goal...' : 'Ending goal...')
 
       if (action === 'start') {
-        await startGoalOnServer(targetGoalId)
+        await startGoalOnServer(targetGoal)
+        await refreshGoals({ silent: true })
+        setMessage('Goal started.')
       } else {
-        await endGoalOnServer(targetGoalId)
+        await endGoalOnServer(targetGoal)
+        await refreshGoals({ silent: true })
+        setMessage('Goal ended.')
       }
+
+      setPendingGoalIndex(null)
+      setError(null)
+      pendingActionRef.current = null
     } catch (actionError) {
       const nextError = actionError instanceof Error ? actionError.message : String(actionError)
       pendingActionRef.current = null
-      setPendingGoalId(null)
+      setPendingGoalIndex(null)
       setError(nextError)
       setMessage(nextError)
     }
@@ -287,82 +307,43 @@ function App() {
     }
 
     return (
-      <main className="min-h-full bg-white px-4 py-8 text-black sm:px-6">
-        <aside className="fixed right-4 top-4 z-50 space-y-2 rounded-lg border border-neutral-200 bg-white/95 px-3 py-3 text-right shadow-sm backdrop-blur sm:right-6 sm:top-6">
-          <div className="space-y-1">
-            <p className="text-[11px] uppercase tracking-[0.16em] text-neutral-500">Server time</p>
-            <p className="text-sm text-black">{devTimeLabel}</p>
-            <p className="text-xs text-neutral-500">
-              Offset: {devTime ? `${devTime.offsetSeconds}s` : 'n/a'}
-            </p>
-          </div>
-          <div className="flex flex-wrap justify-end gap-2 text-xs">
-            <button
-              type="button"
-              className="border-b border-neutral-400 text-neutral-700 disabled:text-neutral-300"
-              disabled={devTimeBusy}
-              onClick={() => void refreshDevTime()}
-            >
-              Now
-            </button>
-            <button
-              type="button"
-              className="border-b border-neutral-400 text-neutral-700 disabled:text-neutral-300"
-              disabled={devTimeBusy}
-              onClick={() => void runDevTimeAction(600)}
-            >
-              +10m
-            </button>
-            <button
-              type="button"
-              className="border-b border-neutral-400 text-neutral-700 disabled:text-neutral-300"
-              disabled={devTimeBusy}
-              onClick={() => void runDevTimeAction(3600)}
-            >
-              +1h
-            </button>
-            <button
-              type="button"
-              className="border-b border-neutral-400 text-neutral-700 disabled:text-neutral-300"
-              disabled={devTimeBusy}
-              onClick={() => void runDevTimeAction(86400)}
-            >
-              +1d
-            </button>
-            <button
-              type="button"
-              className="border-b border-neutral-400 text-neutral-700 disabled:text-neutral-300"
-              disabled={devTimeBusy}
-              onClick={() => void runDevTimeAction('reset')}
-            >
-              Reset
-            </button>
+      <main className="min-h-full bg-white pb-20 px-4 py-8 text-black sm:px-6">
+        <aside className="fixed right-3 top-3 z-50 rounded-xl border border-neutral-200 bg-white/95 px-3 py-3 shadow-sm backdrop-blur sm:right-5 sm:top-5">
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-neutral-400">Dev time</p>
+          <p className="mb-0.5 text-sm font-medium text-black">{devTimeLabel}</p>
+          {devTime && devTime.offsetSeconds !== 0 && (
+            <p className="mb-2 text-xs text-amber-600">+{devTime.offsetSeconds}s offset</p>
+          )}
+          <div className="flex flex-wrap gap-1.5">
+            {([
+              ['Now', () => void refreshDevTime()],
+              ['+10m', () => void runDevTimeAction(600)],
+              ['+1h', () => void runDevTimeAction(3600)],
+              ['+1d', () => void runDevTimeAction(86400)],
+              ['Reset', () => void runDevTimeAction('reset')],
+            ] as [string, () => void][]).map(([label, onClick]) => (
+              <button
+                key={label}
+                type="button"
+                className="rounded border border-neutral-200 px-2 py-0.5 text-xs text-neutral-600 hover:bg-neutral-50 disabled:text-neutral-300"
+                disabled={devTimeBusy}
+                onClick={onClick}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </aside>
-        <section className="mx-auto flex w-full max-w-5xl justify-end gap-3 pb-6">
-          <button
-            type="button"
-            className={goalPanel === 'structure' ? 'rounded border border-black px-3 py-2 text-sm' : 'px-3 py-2 text-sm text-neutral-500'}
-            onClick={() => setGoalPanel('structure')}
-          >
-            Structure
-          </button>
-          <button
-            type="button"
-            className={goalPanel === 'current' ? 'rounded border border-black px-3 py-2 text-sm' : 'px-3 py-2 text-sm text-neutral-500'}
-            onClick={() => setGoalPanel('current')}
-          >
-            Current Session
-          </button>
-        </section>
-        {goalPanel === 'current' ? (
+        {goalPanel === 'schedule' ? (
+          <ScheduleView />
+        ) : goalPanel === 'current' ? (
           <CurrentGoalsView
             goals={goals}
             statusMessage={error ?? message}
-            pendingGoalId={pendingGoalId}
+            pendingGoalIndex={pendingGoalIndex}
             onNavigate={navigateToGoal}
-            onStartGoal={(targetGoalId) => void runGoalAction(targetGoalId, 'start')}
-            onEndGoal={(targetGoalId) => void runGoalAction(targetGoalId, 'end')}
+            onStartGoal={(targetGoal) => void runGoalAction(targetGoal, 'start')}
+            onEndGoal={(targetGoal) => void runGoalAction(targetGoal, 'end')}
           />
         ) : (
           <GoalViewer
@@ -370,12 +351,32 @@ function App() {
             childrenGoals={visibleGoals}
             globalGoals={goals}
             statusMessage={error ?? message}
-            pendingGoalId={pendingGoalId}
+            pendingGoalIndex={pendingGoalIndex}
             onNavigate={navigateToGoal}
-            onStartGoal={(targetGoalId) => void runGoalAction(targetGoalId, 'start')}
-            onEndGoal={(targetGoalId) => void runGoalAction(targetGoalId, 'end')}
+            onStartGoal={(targetGoal) => void runGoalAction(targetGoal, 'start')}
+            onEndGoal={(targetGoal) => void runGoalAction(targetGoal, 'end')}
           />
         )}
+        <nav className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-neutral-200 bg-white/95 backdrop-blur">
+          {([
+            ['structure', 'Structure'],
+            ['current', 'Session'],
+            ['schedule', 'Schedule'],
+          ] as [typeof goalPanel, string][]).map(([panel, label]) => (
+            <button
+              key={panel}
+              type="button"
+              className={`flex-1 py-4 text-sm transition-colors ${
+                goalPanel === panel
+                  ? 'border-t-2 border-black font-semibold text-black'
+                  : 'border-t-2 border-transparent text-neutral-400'
+              }`}
+              onClick={() => setGoalPanel(panel)}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
       </main>
     )
   }

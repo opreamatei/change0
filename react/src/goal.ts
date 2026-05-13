@@ -32,7 +32,8 @@ export interface GoalDecomposePayload {
 }
 
 export interface GoalStatusActionPayload {
-  goalId: string
+  goalId?: string
+  goalIndex?: number
 }
 
 export interface GoalListResponseItem {
@@ -64,6 +65,7 @@ export interface GoalListResponse {
 export interface GoalStatusActionResponse {
   ok: boolean
   'goal-id': string
+  goal_index?: number
   at: number
   start_date: number
   end_date: number
@@ -71,6 +73,7 @@ export interface GoalStatusActionResponse {
 
 export interface GoalEventPayload {
   'goal-id'?: string
+  goal_index?: number
   start_date?: number
   end_date?: number
 }
@@ -244,8 +247,15 @@ export async function loadGoalsFromServer(baseUrl = SERVER_BASE_URL) {
 
   const payload = (await response.json()) as GoalListResponse
   const items = Array.isArray(payload.goals) ? payload.goals : []
+  const seen = new Set<number>()
 
-  return items.map(Goal.fromServer)
+  return items
+    .filter((item) => {
+      if (seen.has(item.globalIndex)) return false
+      seen.add(item.globalIndex)
+      return true
+    })
+    .map(Goal.fromServer)
 }
 
 async function postGoalStatusAction(url: string, payload: GoalStatusActionPayload) {
@@ -255,7 +265,8 @@ async function postGoalStatusAction(url: string, payload: GoalStatusActionPayloa
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      'goal-id': payload.goalId,
+      ...(payload.goalIndex ? { 'goal-index': payload.goalIndex } : {}),
+      ...(payload.goalId ? { 'goal-id': payload.goalId } : {}),
     }),
   })
 
@@ -266,17 +277,20 @@ async function postGoalStatusAction(url: string, payload: GoalStatusActionPayloa
   return (await response.json()) as GoalStatusActionResponse
 }
 
-export async function startGoalOnServer(goalId: string, baseUrl = SERVER_BASE_URL) {
-  return postGoalStatusAction(buildGoalStartUrl(baseUrl), { goalId })
+export async function startGoalOnServer(goal: Goal, baseUrl = SERVER_BASE_URL) {
+  return postGoalStatusAction(buildGoalStartUrl(baseUrl), { goalId: goal.id, goalIndex: goal.globalIndex })
 }
 
-export async function endGoalOnServer(goalId: string, baseUrl = SERVER_BASE_URL) {
-  return postGoalStatusAction(buildGoalEndUrl(baseUrl), { goalId })
+export async function endGoalOnServer(goal: Goal, baseUrl = SERVER_BASE_URL) {
+  return postGoalStatusAction(buildGoalEndUrl(baseUrl), { goalId: goal.id, goalIndex: goal.globalIndex })
 }
 
 export function applyGoalEvent(goals: Goal[], goalId: string, payload: GoalEventPayload) {
   return goals.map((goal) => {
-    if (goal.id !== goalId) {
+    const goalIndex = payload.goal_index
+    const matchesGoal = goalIndex ? goal.globalIndex === goalIndex : goal.id === goalId
+
+    if (!matchesGoal) {
       return goal
     }
 
@@ -609,8 +623,30 @@ export function getCurrentLeafGoals(goals: Goal[]) {
   return getLeafGoals(goals).filter((goal) => inferGoalState(goal) === 'started')
 }
 
+export function getPreviousTimelineLeaf(goals: Goal[], goal: Goal): Goal | null {
+  function lastLeafOf(g: Goal): Goal {
+    while (g.subgoals.length > 0) {
+      const child = findGoalByGlobalIndex(goals, g.subgoals[g.subgoals.length - 1])
+      if (!child) break
+      g = child
+    }
+    return g
+  }
+
+  let current: Goal | null = goal
+  while (current) {
+    if (current.prev !== null) {
+      const prev = findGoalByGlobalIndex(goals, current.prev)
+      return prev ? lastLeafOf(prev) : null
+    }
+    if (current.parent === null) return null
+    current = findGoalByGlobalIndex(goals, current.parent)
+  }
+  return null
+}
+
 export function getGoalStartGate(goals: Goal[], goal: Goal, now = Math.floor(Date.now() / 1000)) {
-  const previousGoal = getGoalPrev(goals, goal)
+  const previousGoal = getPreviousTimelineLeaf(goals, goal)
 
   if (!previousGoal) {
     return {

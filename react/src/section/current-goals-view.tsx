@@ -1,57 +1,63 @@
+import { useEffect, useState, useCallback } from 'react'
 import {
   formatGoalDate,
   formatGoalDuration,
   getCurrentLeafGoals,
-  getGoalStartGate,
   getLeafGoals,
+  Goal,
+  type GoalListResponseItem,
   inferGoalState,
-  type Goal,
 } from '../goal'
+import { SERVER_ENDPOINTS } from '../config/server'
 
 export interface CurrentGoalsViewProps {
   goals: Goal[]
-  pendingGoalId: string | null
+  pendingGoalIndex: number | null
   statusMessage: string
   onNavigate: (goalId: string) => void
-  onStartGoal: (goalId: string) => void
-  onEndGoal: (goalId: string) => void
+  onStartGoal: (goal: Goal) => void
+  onEndGoal: (goal: Goal) => void
 }
 
-function GoalButtonRow({
+function ActionButtons({
   goal,
-  pendingGoalId,
+  pendingGoalIndex,
   canStart,
   onNavigate,
   onStartGoal,
   onEndGoal,
 }: {
   goal: Goal
-  pendingGoalId: string | null
+  pendingGoalIndex: number | null
   canStart: boolean
   onNavigate: (goalId: string) => void
-  onStartGoal: (goalId: string) => void
-  onEndGoal: (goalId: string) => void
+  onStartGoal: (goal: Goal) => void
+  onEndGoal: (goal: Goal) => void
 }) {
   const state = inferGoalState(goal)
-  const isPending = pendingGoalId === goal.id
+  const isPending = pendingGoalIndex === goal.globalIndex
 
   return (
-    <div className="flex flex-wrap gap-3 text-sm">
-      <button type="button" className="underline underline-offset-2" onClick={() => onNavigate(goal.id)}>
+    <div className="flex flex-wrap gap-2">
+      <button
+        type="button"
+        className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50"
+        onClick={() => onNavigate(goal.id)}
+      >
         Open
       </button>
       <button
         type="button"
-        className="disabled:text-neutral-400"
-        onClick={() => onStartGoal(goal.id)}
+        className="rounded border border-green-300 bg-green-50 px-3 py-1.5 text-sm text-green-700 hover:bg-green-100 disabled:border-neutral-200 disabled:bg-transparent disabled:text-neutral-300"
+        onClick={() => onStartGoal(goal)}
         disabled={isPending || state !== 'idle' || !canStart}
       >
         Start
       </button>
       <button
         type="button"
-        className="disabled:text-neutral-400"
-        onClick={() => onEndGoal(goal.id)}
+        className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50 disabled:border-neutral-200 disabled:text-neutral-300"
+        onClick={() => onEndGoal(goal)}
         disabled={isPending || state !== 'started'}
       >
         End
@@ -60,196 +66,148 @@ function GoalButtonRow({
   )
 }
 
-function CurrentGoalCard({
-  goal,
-  pendingGoalId,
-  onNavigate,
-  onStartGoal,
-  onEndGoal,
-}: {
-  goal: Goal
-  pendingGoalId: string | null
-  onNavigate: (goalId: string) => void
-  onStartGoal: (goalId: string) => void
-  onEndGoal: (goalId: string) => void
-}) {
+function RunningGoalCard({
+  goal, pendingGoalIndex, onNavigate, onStartGoal, onEndGoal,
+}: { goal: Goal; pendingGoalIndex: number | null; onNavigate: (id: string) => void; onStartGoal: (goal: Goal) => void; onEndGoal: (goal: Goal) => void }) {
   return (
-    <article className="space-y-3 rounded-xl border border-neutral-200 px-4 py-4">
-      <div className="space-y-1">
-        <p className="text-xs uppercase tracking-[0.16em] text-neutral-500">Current leaf goal</p>
-        <h2 className="text-lg">{goal.title}</h2>
+    <article className="rounded-xl border border-green-200 bg-green-50 px-5 py-4">
+      <div className="mb-3 flex items-center gap-2">
+        <span className="size-2 animate-pulse rounded-full bg-green-500" />
+        <span className="text-xs font-semibold uppercase tracking-widest text-green-700">Running</span>
       </div>
-      <p className="text-sm leading-6 text-neutral-700">{goal.extraInfo || 'No extra info.'}</p>
-      <div className="space-y-1 text-sm text-neutral-600">
-        <p>Current session: {goal.extraInfo || goal.title}</p>
-        <p>Estimated total elapsed time: {formatGoalDuration(goal.requiredTime)}</p>
-        <p>Started: {formatGoalDate(goal.startDate)}</p>
+      <h3 className="mb-1 text-base font-semibold text-black">{goal.title}</h3>
+      {goal.extraInfo && <p className="mb-3 text-sm leading-relaxed text-neutral-700">{goal.extraInfo}</p>}
+      <div className="mb-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500">
+        <span>{formatGoalDuration(goal.requiredTime)} estimated</span>
+        {goal.startDate ? <span>Started {formatGoalDate(goal.startDate)}</span> : null}
       </div>
-      <GoalButtonRow
-        goal={goal}
-        pendingGoalId={pendingGoalId}
-        canStart={false}
-        onNavigate={onNavigate}
-        onStartGoal={onStartGoal}
-        onEndGoal={onEndGoal}
-      />
+      <ActionButtons goal={goal} pendingGoalIndex={pendingGoalIndex} canStart={false} onNavigate={onNavigate} onStartGoal={onStartGoal} onEndGoal={onEndGoal} />
     </article>
   )
 }
 
-function UpcomingGoalCard({
-  goal,
-  pendingGoalId,
-  gate,
-  onNavigate,
-  onStartGoal,
-  onEndGoal,
-}: {
-  goal: Goal
-  pendingGoalId: string | null
-  gate: ReturnType<typeof getGoalStartGate>
-  onNavigate: (goalId: string) => void
-  onStartGoal: (goalId: string) => void
-  onEndGoal: (goalId: string) => void
-}) {
-  const minPauseText = gate.minPauseUntil
-    ? formatGoalDate(gate.minPauseUntil)
-    : 'n/a'
-  const normalPauseText = gate.normalPauseUntil
-    ? formatGoalDate(gate.normalPauseUntil)
-    : 'n/a'
-
+function DoneGoalCard({ goal }: { goal: Goal }) {
+  const duration = goal.startDate && goal.endDate ? goal.endDate - goal.startDate : null
   return (
-    <article className="space-y-2 border-l border-neutral-300 pl-4">
-      <p className="text-sm text-neutral-500">{gate.ready ? 'Ready next leaf goal' : 'Blocked next leaf goal'}</p>
-      <h3 className="text-base">{goal.title}</h3>
-      <p className="text-sm text-neutral-600">{goal.extraInfo || 'No extra info.'}</p>
-      <div className="space-y-1 text-sm text-neutral-500">
-        <p>Estimated total elapsed time: {formatGoalDuration(goal.requiredTime)}</p>
-        {gate.previousGoal ? <p>Previous leaf goal: {gate.previousGoal.title}</p> : <p>No previous leaf goal.</p>}
-        {gate.previousGoal && !gate.previousGoal.endDate ? <p>Previous leaf goal is not finished yet.</p> : null}
-        {gate.previousGoal?.endDate ? <p>Minimum pause clears at: {minPauseText}</p> : null}
-        {gate.previousGoal?.endDate ? <p>Normal pause reference: {normalPauseText}</p> : null}
-        {!gate.ready && Number.isFinite(gate.remainingMinPause)
-          ? <p>Still blocked for: {formatGoalDuration(gate.remainingMinPause)}</p>
-          : null}
+    <article className="rounded-xl border border-neutral-100 bg-neutral-50 px-5 py-4">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="size-2 rounded-full bg-neutral-300" />
+        <span className="text-xs font-semibold uppercase tracking-widest text-neutral-400">Done</span>
       </div>
-      <GoalButtonRow
-        goal={goal}
-        pendingGoalId={pendingGoalId}
-        canStart={gate.ready}
-        onNavigate={onNavigate}
-        onStartGoal={onStartGoal}
-        onEndGoal={onEndGoal}
-      />
+      <h3 className="mb-1 text-base font-semibold text-neutral-400 line-through">{goal.title}</h3>
+      <div className="flex flex-wrap gap-x-4 text-xs text-neutral-400">
+        {duration !== null && <span>Took {formatGoalDuration(duration)}</span>}
+        {goal.endDate && <span>Ended {formatGoalDate(goal.endDate)}</span>}
+      </div>
+    </article>
+  )
+}
+
+function NextGoalCard({
+  goal, pendingGoalIndex, onNavigate, onStartGoal, onEndGoal,
+}: { goal: Goal; pendingGoalIndex: number | null; onNavigate: (id: string) => void; onStartGoal: (goal: Goal) => void; onEndGoal: (goal: Goal) => void }) {
+  return (
+    <article className="rounded-xl border border-neutral-200 bg-white px-5 py-4">
+      <h3 className="mb-1 text-base font-semibold text-black">{goal.title}</h3>
+      {goal.extraInfo && <p className="mb-3 text-sm leading-relaxed text-neutral-600">{goal.extraInfo}</p>}
+      <div className="mb-4 text-xs text-neutral-500">
+        <span>{formatGoalDuration(goal.requiredTime)} estimated</span>
+      </div>
+      <ActionButtons goal={goal} pendingGoalIndex={pendingGoalIndex} canStart={true} onNavigate={onNavigate} onStartGoal={onStartGoal} onEndGoal={onEndGoal} />
     </article>
   )
 }
 
 export default function CurrentGoalsView({
-  goals,
-  pendingGoalId,
-  statusMessage,
-  onNavigate,
-  onStartGoal,
-  onEndGoal,
+  goals, pendingGoalIndex, statusMessage, onNavigate, onStartGoal, onEndGoal,
 }: CurrentGoalsViewProps) {
-  const now = Math.floor(Date.now() / 1000)
-  const currentLeafGoals = getCurrentLeafGoals(goals)
-  const idleLeafGoals = getLeafGoals(goals).filter((goal) => inferGoalState(goal) === 'idle')
-  const readyGoals = idleLeafGoals
-    .map((goal) => ({ goal, gate: getGoalStartGate(goals, goal, now) }))
-    .filter((entry) => entry.gate.ready)
-  const blockedGoals = idleLeafGoals
-    .map((goal) => ({ goal, gate: getGoalStartGate(goals, goal, now) }))
-    .filter((entry) => !entry.gate.ready)
+  const [nextGoals, setNextGoals] = useState<Goal[]>([])
+  const [nextError, setNextError] = useState<string | null>(null)
+
+  const fetchNext = useCallback(async () => {
+    try {
+      const res = await fetch(SERVER_ENDPOINTS.sessionGoals, { cache: 'no-store' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = (await res.json()) as { ok: boolean; goals: GoalListResponseItem[] }
+      if (!data.ok) throw new Error('Server error')
+      setNextGoals((data.goals ?? []).map(Goal.fromServer))
+      setNextError(null)
+    } catch (err) {
+      setNextError(err instanceof Error ? err.message : String(err))
+    }
+  }, [])
+
+  const running = getCurrentLeafGoals(goals)
+  const done = getLeafGoals(goals).filter((g) => inferGoalState(g) === 'finished')
+
+  useEffect(() => { void fetchNext() }, [fetchNext, done.length, running.length])
+
+  const resolvedNextGoals = nextGoals.filter((g) => inferGoalState(g) !== 'finished')
 
   return (
-    <section className="mx-auto w-full max-w-3xl space-y-6">
-      <header className="space-y-2">
-        <div>
-          <p className="text-sm text-neutral-500">Current session</p>
-          <h1 className="text-2xl">Leaf goals in progress</h1>
-        </div>
-        <p className="text-sm text-neutral-600">{statusMessage}</p>
+    <section className="mx-auto w-full max-w-3xl space-y-8">
+      <header>
+        <h1 className="text-2xl font-bold text-black">Session</h1>
+        {statusMessage && <p className="mt-1 text-sm text-neutral-500">{statusMessage}</p>}
       </header>
 
-      <section className="space-y-4">
-        <div className="space-y-1">
-          <h2 className="text-xl">Current goals</h2>
-          <p className="text-sm text-neutral-500">
-            A current goal is any leaf goal with start set and end unset.
-          </p>
+      <div className="space-y-3">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-lg font-semibold text-black">Running</h2>
+          <span className="text-sm text-neutral-400">{running.length}</span>
         </div>
-        {currentLeafGoals.length === 0 ? (
-          <p className="text-sm text-neutral-500">No current leaf goals are running.</p>
+        {running.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-neutral-200 px-5 py-8 text-center text-sm text-neutral-400">
+            Nothing running right now.
+          </p>
         ) : (
-          <div className="space-y-4">
-            {currentLeafGoals.map((goal) => (
-              <CurrentGoalCard
-                key={goal.id}
-                goal={goal}
-                pendingGoalId={pendingGoalId}
-                onNavigate={onNavigate}
-                onStartGoal={onStartGoal}
-                onEndGoal={onEndGoal}
-              />
+          <div className="space-y-3">
+            {running.map((g) => (
+              <RunningGoalCard key={g.globalIndex} goal={g} pendingGoalIndex={pendingGoalIndex} onNavigate={onNavigate} onStartGoal={onStartGoal} onEndGoal={onEndGoal} />
             ))}
           </div>
         )}
-      </section>
+      </div>
 
-      <section className="space-y-4">
-        <div className="space-y-1">
-          <h2 className="text-xl">Ready after minimum pause</h2>
-          <p className="text-sm text-neutral-500">
-            You can start these leaf goals now. Normal pause is shown only as reference.
-          </p>
-        </div>
-        {readyGoals.length === 0 ? (
-          <p className="text-sm text-neutral-500">No idle leaf goals are ready to start yet.</p>
-        ) : (
-          <div className="space-y-4">
-            {readyGoals.map(({ goal, gate }) => (
-              <UpcomingGoalCard
-                key={goal.id}
-                goal={goal}
-                gate={gate}
-                pendingGoalId={pendingGoalId}
-                onNavigate={onNavigate}
-                onStartGoal={onStartGoal}
-                onEndGoal={onEndGoal}
-              />
+      {done.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-baseline gap-2">
+            <h2 className="text-lg font-semibold text-black">Done</h2>
+            <span className="text-sm text-neutral-400">{done.length}</span>
+          </div>
+          <div className="space-y-2">
+            {done.map((g) => (
+              <DoneGoalCard key={g.globalIndex} goal={g} />
             ))}
           </div>
-        )}
-      </section>
+        </div>
+      )}
 
-      <section className="space-y-4">
-        <div className="space-y-1">
-          <h2 className="text-xl">Blocked by minimum pause</h2>
-          <p className="text-sm text-neutral-500">
-            These leaf goals still need the previous leaf goal to finish or wait out its minimum pause.
-          </p>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-baseline gap-2">
+            <h2 className="text-lg font-semibold text-black">Next</h2>
+            <span className="text-sm text-neutral-400">{resolvedNextGoals.length}</span>
+          </div>
+          <button
+            type="button"
+            className="text-xs text-neutral-400 underline underline-offset-2 hover:text-neutral-700"
+            onClick={() => void fetchNext()}
+          >
+            Refresh
+          </button>
         </div>
-        {blockedGoals.length === 0 ? (
-          <p className="text-sm text-neutral-500">No leaf goals are currently blocked by minimum pause.</p>
+        {nextError && <p className="text-sm text-red-600">{nextError}</p>}
+        {resolvedNextGoals.length === 0 && !nextError ? (
+          <p className="text-sm text-neutral-400">No next goals found.</p>
         ) : (
-          <div className="space-y-4">
-            {blockedGoals.map(({ goal, gate }) => (
-              <UpcomingGoalCard
-                key={goal.id}
-                goal={goal}
-                gate={gate}
-                pendingGoalId={pendingGoalId}
-                onNavigate={onNavigate}
-                onStartGoal={onStartGoal}
-                onEndGoal={onEndGoal}
-              />
+          <div className="space-y-3">
+            {resolvedNextGoals.map((g) => (
+              <NextGoalCard key={g.globalIndex} goal={g} pendingGoalIndex={pendingGoalIndex} onNavigate={onNavigate} onStartGoal={onStartGoal} onEndGoal={onEndGoal} />
             ))}
           </div>
         )}
-      </section>
+      </div>
     </section>
   )
 }

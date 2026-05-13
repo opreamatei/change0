@@ -12,12 +12,17 @@ Goal* CreateUserGoal(String *input1, String *input2, start_ds_session_like_func*
 
 void InitGoalSystem();
 _Bool DecomposeGoal(Goal *g);
+Goal* DecomposeToLeaf(Goal *g);
 
 void UpdateGoal(Goal *g, time_t now);
 Goal* ComputePartialDecomposition(Goal *goal);
 
-
 time_t StartGoal(goalIDType goalID);
+Goal*  StartGoalDeep(goalIDType goalID);
+Goal*  StartGoalDeepFromGoal(Goal *g);
 time_t EndGoal(goalIDType goalID);
+time_t EndGoalFromGoal(Goal *g);
+
+Goal** GetSessionGoals(size_t *out_len);
 
 #endif

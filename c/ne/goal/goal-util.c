@@ -444,32 +444,35 @@ Goal** GetLeafDueGoals(size_t *size){
 	*size = 0;
 	size_t goals_len = 0;
 	Goal **goals = GetGoalsContainer(&goals_len);
-	
-	// first pass to determine size
+
 	for (size_t i = 0; i < goals_len; i++){
 		Goal *g = goals[i];
+		if (!g) continue;
 		Goal *next = FindGoalFromIndex(g->next);
 
-		if (g->start_date && g->end_date && g->next && next > 0 && !next->start_date && !next->end_date){
+		if ((g->start_date && !g->end_date) ||
+		    (g->start_date && g->end_date && g->next && next && !next->start_date && !next->end_date)){
 			(*size)++;
 		}
 	}
 
-	if (size == 0) return NULL;
+	if (*size == 0) return NULL;
 
 	Goal **out = malloc(*size * sizeof(Goal*));
 	change_assert(out, "Coudln't allocate memory for due leaf out.\n");
-	
+
+	size_t w = 0;
 	for (size_t i = 0; i < goals_len; i++){
 		Goal *g = goals[i];
+		if (!g) continue;
 		Goal *next = FindGoalFromIndex(g->next);
 
-		if (g->start_date && g->end_date && g->next && next > 0 && !next->start_date && !next->end_date){
-			out[i++] = g;
+		if ((g->start_date && !g->end_date) ||
+		    (g->start_date && g->end_date && g->next && next && !next->start_date && !next->end_date)){
+			out[w++] = g;
 		}
-
 	}
-	
+
 	return out;
 }
 

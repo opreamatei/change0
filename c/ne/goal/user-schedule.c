@@ -96,3 +96,10 @@ void RefreshSchedule() {
 
 	SCHEDULE_NEEDS_REFRESH = 0;
 }
+
+const struct ScheduleEntry* GetSchedule(size_t *out_len) {
+	if (SCHEDULE_NEEDS_REFRESH)
+		RefreshSchedule();
+	*out_len = SCHEDULE_TABLE_LEN;
+	return SCHEDULE_TABLE;
+}

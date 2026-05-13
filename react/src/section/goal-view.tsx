@@ -12,59 +12,74 @@ export interface GoalViewerProps {
   globalGoals: Goal[]
   parentGoal: Goal | null
   statusMessage: string
-  pendingGoalId: string | null
+  pendingGoalIndex: number | null
   onNavigate: (goalId: string) => void
-  onStartGoal: (goalId: string) => void
-  onEndGoal: (goalId: string) => void
+  onStartGoal: (goal: Goal) => void
+  onEndGoal: (goal: Goal) => void
 }
 
-function GoalStateText({ goal }: { goal: Goal }) {
+function StateBadge({ goal }: { goal: Goal }) {
   const state = inferGoalState(goal)
 
+  const styles: Record<string, string> = {
+    started: 'bg-green-50 text-green-700 border-green-200',
+    finished: 'bg-neutral-100 text-neutral-400 border-neutral-200',
+    idle: 'bg-neutral-50 text-neutral-500 border-neutral-200',
+  }
+
+  const labels: Record<string, string> = {
+    started: 'In progress',
+    finished: 'Done',
+    idle: 'Idle',
+  }
+
   return (
-    <span className="text-sm text-neutral-500">
-      {state}
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${styles[state] ?? 'bg-neutral-100 text-neutral-500'}`}>
+      {state === 'started' && <span className="size-1.5 rounded-full bg-green-500" />}
+      {labels[state] ?? state}
     </span>
   )
 }
 
-function GoalActionRow({
+function ActionButtons({
   goal,
-  pendingGoalId,
+  pendingGoalIndex,
+  canStart = true,
   onNavigate,
   onStartGoal,
   onEndGoal,
 }: {
   goal: Goal
-  pendingGoalId: string | null
+  pendingGoalIndex: number | null
+  canStart?: boolean
   onNavigate: (goalId: string) => void
-  onStartGoal: (goalId: string) => void
-  onEndGoal: (goalId: string) => void
+  onStartGoal: (goal: Goal) => void
+  onEndGoal: (goal: Goal) => void
 }) {
   const state = inferGoalState(goal)
-  const isPending = pendingGoalId === goal.id
+  const isPending = pendingGoalIndex === goal.globalIndex
 
   return (
-    <div className="mt-3 flex flex-wrap gap-2 text-sm">
+    <div className="flex flex-wrap gap-2">
       <button
         type="button"
-        className="underline underline-offset-2"
+        className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50"
         onClick={() => onNavigate(goal.id)}
       >
         Open
       </button>
       <button
         type="button"
-        className="disabled:text-neutral-400"
-        onClick={() => onStartGoal(goal.id)}
-        disabled={isPending || state !== 'idle'}
+        className="rounded border border-green-300 bg-green-50 px-3 py-1.5 text-sm text-green-700 hover:bg-green-100 disabled:border-neutral-200 disabled:bg-transparent disabled:text-neutral-300"
+        onClick={() => onStartGoal(goal)}
+        disabled={isPending || state !== 'idle' || !canStart}
       >
         Start
       </button>
       <button
         type="button"
-        className="disabled:text-neutral-400"
-        onClick={() => onEndGoal(goal.id)}
+        className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50 disabled:border-neutral-200 disabled:text-neutral-300"
+        onClick={() => onEndGoal(goal)}
         disabled={isPending || state !== 'started'}
       >
         End
@@ -76,38 +91,49 @@ function GoalActionRow({
 function GoalCard({
   goal,
   label,
-  current = false,
-  pendingGoalId,
+  highlight = false,
+  pendingGoalIndex,
   onNavigate,
   onStartGoal,
   onEndGoal,
 }: {
   goal: Goal
   label: string
-  current?: boolean
-  pendingGoalId: string | null
+  highlight?: boolean
+  pendingGoalIndex: number | null
   onNavigate: (goalId: string) => void
-  onStartGoal: (goalId: string) => void
-  onEndGoal: (goalId: string) => void
+  onStartGoal: (goal: Goal) => void
+  onEndGoal: (goal: Goal) => void
 }) {
+  const state = inferGoalState(goal)
+
   return (
-    <article
-      className={
-        current
-          ? 'space-y-2 rounded-xl border border-neutral-200 px-4 py-4'
-          : 'space-y-2'
-      }
-    >
-      <p className="text-sm text-neutral-500">{label}</p>
-      <h3 className="text-lg">{goal.title}</h3>
-      <GoalStateText goal={goal} />
-      <p className="text-sm text-neutral-600">{goal.extraInfo || 'No extra info.'}</p>
-      <p className="text-sm text-neutral-600">Required: {formatGoalDuration(goal.requiredTime)}</p>
-      <p className="text-sm text-neutral-600">Start: {formatGoalDate(goal.startDate)}</p>
-      <p className="text-sm text-neutral-600">End: {formatGoalDate(goal.endDate)}</p>
-      <GoalActionRow
+    <article className={`rounded-xl border px-5 py-4 ${highlight ? 'border-neutral-300 bg-neutral-50' : 'border-neutral-200 bg-white'}`}>
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="mb-1 text-xs font-medium uppercase tracking-widest text-neutral-400">{label}</p>
+          <h3 className="text-base font-semibold leading-snug text-black">{goal.title}</h3>
+        </div>
+        <StateBadge goal={goal} />
+      </div>
+
+      {goal.extraInfo && (
+        <p className="mb-3 text-sm leading-relaxed text-neutral-600">{goal.extraInfo}</p>
+      )}
+
+      <div className="mb-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500">
+        <span>Duration: {formatGoalDuration(goal.requiredTime)}</span>
+        {state === 'started' && goal.startDate
+          ? <span>Started: {formatGoalDate(goal.startDate)}</span>
+          : null}
+        {state === 'finished' && goal.endDate
+          ? <span>Ended: {formatGoalDate(goal.endDate)}</span>
+          : null}
+      </div>
+
+      <ActionButtons
         goal={goal}
-        pendingGoalId={pendingGoalId}
+        pendingGoalIndex={pendingGoalIndex}
         onNavigate={onNavigate}
         onStartGoal={onStartGoal}
         onEndGoal={onEndGoal}
@@ -122,7 +148,7 @@ export default function GoalViewer(props: GoalViewerProps) {
     childrenGoals,
     parentGoal,
     statusMessage,
-    pendingGoalId,
+    pendingGoalIndex,
     onNavigate,
     onStartGoal,
     onEndGoal,
@@ -134,58 +160,62 @@ export default function GoalViewer(props: GoalViewerProps) {
 
   return (
     <section className="mx-auto w-full max-w-3xl space-y-6">
-      <header className="space-y-2">
-        <div>
-          <p className="text-sm text-neutral-500">Server goals</p>
-          <h1 className="text-2xl">{parentGoal ? parentGoal.title : 'Root goals'}</h1>
-        </div>
+      <header>
         <button
           type="button"
-          className="text-sm underline underline-offset-2"
+          className="mb-2 flex items-center gap-1 text-sm text-neutral-400 hover:text-neutral-700"
           onClick={() => onNavigate(outerParentGoal ? outerParentGoal.id : ROOT_GOAL_ID)}
         >
-          {parentGoal ? 'Go to parent' : 'Back to root'}
+          ← {parentGoal ? 'Parent' : 'Root'}
         </button>
+        <h1 className="text-2xl font-bold text-black">
+          {parentGoal ? parentGoal.title : 'All goals'}
+        </h1>
+        {statusMessage && (
+          <p className="mt-1 text-sm text-neutral-500">{statusMessage}</p>
+        )}
       </header>
 
-      <p className="text-sm text-neutral-600">{statusMessage}</p>
-
-      {parentGoal ? (
-        <section className="space-y-2">
-          <GoalCard
-            goal={parentGoal}
-            label="Current goal"
-            current
-            pendingGoalId={pendingGoalId}
-            onNavigate={onNavigate}
-            onStartGoal={onStartGoal}
-            onEndGoal={onEndGoal}
-          />
-        </section>
-      ) : null}
-
-      <div className="space-y-1">
-        <h2 className="text-xl">{parentGoal ? 'Child goals' : 'Top-level goals'}</h2>
-        <p className="text-sm text-neutral-500">{childrenGoals.length} visible</p>
-      </div>
-
-      {childrenGoals.length === 0 ? (
-        <p className="text-sm text-neutral-500">No child goals available for this node.</p>
-      ) : (
-        <div className="space-y-6">
-          {childrenGoals.map((goal, index) => (
-            <GoalCard
-              key={goal.id}
-              goal={goal}
-              label={`Child ${index + 1}`}
-              pendingGoalId={pendingGoalId}
-              onNavigate={onNavigate}
-              onStartGoal={onStartGoal}
-              onEndGoal={onEndGoal}
-            />
-          ))}
-        </div>
+      {parentGoal && (
+        <GoalCard
+          goal={parentGoal}
+          label="Current goal"
+          highlight
+          pendingGoalIndex={pendingGoalIndex}
+          onNavigate={onNavigate}
+          onStartGoal={onStartGoal}
+          onEndGoal={onEndGoal}
+        />
       )}
+
+      <div>
+        <div className="mb-3 flex items-baseline gap-2">
+          <h2 className="text-lg font-semibold text-black">
+            {parentGoal ? 'Subgoals' : 'Goals'}
+          </h2>
+          <span className="text-sm text-neutral-400">{childrenGoals.length}</span>
+        </div>
+
+        {childrenGoals.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-neutral-200 px-5 py-8 text-center text-sm text-neutral-400">
+            No subgoals.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {childrenGoals.map((goal, index) => (
+              <GoalCard
+                key={goal.globalIndex}
+                goal={goal}
+                label={`#${index + 1}`}
+                pendingGoalIndex={pendingGoalIndex}
+                onNavigate={onNavigate}
+                onStartGoal={onStartGoal}
+                onEndGoal={onEndGoal}
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </section>
   )
 }

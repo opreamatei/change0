@@ -299,6 +299,138 @@ Goal* ComputePartialDecomposition(Goal *goal){
 }
 
 
+Goal* DecomposeToLeaf(Goal *g) {
+	while (g->subgoals_len > 0 || g->required_time >= GOAL_MIN_SECONDS * 2) {
+		if (g->subgoals_len > 0) {
+			Goal *child = FindGoalFromIndex(g->subgoals[0]);
+			change_assert(child, "Broken subgoals[0] in DecomposeToLeaf. %s\n", child->title.p);
+			g = child;
+		} else {
+			if (!DecomposeGoal(g)) break;
+		}
+	}
+	return g;
+}
+
+static _Bool goal_is_unstarted(Goal *g) {
+	return g && !g->start_date && !g->end_date;
+}
+
+static Goal* last_leaf(Goal *g) {
+	if (!g) return NULL;
+
+	while (g->subgoals_len > 0) {
+		Goal *child = FindGoalFromIndex(g->subgoals[g->subgoals_len - 1]);
+		change_assert(child, "Broken last subgoal reference in last_leaf.\n");
+		g = child;
+	}
+
+	return g;
+}
+
+static Goal* previous_timeline_leaf(Goal *g) {
+	Goal *current = g;
+
+	while (current) {
+		if (current->prev) {
+			Goal *prev = FindGoalFromIndex(current->prev);
+			change_assert(prev, "Broken prev reference in previous_timeline_leaf.\n");
+			return last_leaf(prev);
+		}
+
+		if (!current->parent) return NULL;
+
+		current = FindGoalFromIndex(current->parent);
+		change_assert(current, "Broken parent reference in previous_timeline_leaf.\n");
+	}
+
+	return NULL;
+}
+
+static Goal* first_unstarted_leaf(Goal *g) {
+	if (!g) return NULL;
+
+	while (g->subgoals_len == 0 &&
+	       g->required_time >= GOAL_MIN_SECONDS * 2 &&
+	       goal_is_unstarted(g)) {
+		if (!DecomposeGoal(g)) break;
+	}
+
+	if (g->subgoals_len == 0)
+		return goal_is_unstarted(g) ? g : NULL;
+
+	for (size_t i = 0; i < g->subgoals_len; i++) {
+		Goal *child = FindGoalFromIndex(g->subgoals[i]);
+		change_assert(child, "Broken subgoal reference in first_unstarted_leaf.\n");
+
+		Goal *leaf = first_unstarted_leaf(child);
+		if (leaf) return leaf;
+	}
+
+	return NULL;
+}
+
+static _Bool can_start_leaf(Goal *g) {
+	Goal *previous;
+
+	if (!goal_is_unstarted(g) || g->subgoals_len != 0) return 0;
+
+	previous = previous_timeline_leaf(g);
+	while (previous) {
+		if (!previous->end_date) return 0;
+		previous = previous_timeline_leaf(previous);
+	}
+
+	return 1;
+}
+
+static Goal* first_startable_leaf(Goal *g) {
+	g = first_unstarted_leaf(g);
+	if (!g || !can_start_leaf(g)) return NULL;
+	return g;
+}
+
+Goal* StartGoalDeepFromGoal(Goal *g) {
+	change_assert(g, "Goal not found in StartGoalDeepFromGoal.\n");
+	g = first_startable_leaf(g);
+	if (!g) return NULL;
+	g->start_date = change_time_now();
+	return g;
+}
+
+Goal* StartGoalDeep(goalIDType goalID) {
+	Goal* g = FindGoalByID(goalID);
+	change_assert(g, "Goal not found in StartGoalDeep: %s", goalID);
+	return StartGoalDeepFromGoal(g);
+}
+
+Goal** GetSessionGoals(size_t *out_len) {
+	*out_len = 0;
+	size_t goals_len = 0;
+	Goal **goals = GetGoalsContainer(&goals_len);
+
+	Goal *seen[1024] = {0};
+	size_t count = 0;
+	for (size_t i = 0; i < goals_len; i++) {
+		Goal *g = goals[i];
+		if (!g || g->parent != 0) continue;
+
+		g = first_startable_leaf(g);
+		if (g) seen[count++] = g;
+	}
+
+	if (count > 0) {
+		Goal **out = malloc(count * sizeof(Goal*));
+		change_assert(out, "GetSessionGoals: malloc failed.\n");
+		for (size_t i = 0; i < count; i++)
+			out[i] = seen[i];
+		*out_len = count;
+		return out;
+	}
+
+	return NULL;
+}
+
 time_t StartGoal(goalIDType goalID){
 	Goal* g = FindGoalByID(goalID);
 	change_assert(g, "Goal not found, target goal id %s, serialized goals.", goalID);
@@ -310,10 +442,8 @@ time_t StartGoal(goalIDType goalID){
 	return now;
 }
 
-time_t EndGoal(goalIDType goalID){
-	Goal* g = FindGoalByID(goalID);
-	change_assert(g, "Goal not found, target goal id %s, serialized goals.", goalID);
-
+time_t EndGoalFromGoal(Goal *g){
+	change_assert(g, "Goal not found in EndGoalFromGoal.\n");
 	time_t now = change_time_now();
 
 	g->end_date = now;
@@ -321,4 +451,11 @@ time_t EndGoal(goalIDType goalID){
 	SCHEDULE_NEEDS_REFRESH = 1;
 
 	return now;
+}
+
+time_t EndGoal(goalIDType goalID){
+	Goal* g = FindGoalByID(goalID);
+	change_assert(g, "Goal not found, target goal id %s, serialized goals.", goalID);
+
+	return EndGoalFromGoal(g);
 }
