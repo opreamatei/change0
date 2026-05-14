@@ -39,8 +39,10 @@ void exec_response(json_value* doc, String *dynamic_mem, size_t depth, String *c
 		run5(doc, dynamic_mem, ds_id);
 	else if (command == 6)
 		run6(doc, dynamic_mem, ds_id);
+	else if (command == 7)
+		run7(doc, dynamic_mem, ds_id);
 	else 
-		CatTemplateString(dynamic_mem, "{Error : Commands are only 1-6, you passed [%d] }", command);
+		CatTemplateString(dynamic_mem, "{Error : Commands are only 1-%d, you passed [%d] }", COMMAND_COUNT, command);
 }
 
 // Half is AI generated

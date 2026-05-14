@@ -1,94 +1,124 @@
-CHANGE - documentatie tehnica aprofundata
+CHANGE code-driven technical reference
 
-1. Ce este aplicatia
+This document is written from inspection of the current source tree, especially `c/`, and describes the system as implemented.
 
-CHANGE este un backend experimental scris preponderent in C care incearca sa modeleze utilizatorul in doua straturi:
+1. System intent from the code
 
-- un graf semantic de identitate
-- un sistem comportamental de goal-uri
+The project is a native C backend that keeps three interdependent runtime models:
 
-Scopul aplicatiei nu este doar sa stocheze note sau task-uri, ci sa construiasca un context intern pe baza caruia alte procese AI sa poata face:
+- a semantic graph of user-related concepts
+- a goal graph with hierarchy and execution order
+- a derived schedule built from goal progression
 
-- investigatie personalizata
-- personalizare de obiective
-- decompozitie de obiective
-- interpretare a comportamentului trecut
+Those models are then queried and manipulated by a constrained AI-driven research loop called deep search.
 
-Ideea centrala este urmatoarea:
+The code does not implement a general chatbot. The AI calls are inserted at specific transformation points:
 
-- mesajele utilizatorului sunt sparte de AI in noduri semantice
-- nodurile sunt organizate pe contexte psihologice
-- conexiunile dintre noduri sunt ponderate si activate in timp
-- deep search-ul interogheaza iterativ graful si goal-urile
-- rezultatul deep search-ului este folosit mai ales pentru a formula sau adapta goal-uri
+- turning free text into graph updates
+- choosing investigative commands during deep search
+- judging whether an investigation conclusion is strong enough
+- turning a research result into a normalized goal
+- decomposing a goal into subgoals
+- rewriting a failing goal into a shorter variant
 
-Practic, aplicatia incearca sa combine:
+The architecture is therefore:
 
-- memorie semantica relativ stabila, prin graf
-- memorie comportamentala, prin istoricul de goal-uri
-- un agent de investigatie care navigheaza in ambele
+- deterministic in-memory state engine in C
+- LLM-assisted semantic transforms at boundaries
+- HTTP and SSE wrapper around the engine
+- two separate browser/mobile-facing UIs around that wrapper
 
 
-2. Arhitectura generala
+2. Top-level layout
 
-Aplicatia are mai multe straturi.
+Relevant top-level directories and files:
 
-2.1. Executabilul principal
+- `c/`
+  Core engine, server, CLI entrypoint, support libraries.
+- `js/`
+  Canvas-based graph and session viewer.
+- `react/`
+  Goal-oriented frontend using HTTP + Server-Sent Events.
+- `mocks/`
+  Mock graph/action data used by some CLI utilities.
+- `build.sh`
+  Build helper.
+- `CMakeLists.txt`
+  Native build graph.
 
-Fisier: `c/main.c`
 
-Executabilul este minimal:
+3. Process entrypoint and ownership model
+
+`c/main.c` is intentionally small:
 
 - `UIStart()`
 - `UILoop()`
 - `UIKill()`
 
-CLI-ul porneste sistemele interne, initializeaza contextul global, apoi permite:
+The real bootstrap lives in `c/cli/ui.c`.
 
-- adaugare de mesaje in graf
-- salvare/incarcare
-- pornire server HTTP
-- pornire deep search
-- creare de goal-uri
+`UIStart()` does the following:
 
-2.2. Componentele majore din C
+1. `InitNodes()`
+2. `SetUpContexts()`
+3. `InitGlobalPointerMap()`
+4. registers `ds_emit`
+5. registers `goal_emit`
+6. `InitGoalSystem()`
 
-`c/ne/node.*`
-- structurile de baza pentru noduri si conexiuni
+This matters because the application is built around one shared process state, not around isolated instances.
 
-`c/ne/input/*`
-- transformarea inputului textual in JSON semantic si apoi in graf
-
-`c/ne/graph/*`
-- refresh-ul ponderilor si exportul grafului
-
-`c/ne/search/*`
-- deep search, parsarea comenzilor AI si executia lor
-
-`c/ne/goal/*`
-- modelul de goal, personalizare, decompozitie si reparare
-
-`c/srv/http-server.c`
-- expunerea sistemului prin HTTP si SSE
-
-`c/globals.*`
-- registry global pentru callback-uri si emitters
-
-2.3. Frontend
-
-Exista doua zone UI:
-
-- `js/` pentru vizualizare graf
-- `react/` pentru goal-uri si interactiunea moderna cu serverul
-
-Totusi, interesul tehnic principal al proiectului este in `c/`, unde se afla logica reala.
+The graph, goal container, schedule cache, and callback registry are all global.
 
 
-3. Modelul de date: noduri, contexte, conexiuni
+4. Meaning of `c/`
 
-3.1. Contextele fixe
+`c/` is the actual product.
 
-Aplicatia porneste cu 5 noduri-radacina, definite in `c/ne/node.h`:
+Subtree responsibilities:
+
+- `c/ne/`
+  Main domain logic. "ne" is the neuro engine area.
+- `c/srv/`
+  Network wrapper around the engine.
+- `c/lib/`
+  Internal support libraries.
+- `c/cli/`
+  Local terminal shell for manual operation.
+- `c/config.h`
+  Prompt templates, ports, file paths, and formula constants.
+- `c/globals.*`
+  Runtime registry for callback pointers shared across modules.
+
+The `js/` and `react/` directories are wrappers around this C backend, not peers in system ownership.
+
+
+5. The neuro engine: what it is in this repository
+
+The neuro engine is not a neural-network inference module.
+
+By reading `c/ne/`, it is better described as a semantic memory and investigation engine with these parts:
+
+- graph storage
+- graph activation and weight dynamics
+- semantic import from user text
+- search operators over graph structure
+- deep-search orchestration
+- goal and schedule subsystems integrated into the same evidence space
+
+The engine's "neuro" aspect comes from:
+
+- spreading importance through connections
+- temporal activation decay
+- contextual weighting through parent chains
+- reinforcement from repeated search usage
+
+It is a symbolic/heuristic engine, not a numeric model trainer.
+
+
+6. Fixed graph contexts
+
+The graph always begins with five top-level nodes declared in `c/ne/node.h`:
 
 - `profesie`
 - `emotie`
@@ -96,476 +126,414 @@ Aplicatia porneste cu 5 noduri-radacina, definite in `c/ne/node.h`:
 - `generalitati`
 - `subiectiv`
 
-Acestea nu sunt doar etichete vizuale. Ele sunt parintii tuturor nodurilor semantice. Asta inseamna ca acelasi cuvant poate exista de mai multe ori in graf, dar in contexte diferite, si este tratat ca entitate diferita.
+`SetUpContexts()` in `c/cli/ui.c` materializes them at process startup and stores their indexes in the global `Contexts[]` array.
 
-Exemplu:
+These roots are not metadata tags. They are real graph nodes, and every imported concept is expected to live under one of them.
 
-- `anxietate` in `emotie`
-- `anxietate` in `subiectiv`
 
-Nu sunt fortat unificate.
+7. Graph storage model
 
-3.2. Structura `Node`
+7.1. Global node container
 
-Fisier: `c/ne/node.h`
+Defined in `c/ne/node.h`:
 
-Un nod contine in esenta:
+- `Nodes.items`
+- `Nodes.capacity`
+- `Nodes.count`
+- `Nodes.needsRefresh`
+- `Nodes.init`
+
+This is the central memory store for all identity graph nodes.
+
+7.2. `Node`
+
+Fields of `Node`:
 
 - `label`
+- `hasParent`
+- `labelLength`
 - `_weight`
 - `_activation`
-- lista de vecini `neighbours`
-- `times_seen`
-- `times_used`
-- informatie de parent/children
-- timestamp-uri pentru decay si touch
-
-Interpretare:
-
-- `weight` = importanta structurala pe termen mai lung
-- `activation` = salienta curenta
-- `times_seen` = de cate ori a aparut in rezultate de search
-- `times_used` = de cate ori a fost folosit drept punct activ de explorare
-
-3.3. Structura `Connection`
-
-O conexiune contine:
-
-- `_weight`
-- `_activation`
-- `target`
+- `neighbours`
+- `nsize`
+- `ncount`
+- `globalIndex`
 - `lastTouched`
 - `pendingTouches`
+- `times_seen`
+- `times_used`
+- `parent`
+- `childrenIndex`
 
-Aplicatia foloseste muchii directionale, dar multe legaturi sunt create bidirectional prin `BiLink()` sau `BiLinkEx()`.
+Operational meaning:
 
-3.4. Semnificatia parentajului
+- `_activation`
+  Local current salience before parent scaling.
+- `_weight`
+  Local long-term importance before parent scaling.
+- `pendingTouches`
+  Deferred salience increments waiting to be applied.
+- `times_seen`
+  Search exposure count.
+- `times_used`
+  Search anchor count.
+- `childrenIndex`
+  Fast child lookup table keyed by lowercase label.
 
-Parintii sunt importanti din doua motive:
+7.3. `Connection`
 
-- organizeaza nodurile sub cele 5 contexte
-- afecteaza citirea ponderilor
+Fields of `Connection`:
 
-Functiile:
+- `_activation`
+- `_weight`
+- `lastTouched`
+- `pendingTouches`
+- `target`
+
+Connections are adjacency-list entries stored inside each source node.
+
+7.4. Global connection count
+
+`ConnectionCount` is a global count used mainly for graph export sizing.
+
+
+8. Node creation and indexing
+
+`AddNodeEx(...)` in `c/ne/node.c` performs:
+
+- lowercase normalization
+- global container growth if needed
+- adjacency allocation
+- optional registration under parent `childrenIndex`
+- optional allocation of a child dictionary if the node is marked fertile
+
+The contexts are created as fertile roots. Most imported semantic nodes are added as infertile leaves in the current input pipeline.
+
+Two lookup paths exist:
+
+- `FindNode(...)`
+  Child lookup under a known parent via hash dictionary.
+- `FindNodeGlobal(...)`
+  Linear label search through the global node array.
+
+`FindNodeGlobal(..., CONTEXT_COUNT)` is how context roots are recovered during import.
+
+
+9. Effective score reading
+
+The stored fields `_activation` and `_weight` are not the only values used at runtime.
+
+The functions:
 
 - `read_node_activation`
 - `read_node_weight`
 - `read_connection_activation`
 - `read_connection_weight`
 
-inmultesc valorile locale cu valorile parentilor. Asta inseamna ca scorul efectiv al unui nod nu este pur local, ci este influentat de lantul sau contextual.
+walk upward through parent links and multiply values along the chain.
+
+Result:
+
+- a node's effective value depends on its own local state and its context ancestors
+- a connection's effective value depends on its own local state and the target's ancestry
+
+This makes contexts active scaling layers rather than passive categories.
 
 
-4. Cum intra un mesaj in sistem
+10. Text ingestion pipeline
 
-4.1. Intrarea
+Entry function:
 
-Fisier: `c/ne/input/input-processor.c`
+- `DecomposeInputIntoGraph(String *input)`
 
-Cand utilizatorul trimite un text, acesta este trecut prin promptul `DECOMPOSITION_INTO_GRAPH_PROMPT` din `c/config.h`.
+Implementation path:
 
-Promptul obliga modelul sa produca strict JSON cu 5 chei top-level:
+1. build a prompt using `DECOMPOSITION_INTO_GRAPH_PROMPT`
+2. call OpenAI Responses API with strict schema `OPENAI_DECOMPOSITION_SCHEMA_JSON`
+3. parse the API JSON response
+4. extract output text from the nested `output -> content -> text` structure
+5. parse that text as JSON again
+6. send each top-level context object to `AddContextNodesFromJSON(...)`
 
-- `profesie`
-- `emotie`
-- `pasiuni`
-- `generalitati`
-- `subiectiv`
-
-Fiecare contine:
-
-- `nodes`
-- `connections`
-
-4.2. Rolul AI-ului aici
-
-AI-ul nu raspunde conversational. El este folosit ca parser semantic controlat prin schema JSON.
-
-Nodurile trebuie sa fie:
-
-- lowercase
-- scurte
-- stabile
-- semantice
-
-Conexiunile trebuie sa refere exact noduri existente in acelasi context.
-
-4.3. Parsarea in graf
-
-Fisier: `c/ne/input/json-to-graph.c`
-
-Pipeline-ul este:
-
-1. AI produce JSON semantic
-2. `extract_ai_json()` extrage textul JSON din raspunsul OpenAI
-3. `AddContextNodesFromJSON()` proceseaza fiecare context
-4. se adauga nodurile
-5. se adauga conexiunile
-
-4.4. Comportamentul la noduri existente
-
-Daca un nod exista deja in context:
-
-- nu este recreat
-- este doar atins prin `touch_node(existing, activation, now)`
-
-Asta creste activarea lui in timp, fara duplicare.
-
-4.5. Comportamentul la conexiuni existente
-
-Daca o conexiune exista:
-
-- este atinsa prin `touch_connection`
-
-Daca nu exista:
-
-- se creeaza bidirectional
-- activation si weight sunt ajustate pornind de la valorile sugerate de AI
-
-4.6. Importanta macro-urilor de control
-
-In `c/config.h`:
-
-- `NODE_GUESS_WEIGHT_RELEVANCE`
-- `CONNECTION_GUESS_WEIGHT_RELEVANCE`
-
-Acestea reduc influenta scorurilor sugerate de decomposer-ul AI. Deci AI-ul propune, dar motorul nu il lasa sa dicteze complet structura initiala.
+The AI is therefore used as a structured semantic extractor.
 
 
-5. Dinamica grafului: activation, weight, decay, refresh
+11. Graph import semantics
 
-5.1. Principiul
+`c/ne/input/json-to-graph.c` converts schema output into graph mutations.
 
-Graful nu este static. Valorile se misca in timp.
+11.1. Node import
 
-`activation` descrie ce este "aprins" acum.
+For every node object inside a context:
 
-`weight` descrie ce a devenit structural important in urma istoricului si a conectivitatii.
+- read `name`
+- optionally read `activation`
+- optionally read `weight`
 
-5.2. Decay temporal
+If the node already exists under the context root:
 
-In `c/ne/graph/graph-engine.c`, activarea decurge exponential prin:
+- `touch_node(existing, activation, now)`
 
-- `decay_from_to(value, from, to)`
+If not:
 
-Half-life-ul este controlat de:
+- create the node with default activation
+- blend the imported weight with `NODE_GUESS_WEIGHT_RELEVANCE`
+
+11.2. Connection import
+
+For every connection object:
+
+- read `nodes`
+- read optional `activation`
+- read optional `weight`
+- resolve both endpoint labels inside the same context
+
+If a link already exists:
+
+- `touch_connection(existing, activation, now)`
+
+If not:
+
+- create bidirectional links
+- add a small activation bonus
+- blend imported weight with `CONNECTION_GUESS_WEIGHT_RELEVANCE`
+
+11.3. Identity consequence
+
+Imported graph state is cumulative and contextual:
+
+- repeated concepts do not duplicate inside the same context
+- repeated links do not duplicate
+- the AI influences initial structure but cannot fully dictate long-term importance
+
+
+12. Deferred touch model
+
+Both nodes and connections use deferred updates.
+
+`touch_node`:
+
+- sets `lastTouched`
+- adds `log1p(power)` to `pendingTouches`
+
+`touch_connection` does the same for edges.
+
+This means ingestion and search do not fully recompute activation immediately. They queue influence that gets folded in during graph refresh.
+
+
+13. Graph refresh and weighting
+
+`RefreshGraph()` in `c/ne/graph/graph-engine.c` is the main update pass.
+
+It performs two jobs:
+
+- refresh activation with time decay and pending touches
+- recompute node weights from usage and structural support
+
+13.1. Time decay
+
+Decay formula uses:
 
 - `ACT_HALFTIME`
 
-Cu cat valoarea este mai mica, cu atat activarea se stinge mai repede.
+through:
 
-5.3. Touch-uri amanate
+- `value * pow(2.0, -dt / ACT_HALFTIME)`
 
-Atat nodurile, cat si conexiunile nu sunt recalculate instant complet. Ele acumuleaza:
+This is used for activation, not for stored weight.
 
-- `pendingTouches`
+13.2. Support computation
 
-La refresh:
+For each node:
 
-- se aplica decay
-- apoi se adauga un boost `log1p(pendingTouches)`
+- every outgoing connection is refreshed
+- connection contribution is `read_connection_weight + k * read_connection_activation`
+- total support is divided by `1 + c * ncount`
 
-Asta are doua efecte bune:
+where:
 
-- evita cresterea exploziva liniara
-- face refresh-ul mai stabil si mai neted
+- `k = ACTIVATION_IMPORTANCE_TO_NODE_WEIGHT`
+- `c = NCOUNT_PENALTY_TO_NODE_WEIGHT`
 
-5.4. Recalcularea greutatii nodurilor
+13.3. Usage normalization
 
-`RefreshGraph()` face mai mult decat decay. El recalculeaza si `weight`.
+The pass also finds maxima for:
 
-Formula foloseste:
+- `times_seen`
+- `times_used`
+- support
 
-- frecventa in rezultate: `times_seen`
-- frecventa ca nod de explorare: `times_used`
-- suportul local din vecini
+Then normalizes each node against those maxima using `log1p`.
 
-Suportul unui nod este aproximativ:
+13.4. Weight update
 
-- suma ponderilor conexiunilor
-- plus o parte din activarea conexiunilor
-- penalizata de numarul de vecini
+The target weight is derived from:
 
-Asta este controlat de:
+- confidence = normalized `times_seen`
+- merit = blend of support and `times_used`
 
-- `ACTIVATION_IMPORTANCE_TO_NODE_WEIGHT`
-- `NCOUNT_PENALTY_TO_NODE_WEIGHT`
-- `SUPPORT_MERIT_TO_NODE_WEIGHT`
-- `NODE_OLD_WEIGHT_RELEVANCE`
+Then:
 
-5.5. Consecinta practica
+- `new_weight = old_weight * NODE_OLD_WEIGHT_RELEVANCE + target * (1 - NODE_OLD_WEIGHT_RELEVANCE)`
 
-Un nod nu devine important doar pentru ca AI-ul l-a propus o data. El devine important daca:
-
-- reapare
-- este explorat
-- are vecini puternici
-- ramane sustinut structural
-
-Acesta este unul dintre mecanismele esentiale ale proiectului.
+This gives the graph a memory of search usage and topological reinforcement.
 
 
-6. Search-ul pe graf
+14. Search operators
 
-Fisier: `c/ne/search/search.c`
+The base search code is in `c/ne/search/search.c`.
 
-Acest modul ofera mecanismele de selectie pentru deep search.
+14.1. Top-percent strategy
 
-6.1. Filtrare procentuala
+The search layer uses a generic quickselect-based function `FilterTopPercent(...)`.
 
-Functia centrala este `FilterTopPercent`.
+It:
 
-Ea:
+- computes the threshold corresponding to a percentage
+- returns all entries scoring at least that threshold
 
-- extrage o valoare numerica din fiecare element
-- calculeaza un prag prin quickselect descrescator
-- intoarce doar elementele care trec pragul
+This is used for:
 
-Este folosita pentru:
+- global node filtering by activation
+- global node filtering by weight
+- local neighbor filtering by activation
+- local neighbor filtering by weight
 
-- noduri globale dupa activare
-- noduri globale dupa greutate
-- vecinii unui nod dupa activare
-- vecinii unui nod dupa greutate
+14.2. Recursive neighborhood exploration
 
-6.2. De ce procent si nu top-N fix
+`ComputeNodeFamily(...)` recursively expands from a node up to `MAX_FAMILY_DEPTH`.
 
-Modelul foloseste procent deoarece:
+At every depth it filters outgoing edges by:
 
-- se adapteaza la marimea reala a grafului
-- mentine o forma simpla de "narrowing"
-- poate creste sau reduce zgomotul gradual
+- activation percentage threshold
+- weight percentage threshold
 
-In implementare exista o particularitate importanta:
+and serializes the reachable structure.
 
-procent mai mic inseamna selectie mai stricta doar la nivel conceptual al promptului, dar functia calculeaza practic cate elemente intra in top procentul cerut. Documentatia agentului trebuie inteleasa impreuna cu aceasta implementare concreta.
+14.3. Search mutates learning signals
 
-6.3. Explorare recursiva
+When nodes are exposed in search results:
 
-`ComputeNodeFamily()` si `recursive_step()` construiesc o vedere arborescenta pornind dintr-un nod.
+- `times_seen` increases
 
-Filtrarea pe fiecare pas foloseste simultan:
+When a node is used as the origin of a search:
 
-- prag pe activare
-- prag pe weight
+- `times_used` increases
 
-Deci adancimea nu este o simpla BFS. Este o explorare conditionata de doua semnale.
-
-In timpul explorarii:
-
-- nodul tinta isi creste `times_used`
-- nodurile vizitate isi cresc `times_seen`
-
-Asta inseamna ca search-ul nu doar citeste graful, ci il si influenteaza indirect la refresh-ul urmator.
+Search is therefore part of the learning loop, not a read-only query layer.
 
 
-7. Deep Search: nucleul de investigatie
+15. Deep-search engine
 
-Aceasta este partea cea mai interesanta a sistemului.
+The deep-search loop is the most important orchestration layer around graph and goals.
 
-7.1. Scop
-
-Deep search-ul este un agent iterativ care nu rezolva direct problema utilizatorului, ci investigheaza graful si goal-urile pentru a produce un context solid pentru un alt pas AI.
-
-Fisier principal:
+Main files:
 
 - `c/ne/search/deep-search-session.c`
+- `c/ne/search/deep-search-execute.c`
+- `c/ne/search/command-parsing.c`
+- `c/ne/search/ai-action.c`
 
-7.2. Memoria sesiunii
+15.1. Session memory
 
-Structura `DS_memory` are doua componente:
+Each session keeps:
 
 - `persistent`
 - `dynamic`
 
-`persistent`
-- contine promptul static, regulile, definitiile contextelor si contractul de output
+Persistent memory contains the long operating prompt and the task text.
+Dynamic memory accumulates model outputs and runtime command results.
 
-`dynamic`
-- contine istoricul rundelor, rezultatele comenzilor, erori si feedback de la judge
+15.2. Prompt model
 
-Aceasta separare este buna tehnic, pentru ca:
+`DS_PERSISTENT_PROMPT` in `c/config.h` describes:
 
-- regulile nu trebuie reconstruite semantic la fiecare pas
-- istoricul operational ramane incremental
+- the identity graph
+- the goal system
+- the schedule system
+- the allowed commands
+- the requirement to emit exactly one strict JSON action at a time
 
-7.3. Promptul persistent
+The model is explicitly told to investigate, not solve the user request directly.
 
-Definit in `c/config.h` prin `DS_PERSISTENT_PROMPT`.
+15.3. Execution loop
 
-Promptul defineste:
+`start_ds_session(...)` does:
 
-- identitatea grafului
-- diferenta dintre activation si weight
-- rolul goal-urilor ca dovezi comportamentale, nu identitate
-- actiunile disponibile
-- regulile de terminare
+1. build persistent prompt
+2. emit `p-mem`
+3. `RefreshGraph()`
+4. emit `ds-start`
+5. run internal rounds until model finishes
+6. judge the conclusion
+7. retry externally if judge rejects
+8. emit final memories and `ds-end`
 
-Este important ca promptul obliga modelul sa aleaga exact o actiune la un pas.
+15.4. Actor/judge split
 
-7.4. Schema de output
+Deep search uses two separate AI roles:
 
-In `c/ne/search/deep-search-session.h`, schema JSON cere toate campurile sa existe formal, dar ele pot fi `null`.
+- actor:
+  chooses commands or produces a conclusion
+- judge:
+  validates whether the conclusion is sufficiently strong
 
-Asta simplifica validarea structurala a raspunsului AI, chiar daca promptul cere conceptual sa nu trimita campuri irelevante.
+If the judge fails:
 
-7.5. Bucla de executie
+- failure reason is appended into persistent memory as feedback
+- dynamic memory is cleared
+- the actor retries
 
-Fluxul din `start_ds_session()` este:
+15.5. Minimum depth guard
 
-1. se construieste promptul persistent pentru task
-2. se face `RefreshGraph()`
-3. se pornesc runde interne
-4. modelul produce o comanda JSON
-5. comanda este executata
-6. rezultatul intra in `dynamic memory`
-7. cand modelul incearca sa termine, concluzia este validata de un judge AI
-8. daca judge-ul respinge, feedback-ul intra in memorie si agentul reincearca
+Each `Task` has `minDepth`.
 
-Exista doua adancimi:
+If the model tries to finish before the internal round count reaches that minimum:
 
-- `idepth` = pasi interni ai unei incercari
-- `edepth` = cate cicluri de reject/retry dupa judge
+- completion is rejected
+- feedback is appended to memory
 
-7.6. Rolul judge-ului
+This enforces a minimum evidence depth.
 
-Fisier: `c/ne/search/deep-search-execute.c`
 
-Judge-ul nu verifica adevarul extern, ci utilitatea si grounding-ul concluziei pentru un agent downstream.
+16. Deep-search command surface
 
-Asta este o alegere buna pentru acest proiect deoarece deep search-ul opereaza pe memorie interna, nu pe realitatea internetului.
+Commands are validated in `command-parsing.c` and executed in `ai-action.c`.
 
-7.7. Ce inseamna "terminare"
+Implemented commands:
 
-Sesiunea se poate termina doar daca:
+1. global graph filtering
+2. local graph neighbor search
+3. recursive graph exploration
+4. global goal evidence inspection
+5. goal decomposition inspection
+6. relational goal evidence inspection
+7. schedule availability inspection
 
-- modelul trimite `finished=true`
-- exista `conclusion`
-- s-a atins `task.minDepth`
-- judge-ul accepta concluzia
+This command surface is how the neuro engine touches the goal engine.
 
-Deci terminarea are 2 porti:
+Commands 1-3 query semantic identity state.
+Commands 4-6 query behavioral goal state.
+Command 7 queries time projection state.
 
-- poarta structurala interna
-- poarta calitativa externa
 
+17. Goal container model
 
-8. Cele 6 comenzi ale deep search-ului
+Goal storage is implemented with:
 
-Executia efectiva este in `c/ne/search/ai-action.c`.
+- `Goal *GOAL_CONTAINER[1024]`
+- `size_t GOAL_CONTAINER_COUNT`
 
-8.1. Comanda 1: filtrare globala de noduri
+index `0` is reserved, with:
 
-`run1`
+- `INITIAL_GOAL_INDEX == 1`
 
-Scop:
+Every goal carries both a stable string ID and a numeric `globalIndex`.
 
-- gasirea celor mai puternice noduri din tot graful
 
-Poate filtra dupa:
+18. `Goal` structure and relations
 
-- `activation`
-- `weight`
-
-Este utila pentru bootstrap-ul investigatiei.
-
-8.2. Comanda 2: vecini locali
-
-`run2`
-
-Scop:
-
-- explorarea vecinilor semnificativi ai unui nod cunoscut intr-un context precis
-
-Necesita:
-
-- `node`
-- `context`
-- `percentage`
-- `criteria`
-
-Este o miscare de rafinare.
-
-8.3. Comanda 3: explorare recursiva
-
-`run3`
-
-Scop:
-
-- analiza structurii multi-hop din jurul unui nod
-
-Parametri:
-
-- `percA`
-- `percW`
-- `depth`
-- `context`
-
-Aceasta este cea mai apropiata operatie de "deep graph reasoning" din sistem.
-
-8.4. Comanda 4: inspectie globala goal-uri
-
-`run4`
-
-Moduri:
-
-- `roots`
-- `due`
-- `history`
-
-Rol:
-
-- aduce context comportamental larg
-
-8.5. Comanda 5: structura unui goal
-
-`run5`
-
-Returneaza goal-ul si arborele de copii pana la adancimea ceruta.
-
-Este utila cand structura decompozitiei conteaza.
-
-8.6. Comanda 6: relatii intre goal-uri
-
-`run6`
-
-Poate inspecta:
-
-- `siblings`
-- `parents`
-- `linked-siblings`
-- `linked-siblings-hidden`
-- `uncles`
-- `uncles-hidden`
-- `history`
-
-Aceasta comanda este importanta fiindca goal-urile nu sunt doar arbori, ci si lanturi secventiale prin `prev` si `next`.
-
-
-9. Sistemul de goal-uri
-
-9.1. Scop
-
-Goal-urile sunt reprezentarea comportamentala a directiei utilizatorului.
-
-Graf-ul spune:
-
-- cine pare sa fie utilizatorul
-- ce il activeaza
-- ce teme sunt stabile
-
-Goal-urile spun:
-
-- ce a incercat efectiv
-- in ce ordine
-- cat a durat
-- unde a esuat
-
-9.2. Structura `Goal`
-
-Fisier: `c/ne/goal/goal-util.h`
-
-Campuri importante:
+Fields from `c/ne/goal/goal-util.h`:
 
 - `title`
 - `extra_info`
@@ -573,406 +541,505 @@ Campuri importante:
 - `end_date`
 - `required_time`
 - `subgoals`
+- `subgoals_len`
 - `parent`
 - `prev`
 - `next`
 - `minPauseToNext`
 - `pauseToNext`
+- `globalIndex`
 - `depth`
 - `retry_depth`
 - `priority`
 - `id`
 
-Modelul combina:
+The important thing is that one goal participates in two simultaneous graphs:
 
-- ierarhie prin `parent` si `subgoals`
-- secventa prin `prev` si `next`
+- hierarchical decomposition graph
+- linear execution graph
 
-9.3. Containerul global
 
-Goal-urile sunt stocate intr-un container global fix:
+19. How goals are linked
 
-- `GOAL_CONTAINER[1024]`
+This section answers the core structural question directly.
 
-Indexul 0 este rezervat, iar goal-urile reale incep de la `INITIAL_GOAL_INDEX = 1`.
+19.1. Parent-child links
 
-Este o abordare simpla si rapida, dar cu limite clare:
+Hierarchy is represented by:
 
-- capacitate fixa
-- fara allocator sau index avansat
-- cautare dupa id liniara
+- parent stores child indexes in `subgoals[]`
+- child stores `parent = parentIndex`
 
-9.4. Crearea unui goal de utilizator
+This gives a decomposition tree.
 
-Fluxul din `CreateUserGoal()`:
+19.2. Sequential links
 
-1. utilizatorul da un titlu si o explicatie
-2. se construieste un task pentru deep search
-3. deep search-ul produce o recomandare finala personalizata
-4. un al doilea pas AI extrage JSON-ul standardizat al goal-ului
-5. se creeaza goal-ul
-6. se ruleaza o decompozitie partiala
+Execution order between sibling-like tasks is represented by:
 
-Asta inseamna ca un goal nu este creat direct din textul utilizatorului, ci printr-un pipeline de interpretare si reformulare.
+- `prev`
+- `next`
 
-9.5. Extractia structurata a goal-ului
+The helper `link_goals(a, b)` sets those two fields symmetrically.
 
-Fisier: `c/ne/goal/goal-ai.c`
+19.3. Why both are needed
 
-`ExtractGoalFromText()` cere AI-ului:
+The tree alone cannot express intended order.
+The `prev/next` chain alone cannot express decomposition ownership.
+
+This codebase uses both:
+
+- tree for structure and recursion
+- chain for progression and scheduling
+
+19.4. Recursive time aggregation
+
+`CalcGoalRequiredTime(g)`:
+
+- returns leaf `required_time` directly
+- or sums recursive child times plus `pauseToNext`
+
+So parent duration is not independent. It is a derived total over its children chain.
+
+19.5. Traversal helpers
+
+The code implements several structural traversals:
+
+- root lookup through repeated `parent`
+- first leaf of a branch
+- last leaf of a branch
+- previous timeline leaf
+- next leaf across sibling and parent boundaries
+
+Those helpers are what make the mixed tree/chain representation usable.
+
+
+20. Goal creation
+
+`CreateUserGoal(...)` in `c/ne/goal/goal.c` is not a simple constructor.
+
+Flow:
+
+1. generate goal ID
+2. build a deep-search task from user title + rationale
+3. run personalized deep search
+4. emit deep-search recommendation over goal SSE channel
+5. extract normalized goal JSON from the research result using OpenAI
+6. validate title, extra info, and estimated time
+7. retry extraction if necessary with feedback
+8. create the root goal
+9. emit title, extra-info, and time
+10. partially decompose the result
+
+This means goals are born out of an AI-mediated interpretation layer, not directly from raw user text.
+
+
+21. Goal decomposition
+
+`DecomposeGoal(g)` creates subgoals for a large leaf goal.
+
+21.1. Preconditions
+
+Decomposition is skipped if:
+
+- goal already has children
+- goal required time is below `GOAL_MIN_SECONDS`
+
+21.2. Context gathering
+
+`SetGoalDecompositionPrompt(...)` builds a decomposition prompt using:
+
+- recent user goal history
+- same-layer siblings
+- parent chain
+- linked siblings
+- parent siblings ("uncles")
+- a fresh deep-search personalization context
+
+This is an important system design point:
+
+goal decomposition is not local to the goal text. It is conditioned on behavioral context and on deep-search interpretation.
+
+21.3. AI result contract
+
+The expected subgoal fields are:
 
 - `title`
 - `extrainfo`
 - `estimated_time`
+- `min_pause_to_next`
+- `pause_to_next`
 
-Exista mecanism de retry cu feedback daca raspunsul este prost format.
+21.4. Materialization
 
-9.6. Decompozitia goal-ului
+For each returned subgoal:
 
-Fisier: `c/ne/goal/goal.c`
+- create a child goal
+- assign `parent`
+- assign generated goal ID
+- assign pause constraints
+- link it to the previous child using `link_goals`
 
-`DecomposeGoal()` cere AI-ului sa imparta un goal mare in subgoal-uri.
+At the end:
 
-Conditii:
+- parent `subgoals[]` is filled
+- parent `subgoals_len` is set
+- parent `required_time` is recalculated recursively
 
-- goal-ul nu trebuie sa fie deja decompozat
-- trebuie sa fie suficient de lung
-- trebuie sa rezulte intre 2 si 9 subgoal-uri
-
-Fiecare copil primeste:
-
-- id nou
-- parinte
-- timp estimat
-- pauze intre frati
-
-9.7. Decompozitie partiala
-
-`ComputePartialDecomposition()` coboara repetat pe primul copil pana cand:
-
-- timpul devine sub o ora
-- sau sub ~20 minute dupa decompozitie
-
-Asta este o alegere euristica importanta:
-
-sistemul incearca sa genereze automat primul lant de actiune executabil, nu sa sparga exhaustiv tot arborele dintr-o data.
-
-9.8. Validarea si repararea goal-urilor
-
-`ValidateGoal()` considera invalid un goal frunza daca:
-
-- a fost inceput
-- nu este terminat
-- a depasit timpul estimat cu marja
-
-Marja este controlata de:
-
-- `GOAL_REQUIRED_TIME_ERROR_MARGIN`
-
-Cand goal-ul devine invalid, `repair_goal_leaf()`:
-
-- prima data il extinde cu 25%
-- dupa prea multe retry-uri il "scurteaza" printr-un prompt AI
-
-Acesta este mecanismul de autoreparare comportamentala al sistemului.
+So decomposition produces both structural and sequential connectivity.
 
 
-10. Deep search + goals: cum lucreaza impreuna
+22. Goal progression logic
 
-Aceasta este ideea arhitecturala centrala a proiectului.
+22.1. Starting a goal
 
-10.1. Graf-ul singur nu este suficient
+`StartGoalDeepFromGoal(...)` does not simply start the passed goal.
 
-Graful poate spune:
+Instead it finds the first unstarted executable leaf under that branch:
 
-- utilizatorul vorbeste mult despre anumite teme
-- unele teme sunt stabile
-- altele sunt doar recent activate
+- recurse into first unstarted child leaf if needed
+- ensure earlier timeline leaves are finished
+- set `start_date`
 
-Dar nu poate spune bine:
+This is why `/goal/start` can be invoked on a parent-like item but still start a deeper leaf.
 
-- ce obiective a urmarit
-- daca le-a dus la capat
-- in ce ordine actioneaza
+22.2. Ending a goal
 
-10.2. Goal-urile singure nu sunt suficiente
+`EndGoalFromGoal(...)`:
 
-Goal-urile arata comportament, dar nu explica neaparat identitatea sau relevanta emotionala.
+- sets `end_date`
+- marks `SCHEDULE_NEEDS_REFRESH = 1`
 
-10.3. Combinatia
+22.3. Session goals
 
-Deep search-ul este stratul care combina:
+`GetSessionGoals(...)` returns one current startable leaf per root branch.
 
-- semnalele de identitate din graf
-- dovezile de executie din goal-uri
-
-De aceea promptul insista:
-
-- goals are evidence, not identity
-
-Aceasta separatie este una dintre cele mai bune decizii conceptuale din codul actual.
+This is effectively the backend's "current actionable work" view.
 
 
-11. Serverul HTTP si SSE
+23. Goal validation and repair
 
-Fisier: `c/srv/http-server.c`
+23.1. Validation
 
-11.1. Rol
+`ValidateGoal(...)` currently only invalidates leaf goals that overrun their allowed duration.
 
-Serverul expune backend-ul C spre frontend si clienti externi.
+Condition:
 
-Suporta:
+- started
+- not ended
+- elapsed time exceeds required time plus margin
 
-- HTTP clasic pentru operatii request/response
-- SSE pentru stream de evenimente
+23.2. Repair strategy
 
-11.2. Endpoint-uri principale
+If invalid:
 
-Graf:
+- for limited retries, extend required time by 25%
+- after retry limit, ask AI to shorten/rewrite the goal
+
+The goal rewrite appends an audit note into `extra_info`.
+
+This shows that the goal system is designed to be adaptive under failure, not immutable.
+
+
+24. Schedule subsystem
+
+Main files:
+
+- `c/ne/goal/user-schedule.c`
+- `c/ne/goal/user-schedule.h`
+
+24.1. Nature of schedule
+
+The schedule is not user-entered calendar data.
+
+It is a computed projection from:
+
+- started goals
+- finished goals
+- `prev/next` ordering
+- pause durations
+
+24.2. Seed set
+
+`GetLeafDueGoals(...)` identifies leaves that define the active frontier, such as:
+
+- a started unfinished goal
+- a finished goal whose immediate next goal exists but has not started
+
+24.3. Refresh algorithm
+
+`RefreshSchedule()`:
+
+1. clears previous table
+2. gathers due leaves
+3. walks forward with `next_leaf(...)`
+4. calculates event start times
+5. writes `ScheduleEntry { time, goalIndex }`
+
+If a goal has no explicit `start_date`, the projected start time is derived from:
+
+- previous goal end time
+- plus previous goal pause
+
+24.4. Reporting
+
+`SerializeScheduleData(...)` returns:
+
+- threshold-relative report header
+- rough work volume summaries
+- detailed scheduled goal entries
+
+This is predictive schedule output, not a durable scheduling database.
+
+
+25. HTTP server as the wrapper around the engine
+
+`c/srv/http-server.c` is the application shell that exposes the C engine to clients.
+
+25.1. Server responsibilities
+
+- parse HTTP requests manually
+- manage SSE clients
+- route graph, research, goal, schedule, and dev-time endpoints
+- serialize graph and goals to JSON
+- invoke core engine mutations directly
+
+25.2. Callback bridge
+
+The deep-search and goal subsystems emit events through function pointers loaded from the global registry:
+
+- `ds_emit`
+- `goal_emit`
+
+This avoids a direct compile-time dependency from engine modules onto server internals while still letting them push live SSE updates.
+
+25.3. Main routes found in code
 
 - `GET /graph`
 - `POST /graph/export`
 - `GET /graph/load`
-- `POST /message`
-
-Research:
-
 - `POST /research/start`
-- `GET /research/events?id=...`
-
-Goals:
-
+- `GET /research/events`
 - `POST /goal/create`
-- `GET /goal/events?goal-id=...`
+- `GET /goal/events`
 - `GET /goal/list`
+- `GET /goal/session`
+- `POST /goal/export`
+- `GET /goal/load`
 - `POST /goal/start`
 - `POST /goal/end`
 - `POST /goal/decompose`
+- `POST /message`
+- `GET /schedule`
+- `GET /dev/time`
+- `POST /dev/time/advance`
+- `POST /dev/time/reset`
 
-11.3. Evenimente SSE
+25.4. Practical meaning
 
-Serverul mentine clienti SSE filtrati optional dupa `stream_id`.
+The HTTP layer is thin:
 
-Acest `stream_id` este folosit pentru:
+- it does not maintain separate business state
+- it forwards directly into the same global engine structures used by CLI mode
+- it is the boundary consumed by both frontends
 
-- sesiuni deep search
-- sesiuni goal
 
-Evenimentele sunt trimise in forma:
+26. SSE event flow
 
+The server supports multiple SSE clients, each filtered by `stream_id`.
+
+The same client structure is reused for:
+
+- deep-search sessions
+- goal event sessions
+
+Deep-search emits events like:
+
+- round start
+- model response
+- command output
+- judge outcome
+- final conclusion
+
+Goal flows emit events like:
+
+- creation metadata
+- goal started
+- goal ended
+
+This event model is how the UI surfaces long-running AI operations incrementally.
+
+
+27. OpenAI transport implementation
+
+`c/lib/openai/openai.c` is a custom HTTPS client.
+
+It performs:
+
+- DNS lookup with `getaddrinfo`
+- socket connect
+- OpenSSL TLS negotiation
+- raw HTTP write/read
+- response body extraction
+
+It uses `OPENAI_API_KEY` from the environment.
+
+There is no external OpenAI SDK in the native backend.
+
+This matters because the project's AI dependency is deeply integrated but still low-level in transport.
+
+
+28. Build graph
+
+`CMakeLists.txt` organizes the native code into multiple shared libraries, including:
+
+- `timeutil`
+- `hd`
+- `jsonp`
+- `util`
+- `change-errors`
+- `openai`
+- `mockopenai`
+- `node`
+- `graphengine`
+- `graphexport`
+- `search`
+- `comparsing`
+- `aiaction`
+- `deepsearchexecute`
+- `deepsearchsession`
+- `goal`
+- `goal-util`
+- `goal-info`
+- `goal-ai`
+- `user-schedule`
+- `inputprocessor`
+- `json2graph`
+- `http-server`
+- `globals`
+- `ui`
+
+This separation is mostly source/build modularity. Runtime ownership still converges into one shared global state space.
+
+
+29. Frontend wrappers
+
+29.1. `js/`
+
+The `js/` app is a graph and investigation console.
+
+From `js/app/bootstrap.js` and `js/app/graph-view.js`, it does the following:
+
+- fetch graph data
+- render nodes/edges/groups on canvas
+- manage graph save/load actions
+- manage endpoint switching
+- display deep-search sessions
+- display goal-related panels in the same operator UI
+
+Its focus is introspection and visualization of backend state.
+
+29.2. `react/`
+
+The React app is centered on the goal model.
+
+From `react/src/App.tsx`, `react/src/goal.ts`, and `react/src/config/server.ts`, it:
+
+- loads goals from `/goal/list`
+- listens to `/goal/events`
+- starts goals
+- ends goals
+- navigates root/child goal structures
+- displays current session goals
+- reads schedule data
+- exposes developer time controls
+
+It is a client over backend JSON, not an independent logic layer.
+
+29.3. Capacitor
+
+The React frontend is additionally wrapped for iOS using Capacitor, which means the same server-backed goal UI can be packaged as a mobile shell.
+
+
+30. Persistence boundaries
+
+30.1. Graph persistence
+
+`SeriliazeGraph()` exports:
+
+- all nodes
+- all directed connections
+
+Node JSON includes:
+
+- `name`
+- `activation`
+- `weight`
 - `id`
-- `type`
-- `data`
+- optional `parent`
 
-11.4. De ce SSE are sens aici
+Connection JSON includes:
 
-Deep search-ul si goal creation-ul pot dura, fiind dependente de AI.
+- `nodes`
+- `weight`
+- `activation`
 
-SSE permite:
+30.2. Goal persistence
 
-- feedback incremental
-- monitorizare a rundelor
-- conectare usoara din frontend
+`SerializeAllGoals()` exports all active goals with:
 
-11.5. Observatie tehnica
+- text
+- timing
+- structure
+- ordering
+- metadata
 
-Serverul are multe utilitare manuale:
+30.3. Load semantics
 
-- parser simplu de HTTP
-- extragere manuala de campuri JSON
-- serializare manuala
+- `LoadGraphFromFile(...)`
+- `LoadGoalsFromFile(...)`
 
-Este suficient pentru demo, dar nu este un server harden-uit pentru productie.
+reconstruct the live global state containers directly.
 
+Persistence is file-snapshot based, not transaction or DB based.
 
-12. Frontend-ul React pe scurt
 
-Desi focusul tau este `c/`, merita inteles cum consuma frontend-ul goal-urile.
+31. Technical consequences of the current design
 
-12.1. `react/src/goal.ts`
+31.1. Strengths
 
-Mapeaza JSON-ul serverului intr-o clasa `Goal` TypeScript si ofera:
+- Graph memory and goal memory are distinct but intentionally cross-queried.
+- Deep search has a constrained command protocol instead of unconstrained tool use.
+- Goal linking supports both decomposition and execution order.
+- Schedule is automatically derived from behavioral state.
+- OpenAI outputs are mostly schema-constrained.
 
-- formatari de data/timp
-- load din server
-- start/end pe goal
-- aplicare evenimente SSE
+31.2. Risks and constraints
 
-12.2. `GoalViewer`
+- Extensive global mutable state.
+- Fixed-size limits such as 1024 goals.
+- Heavy use of assertions in AI-dependent flows.
+- Search affects node weighting, so inspection changes the system.
+- The server is concurrent, but the entire state model is not comprehensively synchronized.
+- Schedule is an inference layer, not a robust planner/calendar.
 
-Afiseaza:
 
-- goal-ul curent
-- copiii lui
-- actiuni start/end/open
+32. Final technical reading of the project
 
-12.3. `CurrentGoalsView`
+From the code, CHANGE is best understood as a prototype personal cognition backend.
 
-Extrage goal-urile frunza si le separa in:
+Its core abstractions are:
 
-- curente
-- gata de pornire
-- blocate de pauza minima
+- identity as a context-partitioned semantic graph
+- behavior as a hierarchical/sequential goal network
+- time as a projection derived from the goal network
+- investigation as an AI-controlled command loop over those structures
 
-Aceasta parte reflecta destul de fidel modelul din C bazat pe leaf goals si lanturi `prev/next`.
+Everything else is wrapped around that:
 
+- CLI starts and hosts it
+- HTTP exposes it
+- SSE streams its long-running operations
+- `js/` visualizes graph and session state
+- `react/` turns goal state into an interactive app
 
-13. Configurare si prompt engineering
-
-Fisier central: `c/config.h`
-
-Aici sunt trei clase mari de configuratie.
-
-13.1. Config de infrastructura
-
-- `HTTP_SERVER_PORT`
-- `PROJECT_ROOT`
-- cai de dump/export
-
-13.2. Config de dinamica graf
-
-- relevanta weight-ului sugerat de AI
-- relevanta activarii
-- penalizare pentru multi vecini
-- inertia weight-ului vechi
-- half-life
-
-13.3. Prompturi AI
-
-- decompozitie text -> graf
-- deep search agent
-- deep search judge
-- goal extract
-- goal decomposition
-- goal shorten/adaptation
-
-Acest proiect este, in practica, un sistem hibrid:
-
-- motor determinist in C
-- comportament semantic orchestrat prin prompturi
-
-Din acest motiv `config.h` este aproape un fisier de "politica cognitiva" al aplicatiei.
-
-
-14. Particularitati de design care merita observate
-
-14.1. Search-ul modifica indirect memoria
-
-Deep search-ul nu este read-only. Pentru ca incrementeaza:
-
-- `times_seen`
-- `times_used`
-
-explorarea insasi schimba importanta viitoare a nodurilor.
-
-Asta produce un efect de auto-consolidare.
-
-14.2. Contextele sunt noduri reale
-
-Nu sunt doar enum-uri sau tag-uri. Sunt noduri root in graf. Aceasta decizie simplifica multe lucruri:
-
-- parent-chain
-- citirea scorurilor
-- lookup contextual
-
-14.3. Goal-urile sunt si arbore, si lista
-
-Majoritatea sistemelor aleg una dintre reprezentari:
-
-- ierarhie
-- secventa
-
-Aici exista ambele simultan.
-
-14.4. Judge separat pentru deep search
-
-Este o forma de meta-control al calitatii, utila cand agentul principal poate "termina prea repede".
-
-
-15. Limite, riscuri si lucruri nerezolvate
-
-15.1. Dependenta puternica de prompturi
-
-Calitatea sistemului depinde mult de:
-
-- formularea prompturilor
-- consistenta modelului
-- disciplina de output JSON
-
-15.2. Capacitate fixa
-
-Atat nodurile, cat si goal-urile folosesc structuri relativ statice sau redimensionare manuala simpla. Nu exista mecanisme serioase de sharding, compaction sau persisting robust.
-
-15.3. Lipsa izolarii thread-safe complete
-
-Serverul foloseste lock-uri pentru SSE si starea serverului, dar modelele globale si structurile de date principale nu par gandite pentru concurenta serioasa cu scrieri simultane complexe.
-
-15.4. HTTP manual
-
-Parserul HTTP este minimalist. Pentru demo merge, dar nu e ceva pe care sa construiesti un serviciu expus public fara hardening.
-
-15.5. Validare conceptuala incompleta
-
-Deep search-ul are validare structurala si judge semantic, dar nu exista o semantica formala a "adevarului" intern. Sistemul este mai degraba euristic decat riguros verificabil.
-
-15.6. Bug-uri/semne de WIP observabile
-
-Codul sugereaza clar stadiu de work in progress:
-
-- comentarii TODO numeroase
-- nume inconsistente
-- unele cai de salvare par gresite in UI
-- logica de procente si descrierea lor trebuie citite atent
-- exista multe zone "AI generated" care ar merita audit
-
-
-16. Ce este important daca te intereseaza strict `c/`
-
-Daca vrei sa intelegi proiectul din perspectiva C, ordinea buna de citire este:
-
-1. `c/ne/node.h` si `c/ne/node.c`
-2. `c/ne/input/input-processor.c`
-3. `c/ne/input/json-to-graph.c`
-4. `c/ne/graph/graph-engine.c`
-5. `c/ne/search/search.c`
-6. `c/ne/search/deep-search-session.c`
-7. `c/ne/search/ai-action.c`
-8. `c/ne/goal/goal-util.h`
-9. `c/ne/goal/goal.c`
-10. `c/ne/goal/goal-ai.c`
-11. `c/srv/http-server.c`
-12. `c/config.h`
-
-Aceasta ordine urmareste exact fluxul sistemului:
-
-- date de baza
-- ingestie
-- dinamica interna
-- investigatie
-- comportament prin goal-uri
-- expunere externa
-- configuratie cognitiva
-
-
-17. Rezumat conceptual final
-
-CHANGE este un motor experimental de memorie personala asistata de AI.
-
-Tehnic, nucleul sau face urmatoarele:
-
-- construieste un graf semantic al identitatii utilizatorului
-- mentine scoruri de activare si importanta structurala
-- foloseste un agent de deep search care navigheaza iterativ in graf si in goal-uri
-- transforma concluziile de investigatie in goal-uri personalizate
-- descompune goal-urile in subgoal-uri executabile
-- monitorizeaza esecul, durata si secventialitatea acestora
-
-Din perspectiva C, proiectul este interesant pentru ca implementeaza direct:
-
-- structuri de memorie proprii
-- refresh euristic al unui graf
-- orchestrare AI bazata pe JSON schema
-- server HTTP/SSE minimal
-- o forma de sistem cognitiv hibrid intre algoritmic si prompt-driven
-
-Nu este un produs matur, dar ca arhitectura experimentala este destul de ambitios: incearca sa trateze identitatea, intentia si comportamentul ca date navigabile de catre un agent.
+That is the purpose of the project and the way the `c/` contents are structurally wrapped.

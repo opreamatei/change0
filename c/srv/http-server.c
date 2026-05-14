@@ -1835,7 +1835,7 @@ static void handle_get_schedule(int client_fd) {
 	CatTemplateString(&out, "{\"ok\":true,\"count\":%zu,\"entries\":[", len);
 
 	for (size_t i = 0; i < len; i++) {
-		Goal* g = FindGoalFromIndex(entries[i].goal_id);
+		Goal* g = FindGoalFromIndex(entries[i].goalIndex);
 		char* esc_title = json_escape_dup(g ? c_str(&g->title) : "");
 
 		if (i > 0) CatString(&out, FSTRING_SIZE_PARAMS(","));
@@ -1844,7 +1844,7 @@ static void handle_get_schedule(int client_fd) {
 			&out,
 			"{\"time\":%lld,\"goal_index\":%zu,\"title\":\"%s\"}",
 			(long long)entries[i].time,
-			entries[i].goal_id,
+			entries[i].goalIndex,
 			esc_title
 		);
 

@@ -364,3 +364,19 @@ _Bool decompose_command_6_params(
 
 	return 1;
 }
+
+_Bool decompose_command_7_params(
+		json_value *doc, String *ErrorBuff,
+		time_t *offset_schedule
+		){
+	*offset_schedule = 0;
+
+	for (size_t i = 0; i < doc->u.object.length; i++){
+		json_object_entry entry = doc->u.object.values[i];
+
+		if (!strcmp(entry.name, "offset") && entry.value->type == json_integer)
+			*offset_schedule = entry.value->u.integer;
+	}
+
+	return 1;
+}

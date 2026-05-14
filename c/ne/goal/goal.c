@@ -73,6 +73,155 @@ static void repair_goal_leaf(Goal *g)
 	}
 }
 
+static void print_goal_data(Goal *g, String *buffer){
+	change_assert(g, "Got invalid goal when printing...\n");
+
+	CatTemplateString(buffer,
+			"{\"title\" : \"%s\", \"start_date\" : \"%s\", \"end_date\" : \"%s\", \"extra-info\" : \"%s\"",
+			g->title,
+			g->start_date ? ctime(&g->start_date) : "not started",
+			g->end_date ? ctime(&g->end_date) : "not ended",
+			g->extra_info.p
+		);
+
+	if (g->subgoals_len > 0){
+		CatFixed(buffer, ", children :[");
+		for (size_t i = 0; i < g->subgoals_len; i++){
+			print_goal_data(FindGoalFromIndex(g->subgoals[i]), buffer);
+			if (i < g->subgoals_len - 1) CatFixed(buffer, ",");
+		}
+		CatFixed(buffer, "]");
+	}
+
+	if (g->start_date && !g->end_date)
+		CatFixed(buffer, ", \"status\" : \"Warning: this goal is currently active.\"");
+
+	if (!g->start_date && !g->end_date){
+		size_t prev_index = g->prev;
+		Goal *prev = FindGoalFromIndex(prev_index);
+		if (prev && prev->start_date && prev->end_date){
+			CatFixed(buffer, ", \"status\" : \"Warning: this goal is next due.\"");
+		}
+	}
+	
+
+	CatFixed(buffer, "}");
+}
+
+// TODO : Finish this
+static void repair_goal_branch(Goal *old_branch, String *reason, start_ds_session_like_func *start_ds_session){
+
+	if (old_branch->subgoals_len == 0) return repair_goal_leaf(old_branch);
+
+	// Save and serialize current goal_data
+	String failure_reason_history; InitString(&failure_reason_history, 256);
+	
+	String old_goals_data; InitString(&old_goals_data, 2048);
+	CatFixed(&old_goals_data, "The current goal structure:\n");
+	print_goal_data(old_branch, &old_goals_data);
+
+	// START REPAIRING PIPELINE
+	size_t depth = 0;
+	while (1){
+		String prompt; InitString(&prompt, 1024);
+		// fill prompt with the goal data here and the reason forming clearly the whole task.
+		// TODO : Make this promtp and fill
+ 
+		Task t = {0};
+		CopyString(&t.name, &prompt);
+		t.minDepth = 10;
+
+		String ds_out;
+
+		start_ds_session(&t, "repair-branch-ds-session", &ds_out);
+
+		String input1; InitString(&input1, 100);
+		CatFixed(&input1, "Create a precise goal for the user, info in the extra-info.");
+
+		Goal *new_branch = CreateUserGoal(&input1, &ds_out, start_ds_session);
+		
+		String new_branch_ser; InitString(&new_branch_ser, 2048);
+		CatFixed(&new_branch_ser, "New Goal Created: \n");
+		print_goal_data(new_branch, &new_branch_ser);
+
+		// ask the goal repair branch judge if it's ok.
+
+		_Bool pass = 0; // map this to judge response
+		ai_gpt_request judge_req = {0};
+		judge_req.model = AI_OPENAI_MODEL_GPT_5_4_MINI;
+		judge_req.schema_name = "goal_repair_branch_judge";
+		// TODO make this prompt
+		// fill judge_req.prompt with the history, the old and the new data. Make sure to put as clear in perspective why it failed so far (if it did), what was the intiial branch, and what is the current testing branch after adjustemnts, also include the full deep-search response
+		// will output a pass (bool) and a potential feedback (string) if pass is false
+		// should not be too restrictive because this is computationally expensive.
+
+		String *result = ai_openai_call_gpt_request(&judge_req);
+		change_assert(result, "OpenAI goal judge repair branch call failed.\n ");
+
+		// parsing the judge response
+		json_value *doc = json_parse(result->p, result->len);
+		change_assert(doc, "Judge goal repair branch repsonse is non json");
+		change_assert(doc->type == json_object, "Judge goal repair branch response is not json");
+
+		for (size_t i = 0; i < doc->u.object.length; i++){
+			json_object_entry entry = doc->u.object.values[i];
+
+			if (strcmp(entry.name, "feedback") == 0){
+				change_assert(entry.value->type == json_string, "goal reason judge repair branch feedback should be a string\n");
+				CatTemplateString(&failure_reason_history, "Round %zu, judge denied the new_branch_concept, feedback : [%s]\n", depth, entry.value->u.string.ptr);
+			}
+			if (strcmp(entry.name, "pass") == 0){
+				change_assert(entry.value->type == json_boolean, "goal reason judge reapir branch pass should be boolean\n");
+				pass = entry.value->u.boolean;
+			}
+		}
+
+		json_value_free(doc);
+
+		FreeString(&new_branch_ser);
+		FreeString(&judge_req.prompt);
+
+
+		if (!pass){
+			FreeGoal(new_branch);
+		}else{
+			// TODO : Verifiy if this actually fully replaces the branch and deletes all refrences
+			new_branch->parent = old_branch->parent;
+			
+			Goal* parent = FindGoalFromIndex(old_branch->parent);
+			if (parent) // should be invalid if branch itself is root
+				for (size_t i = 0; i < parent->subgoals_len; i++)
+					if (parent->subgoals[i] == old_branch->globalIndex)
+						parent->subgoals[i] = new_branch->globalIndex;
+
+			new_branch->globalIndex = old_branch->globalIndex;
+			for (size_t i = 0; i < new_branch->subgoals_len; i++){
+				Goal *child = FindGoalFromIndex(new_branch->subgoals[i]);
+				change_assert(child, "Child got corrupted somewhere when replacing the branch inrepair_branhc");
+				child->parent = new_branch->globalIndex;
+			}
+			memcpy(new_branch->id, old_branch->id, GOAL_ID_SIZE);
+			new_branch->id[GOAL_ID_SIZE] = '\0';
+
+			FreeGoal(old_branch);
+
+			FreeString(&ds_out);
+			FreeString(&input1);
+			FreeString(&prompt);
+
+			break;
+		}
+
+		change_assert(depth < 10, "Depth went way too high when repairing branch");
+
+		FreeString(&ds_out);
+		FreeString(&input1);
+		FreeString(&prompt);
+	}
+
+	FreeString(&old_goals_data);
+}
+
 void UpdateGoal(Goal *g, time_t now)
 {
 	if (!g)

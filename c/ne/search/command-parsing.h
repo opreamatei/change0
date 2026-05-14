@@ -50,6 +50,11 @@ _Bool decompose_command_6_params(
 		char (*method)[32], size_t *method_length
 		);
 
+_Bool decompose_command_7_params(
+		json_value *doc, String *ErrorBuff,
+		time_t *offset_schedule
+		);
+
 void cat_perc_to_buffer(String *buffer, int_fast64_t percentage);
 
 void parse_exec_response(json_value* doc, _Bool *finished, json_value** original_conclusion, int_fast64_t *command);

@@ -142,8 +142,8 @@ void SerializeScheduleData(String *buffer, time_t threshold){
 		}
 	}
 
-	CatTemplateString(buffer, "Total work time relative (finish and unfisnihed included):\n-Work to do untill %s : %zu\n-Work to do untill %s : %zu\n\n Schedule detailed: \n",
-				ctime(&day_work_end), day_work_hours, ctime(&week_work_end), week_work_hours
+	CatTemplateString(buffer, "Total work time relative (finish and unfisnihed included):\n-Work to do untill %s : %d\n-Work to do untill %s : %d\n\n Schedule detailed: ",
+				ctime(&day_work_end),  ctime(&week_work_end)
 			);
 
 	for (size_t i = 0; i < schedule_len; i++){

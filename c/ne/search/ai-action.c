@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include "goal/goal-util.h"
 #include "util.h"
+#include "user-schedule.h"
 #include <string.h>
 #include "search.h"
 #include "command-parsing.h"
@@ -448,5 +449,28 @@ void run6(json_value* doc, String *dynamic_mem, char* ds_id){
 	ds_emit(ds_id, "cmd-6", data.p, data.len);
 
 	CatString(dynamic_mem, data.p, data.len);
+	FreeString(&data);
+}
+
+void run7(json_value* doc, String *dynamic_mem, char* ds_id){
+	// call SerialzieScheduleData(String* buffer, time_t threshold time offset in seconds form now to fitler )
+	if (!dynamic_mem || !doc) return;
+	lazy_load();
+
+	time_t offset_seconds;
+	
+	if (decompose_command_7_params(doc, dynamic_mem, &offset_seconds) == 0) return;
+
+	// Allocate 35 characters per node, 32 bonus
+	String data;
+	InitString(&data, 2);
+	change_assert(data.p, "Failed to allocate memory for data.\n");
+
+	SerializeScheduleData(&data, offset_seconds);
+
+	ds_emit(ds_id, "cmd-7", c_str(&data), data.len);
+
+	CatString(dynamic_mem, data.p, data.len);
+
 	FreeString(&data);
 }

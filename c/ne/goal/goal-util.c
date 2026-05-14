@@ -450,10 +450,13 @@ Goal** GetLeafDueGoals(size_t *size){
 		if (!g) continue;
 		Goal *next = FindGoalFromIndex(g->next);
 
-		if ((g->start_date && !g->end_date) ||
-		    (g->start_date && g->end_date && g->next && next && !next->start_date && !next->end_date)){
+		_Bool goalStartedNotEnded = (g->start_date && !g->end_date);
+		_Bool goalStartedEnded = (g->start_date && g->end_date);
+		_Bool nextNotStartedNotEnded = g->next && next && !next->start_date && !next->end_date;
+
+		if (goalStartedNotEnded || (goalStartedEnded && nextNotStartedNotEnded))
 			(*size)++;
-		}
+		
 	}
 
 	if (*size == 0) return NULL;
@@ -467,10 +470,13 @@ Goal** GetLeafDueGoals(size_t *size){
 		if (!g) continue;
 		Goal *next = FindGoalFromIndex(g->next);
 
-		if ((g->start_date && !g->end_date) ||
-		    (g->start_date && g->end_date && g->next && next && !next->start_date && !next->end_date)){
+		_Bool goalStartedNotEnded = (g->start_date && !g->end_date);
+		_Bool goalStartedEnded = (g->start_date && g->end_date);
+		_Bool nextNotStartedNotEnded = g->next && next && !next->start_date && !next->end_date;
+
+		if (goalStartedNotEnded || (goalStartedEnded && nextNotStartedNotEnded))
 			out[w++] = g;
-		}
+		
 	}
 
 	return out;

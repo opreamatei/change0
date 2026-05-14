@@ -285,7 +285,7 @@ target_include_directories(change PRIVATE
     ${CMAKE_SOURCE_DIR}/c/ne
     ${CMAKE_SOURCE_DIR}/c/lib
     ${CMAKE_SOURCE_DIR}/c/lib/util
-    ${CMAKE_SOURCE_DIR}/c/lib/openai
+    ${CMAKE_SOURCE_DIR}/c/lib/openaicma
 )
 
 target_link_libraries(

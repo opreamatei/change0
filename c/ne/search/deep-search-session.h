@@ -24,10 +24,11 @@
     "\"mode\"," \
     "\"max\"," \
     "\"goal_id\"," \
-    "\"method\"" \
+    "\"method\"," \
+    "\"offset\"" \
   "]," \
   "\"properties\":{" \
-    "\"command\":{\"type\":[\"integer\",\"null\"],\"enum\":[1,2,3,4,5,6,null]}," \
+    "\"command\":{\"type\":[\"integer\",\"null\"],\"enum\":[1,2,3,4,5,6,7,null]}," \
     "\"finished\":{\"type\":[\"boolean\",\"null\"]}," \
     "\"conclusion\":{\"type\":[\"string\",\"null\"]}," \
     "\"percentage\":{\"type\":[\"integer\",\"null\"],\"minimum\":1,\"maximum\":100}," \
@@ -41,7 +42,8 @@
     "\"mode\":{\"type\":[\"string\",\"null\"],\"enum\":[\"roots\",\"due\",\"history\",null]}," \
     "\"max\":{\"type\":[\"integer\",\"null\"],\"minimum\":0}," \
     "\"goal_id\":{\"type\":[\"string\",\"null\"]}," \
-    "\"method\":{\"type\":[\"string\",\"null\"],\"enum\":[\"siblings\",\"parents\",\"linked-siblings\",\"linked-siblings-hidden\",\"uncles\",\"uncles-hidden\",\"history\",null]}" \
+    "\"method\":{\"type\":[\"string\",\"null\"],\"enum\":[\"siblings\",\"parents\",\"linked-siblings\",\"linked-siblings-hidden\",\"uncles\",\"uncles-hidden\",\"history\",null]}," \
+    "\"offset\":{\"type\":[\"integer\",\"null\"],\"minimum\":0}" \
   "}" \
 "}"
 
