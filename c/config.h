@@ -13,6 +13,7 @@
 #define DEFAULT_DUMP_DIRECTORY PROJECT_ROOT "dumps/"
 #define DEFAULT_GRAPH_EXPORT PROJECT_ROOT "graph-copy.json"
 #define DEFAULT_GOALS_DIRECTORY PROJECT_ROOT "goals-copy.json"
+#define DEFAULT_USER_PROFILE_PATH PROJECT_ROOT "user-profile.log"
 #define CONFIG_STR(x) #x
 #define CONFIG_XSTR(x) CONFIG_STR(x)
 #define DEFAULT_MOCK_NODES_COUNT 12
@@ -23,7 +24,7 @@
 #define MAX_INPUT_SIZE 2048
 
 /* Command ammount */
-#define COMMAND_COUNT 7
+#define COMMAND_COUNT 9
 
 /*
  * GRAPH DECOMPOSITION CONSTANTS
@@ -324,6 +325,41 @@
 "- returned scheduled goals are behavioral timing evidence, not identity evidence" \
 "Rule:" \
 "Use command 7 when schedule timing could materially change the interpretation of goals, pressure, availability, or current possibilities." \
+"COMMAND 8 — USER PROFILE HISTORY INSPECTION" \
+"Purpose:" \
+"Inspect direct user-profile history captured by the app, without reconstructing it indirectly from goals or graph state." \
+"Use when:" \
+"- the investigation needs exact recent user wording" \
+"- the investigation needs exact logged goal activity events" \
+"- recent behavior or input phrasing matters more than high-level summaries" \
+"Parameters:" \
+"- command: must be 8" \
+"- profile_section:" \
+"  must be exactly one of:" \
+"  - inputs" \
+"  - goal-activity" \
+"- max:" \
+"  optional non-negative integer limiting how many recent entries to return" \
+"Interpretation:" \
+"- inputs = raw recent user input history captured by the app" \
+"- goal-activity = raw recent goal lifecycle activity captured by the app" \
+"- returned data is app-recorded evidence, not an AI interpretation" \
+"Rule:" \
+"Use command 8 when exact recent profile history matters." \
+"COMMAND 9 — AUTOMATED MVP PROFILE SUMMARY" \
+"Purpose:" \
+"Inspect the app's compact automated MVP memory/state summary for the user." \
+"Use when:" \
+"- the investigation needs the latest compact operational user state first" \
+"- current focus, latest input, or latest goal state matters" \
+"- you want a cheap profile snapshot before reading raw history" \
+"Parameters:" \
+"- command: must be 9" \
+"Interpretation:" \
+"- this is a system-maintained MVP operational summary" \
+"- treat it as a compact state cache, not as a psychological truth" \
+"Rule:" \
+"Use command 9 for a quick user-profile state snapshot before or alongside command 8." \
 "TERMINAL ACTION — INVESTIGATION COMPLETION" \
 "Use only when:" \
 "Further exploration is unlikely to improve insight significantly." \
@@ -338,7 +374,7 @@
 "- If finished is true, conclusion must be a non-empty string." \
 "- Never return finished=true with conclusion=null or an empty conclusion." \
 "- For non-terminal actions, do not emit finished or conclusion at all." \
-"- For terminal actions, do not emit unrelated command parameters such as percentage, node, context, percA, percW, depth, criteria, mode, max, goal_id, method, or offset." \
+"- For terminal actions, do not emit unrelated command parameters such as percentage, node, context, percA, percW, depth, criteria, mode, max, goal_id, method, offset, or profile_section." \
 "- Never output an object where every field is null." \
 "- Never finish just because you have a plausible story. Finish only after you have concrete inspected evidence that materially supports the conclusion." \
 "The conclusion MUST include:" \
@@ -368,7 +404,7 @@
 "- Higher percentages are justified only when exploration becomes sparse." \
 "- Keep recursive depth controlled and justified." \
 "STRATEGIC GOAL EVIDENCE RULES" \
-"- Commands 4, 5, 6, and 7 inspect behavioral evidence." \
+"- Commands 4, 5, 6, 7, 8, and 9 inspect behavioral or app-recorded user evidence." \
 "- Goal evidence must NEVER automatically override graph evidence." \
 "- Use due goals for unresolved pressure or unfinished intentions." \
 "- Use history for repetition and persistence analysis." \
@@ -376,6 +412,8 @@
 "- Use command 5 when internal structure matters." \
 "- Use command 6 when relational context matters more than decomposition." \
 "- Use command 7 when timing, availability, scheduled commitments, or near-future pressure matters." \
+"- Use command 8 when exact raw user-profile history matters." \
+"- Use command 9 when the compact automated MVP summary is enough or should be checked first." \
 "- Goals are behavioral evidence, NOT absolute truth." \
 "OPERATIONAL DISCIPLINE" \
 "- Every command must have a concrete investigative purpose." \
@@ -384,7 +422,7 @@
 "- Treat warnings and errors as authoritative evidence." \
 "- Avoid redundant exploration." \
 "- Continuously refine the working hypothesis using ONLY observed evidence." \
-"- If you choose a non-terminal action, command must be a real integer from 1 to 7, not null." \
+"- If you choose a non-terminal action, command must be a real integer from 1 to 9, not null." \
 "- If you choose a terminal action, finished must be true and conclusion must be present in the same object." \
 "- Never output finished=true without a conclusion string." \
 "- Never output command=null unless this is a terminal action." \
@@ -594,13 +632,14 @@
 "If the original goal is already specific, preserve its core intent and refine only what improves fit, realism, or usefulness. " \
 "Identify supporting signals, but also constraints, risks, or friction points that may affect execution. " \
 "Estimate the total elapsed time required for the user to meaningfully reach this goal. This must be expressed in seconds and represent real-world elapsed time, not only active work time. " \
+"Also assign a root priority from 0 to 5 for this goal. Priority means relative importance/urgency for the user's current direction, not difficulty, duration, or complexity. Use 0 for normal/default, 1 for low, 3 for clearly important, and 5 only for urgent or central goals. " \
 "This is calendar-like elapsed duration from starting the goal until the goal is realistically done, including normal breaks, sleep, context switching, learning friction, iteration, debugging, and waiting that is naturally part of the work. " \
 "Do not interpret estimated_time as pure hands-on keyboard time, ideal uninterrupted focus time, or best-case implementation speed. " \
 "A playable game, app, tool, or prototype should almost never be estimated in only one or two hours unless the scope is explicitly tiny to that degree. " \
 "Be pragmatic and avoid idealized assumptions. " \
 \
 "Your final answer is consumed by a strict downstream extractor. " \
-"Do not output an essay, investigation report headings, bullet lists, or any sections other than the 3 fields below. " \
+"Do not output an essay, investigation report headings, bullet lists, or any sections other than the 4 fields below. " \
 "Do not narrate the investigation process. Produce only the adapted goal payload. " \
 "Put all reasoning, evidence, constraints, and justification inside EXTRA_INFO only, but keep EXTRA_INFO compact and goal-facing rather than investigative. " \
 "EXTRA_INFO must describe the concrete project, intended outcome, why it fits the user, and the main scope limits. " \
@@ -624,6 +663,8 @@
 "Before writing ESTIMATED_TIME, sanity-check it against the scope you wrote. If the scope implies multiple parts such as mechanics, UI, debugging, audio, visuals, progression, or integration, do not give an unrealistically tiny number. " \
 "For a one-week project, provide a realistic one-week scale estimate in seconds rather than 0. " \
 "If you would otherwise output 0, stop and replace it with the most plausible positive estimate for the exact scope you wrote in TITLE and EXTRA_INFO. " \
+"PRIORITY must be a plain integer from 0 to 5 with no words, punctuation, or explanation. " \
+"PRIORITY is mandatory in this create-goal flow. It applies to the root goal only; child priorities are ignored by the app. " \
 "Structure your final conclusion in clearly separated sections so another system can extract them reliably: " \
 \
 "TITLE: " \
@@ -635,7 +676,10 @@
 "ESTIMATED_TIME: " \
 "<integer number of seconds> " \
 \
-"Example valid ending: TITLE: Build a lightweight personal finance dashboard EXTRA_INFO: Tailor it for the user's habit of tracking work and outcomes, focus on manual entry plus weekly summaries, and avoid bank integrations in the first version ESTIMATED_TIME: 1209600 " \
+"PRIORITY: " \
+"<integer from 0 to 5> " \
+\
+"Example valid ending: TITLE: Build a lightweight personal finance dashboard EXTRA_INFO: Tailor it for the user's habit of tracking work and outcomes, focus on manual entry plus weekly summaries, and avoid bank integrations in the first version ESTIMATED_TIME: 1209600 PRIORITY: 3 " \
 "Example invalid endings: ESTIMATED_TIME: about two weeks ; ESTIMATED_TIME: 1209600 seconds ; missing ESTIMATED_TIME ; putting the duration only inside EXTRA_INFO. " \
 "Do not mix sections. Keep each section explicit, clean, and unambiguous. " \
 "Do not place labels such as Main findings, Relevant contexts, Strongest graph structures, or similar text inside TITLE."
@@ -646,16 +690,17 @@
 "Extract exactly one valid RFC8259 JSON object from the provided message."\
 "Return no explanations, markdown, comments, or additional text."\
 "The JSON object must contain exactly these fields:"\
-"title, extrainfo, estimated_time."\
+"title, extrainfo, estimated_time, priority."\
 "Field requirements:"\
 "title: string"\
 "extrainfo: string"\
 "estimated_time: integer (seconds)"\
+"priority: integer from 0 to 5"\
 "Rules:"\
 "All fields must always be present in the output."\
-"If a field is missing, set it to an empty string (\"\") for strings, or 0 for estimated_time."\
+"If a field is missing, set it to an empty string (\"\") for strings, or 0 for estimated_time and priority."\
 "If multiple candidates exist, use the first occurrence only."\
-"If the message contains explicit TITLE, EXTRA_INFO, and ESTIMATED_TIME sections, extract them directly with minimal normalization (do not paraphrase unless necessary for formatting)."\
+"If the message contains explicit TITLE, EXTRA_INFO, ESTIMATED_TIME, and PRIORITY sections, extract them directly with minimal normalization (do not paraphrase unless necessary for formatting)."\
 "Prefer section-based extraction over summarization."\
 "Never place the whole source message or a long analytical report into title."\
 "If explicit sections are missing, title must still stay short and goal-like; move explanatory or investigative content into extrainfo instead."\
@@ -671,6 +716,8 @@
 "For create-goal style messages describing a concrete project, 0 is invalid. Use 0 only when the message is truly too incomplete to estimate even at a coarse level."\
 "Estimated time means total real-world elapsed time, not pure implementation hours. Include iteration, debugging, setup, and normal friction implied by the described scope."\
 "If time is not explicitly numeric and no explicit timeframe is given, set estimated_time to 0."\
+"If the message contains an explicit PRIORITY section, extract it directly. If not, infer a conservative priority from the goal's stated importance and urgency; use 0 when unsupported."\
+"priority must be a JSON integer from 0 to 5. Clamp values outside this range into 0..5."\
 "Output must be valid JSON with double quotes."\
 "Message: [%s]"
 
@@ -819,8 +866,131 @@
 "The extrainfo must explain: reduced scope, success criteria, intentionally excluded parts, and how overlap is avoided. " \
 "The estimated_time field is required for schema compatibility. It may be 0 on this shorten flow if no meaningful positive remaining time exists. If remaining time is positive, use it; otherwise use 0. " \
 "When estimated_time is positive on this shorten flow, it still means realistic elapsed duration for completing the shortened goal, not pure work time. " \
+"The priority field is required for schema compatibility. Use 0 because shortening a non-root or already-positioned goal must not change root priority. " \
 "Return JSON only, with this exact structure and no extra text: " \
-"{\"title\":\"string\",\"extrainfo\":\"string\",\"estimated_time\":0}"\
+"{\"title\":\"string\",\"extrainfo\":\"string\",\"estimated_time\":0,\"priority\":0}"\
+
+
+/*
+ * GOAL REPAIR PROMPTS
+ *
+ * Placeholder mapping is documented above each prompt.
+ */
+
+/*
+ * %s (1) : user_requested_change
+ * %s (2) : current_branch_with_progress
+ * %s (3) : previous_failed_attempts_and_judge_feedback
+ * %s (4) : local_user_goal_history_before_branch
+ * %s (5) : same_layer_sibling_goals
+ * %s (6) : parent_goal_chain
+ * %s (7) : linked_previous_followup_goals
+ * %s (8) : parent_sibling_uncle_context
+ */
+#define GOAL_REPAIR_DS_PROMPT \
+"You are investigating how to repair an existing goal branch for this specific user. " \
+"The user's requested change is: [%s]. " \
+"Current branch, including progress state and children: [%s]. " \
+"Previous failed repair attempts and judge feedback: [%s]. " \
+"Local user goal history before this branch: [%s]. " \
+"Sibling goals at the same layer: [%s]. " \
+"Parent goal chain: [%s]. " \
+"Linked previous/follow-up goals around this branch: [%s]. " \
+"Parent sibling/uncle context: [%s]. " \
+"Use the identity graph, goal history, due goals, decomposition, relational goal context, and schedule evidence as needed. " \
+"Produce a compact but evidence-grounded repair context report for a downstream goal-creation agent. " \
+"The report must explain what should change, what must stay aligned with the parent/sibling structure, and what progress has already happened. " \
+"Do not create the final goal tree yourself. Do not invent unsupported user traits. " \
+"When using deep-search goal commands that require goal ids, use only exact runtime ids explicitly observed in command output. Never substitute a goal title, branch label, or summary into a goal_id field. " \
+"If you do not have an exact runtime goal id yet, prefer other commands until you do. " \
+"Critical progress rule: completed work in the old branch must be treated as retained foundation, not as future work to repeat; active unfinished work should be adapted or continued rather than discarded unless the user request explicitly invalidates it. " \
+"End with clear practical constraints for the replacement branch."
+
+/*
+ * %s (1) : existing_branch_title
+ * %s (2) : user_requested_change
+ * %s (3) : old_branch_with_progress_and_structure
+ * %s (4) : deep_search_repair_context
+ * %s (5) : previous_judge_generation_feedback
+ * %s (6) : server_retry_feedback
+ */
+#define GOAL_REPAIR_ROOT_PAYLOAD_PROMPT \
+"You are creating the replacement root goal payload for an already-investigated goal branch repair. " \
+"Return JSON only with title, extrainfo, estimated_time, and priority. " \
+"Existing branch title: [%s]. " \
+"User requested repair/change: [%s]. " \
+"Old branch with progress and structure: [%s]. " \
+"Deep-search repair context: [%s]. " \
+"Previous judge/generation correction feedback: [%s]. " \
+"Server retry feedback: [%s]. " \
+"Create a coherent replacement branch root goal that satisfies the requested change, stays compatible with parent/sibling context, and preserves already completed work as retained progress. " \
+"The output is user-facing goal content, not an architectural summary. " \
+"It must define the actual practice loop itself, not describe the repair process. " \
+"Do not write meta language such as preserve structure, keep the same branch, replace semantics, handoff order, unchanged architecture, adapted work, or downstream linkage unless translated into the actual user activity. " \
+"The first sentence of extrainfo must describe one concrete run of the loop itself. " \
+"For this YouTube-style case, that means a specific watch-pause-rewind-apply-check learning loop, not a generic statement about learning. " \
+"The root goal must stay concrete and narrow enough that its later children can refine it, rather than repeating structural instructions. " \
+"The title must be short, concrete, and action-oriented. " \
+"The extrainfo must summarize the concrete loop, success condition, excluded scope, and only the minimum constraints needed for later decomposition. " \
+"Do not plan completed old work as future work again. If old active work is still relevant, continue or adapt it instead of dropping it. " \
+"estimated_time must be a positive realistic elapsed-time estimate in seconds for the remaining replacement branch, not the already-completed old work. " \
+"Do not use 0. " \
+"priority must be an integer from 0 to 5. Use 0 when the existing branch priority should be preserved."
+
+/*
+ * %s  (1) : user_requested_change
+ * %s  (2) : deep_search_repair_context
+ * %s  (3) : previous_judge_generation_feedback
+ * %s  (4) : repaired_parent_title
+ * %s  (5) : repaired_parent_extrainfo
+ * %s  (6) : original_child_slot_to_rewrite
+ * %s  (7) : original_sibling_ordering_for_level
+ * %zu (8) : child_position_1_based
+ * %zu (9) : total_child_count
+ * %s  (10): server_retry_feedback
+ */
+#define GOAL_REPAIR_CHILD_PAYLOAD_PROMPT \
+"You are creating one child goal payload for a repaired goal branch. " \
+"Return JSON only with title, extrainfo, estimated_time, and priority. " \
+"User requested repair/change: [%s]. " \
+"Deep-search repair context: [%s]. " \
+"Previous judge/generation correction feedback: [%s]. " \
+"Repaired parent goal title: [%s]. " \
+"Repaired parent extra_info: [%s]. " \
+"Original child slot to rewrite: [%s]. " \
+"Original sibling ordering for this level: [%s]. " \
+"This child must remain position %zu of %zu and keep the same role in the sequence, only retargeted to the repaired concept. " \
+"Server retry feedback: [%s]. " \
+"The output is user-facing goal content, not an architectural summary. " \
+"Do not write meta language such as preserve structure, same branch, handoff order, unchanged architecture, or adapted work. " \
+"If this child was already completed or active in the old branch, describe the same responsibility in repaired terms so progress can map onto it; do not invent a different responsibility. " \
+"Keep the same abstraction level as the original child. " \
+"If the original child had descendants, keep this child broad enough to still own them; if it was a leaf, keep it leaf-level and concrete. " \
+"estimated_time must be a positive realistic elapsed-time estimate in seconds for this child only. " \
+"priority must be 0 for child goals because only root goal priority is used."
+
+/*
+ * %s (1) : user_requested_change
+ * %s (2) : original_branch_with_status_progress
+ * %s (3) : deep_search_context_used_by_generator
+ * %s (4) : candidate_replacement_branch
+ * %s (5) : previous_failed_candidate_feedback
+ */
+#define GOAL_REPAIR_JUDGE_PROMPT \
+"You are judging whether a regenerated goal branch is acceptable. " \
+"Return JSON only. " \
+"User requested branch change: [%s]. " \
+"Original branch, including status/progress: [%s]. " \
+"Deep-search context used by the generator: [%s]. " \
+"Candidate replacement branch: [%s]. " \
+"Previous failed candidate feedback: [%s]. " \
+"Pass if the candidate reasonably addresses the user's requested change, remains compatible with the old branch's parent/sibling role, and uses the deep-search context enough to be personalized. " \
+"Pass if the candidate preserves completed progress as foundation and does not obviously force the user to redo completed old work. " \
+"Pass only if the candidate defines an actual concrete goal/loop rather than mostly restating repair instructions, branch structure, handoff order, or abstract constraints. " \
+"Do not be overly restrictive: this repair flow is expensive and the candidate only needs to be directionally correct, coherent, and safe to decompose further. " \
+"Fail for major drift, ignoring the user request, losing or contradicting important progress, incoherent scope, clear mismatch with parent/sibling constraints, or outputs that are mostly meta-commentary instead of the actual repaired branch content. " \
+"When failing, feedback must be one concise actionable correction under 40 words. " \
+"When passing, feedback must be an empty string."
 
 
 #endif

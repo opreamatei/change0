@@ -215,6 +215,45 @@ target_link_libraries(inputprocessor PUBLIC
     jsonp
     node
     json2graph
+    userprofile
+)
+
+add_library(middleware SHARED ${CMAKE_SOURCE_DIR}/c/middleware/middleware.c)
+target_include_directories(middleware PUBLIC
+	${CMAKE_SOURCE_DIR}/c
+	${CMAKE_SOURCE_DIR}/c/middleware
+	${CMAKE_SOURCE_DIR}/c/ne
+	${CMAKE_SOURCE_DIR}/c/ne/goal
+	${CMAKE_SOURCE_DIR}/c/ne/input
+	${CMAKE_SOURCE_DIR}/c/ne/profile
+	${CMAKE_SOURCE_DIR}/c/ne/search
+	${CMAKE_SOURCE_DIR}/c/lib/openai
+	${CMAKE_SOURCE_DIR}/c/lib/util
+	${CMAKE_SOURCE_DIR}/c/lib/jsonp
+)
+target_link_libraries(middleware PUBLIC
+	util
+	jsonp
+	openai
+	inputprocessor
+	userprofile
+	goal
+	deepsearchsession
+)
+
+add_library(userprofile SHARED ${CMAKE_SOURCE_DIR}/c/ne/profile/user-profile.c)
+target_include_directories(userprofile PUBLIC
+	${CMAKE_SOURCE_DIR}/c/ne/profile
+	${CMAKE_SOURCE_DIR}/c/ne
+	${CMAKE_SOURCE_DIR}/c/ne/goal
+	${CMAKE_SOURCE_DIR}/c/lib/util
+	${CMAKE_SOURCE_DIR}/c/lib/jsonp
+	${CMAKE_SOURCE_DIR}/c
+)
+target_link_libraries(userprofile PUBLIC
+	util
+	goal-util
+	jsonp
 )
 
 add_library(http-server SHARED ${CMAKE_SOURCE_DIR}/c/srv/http-server.c)
@@ -229,6 +268,7 @@ target_link_libraries(http-server PUBLIC
 	util
 	goal
 	inputprocessor
+	middleware
 	pthread
 )
 
@@ -246,8 +286,9 @@ target_include_directories(goal PUBLIC
 	${CMAKE_SOURCE_DIR}/c/ne
 	${CMAKE_SOURCE_DIR}/c/ne/goal
 	${CMAKE_SOURCE_DIR}/c/ne/search
+	${CMAKE_SOURCE_DIR}/c/ne/profile
 )
-target_link_libraries(goal PUBLIC user-schedule goal-ai goal-info goal-util util openai jsonp node)
+target_link_libraries(goal PUBLIC user-schedule goal-ai goal-info goal-util userprofile util openai jsonp node)
 
 add_library(goal-util SHARED ${CMAKE_SOURCE_DIR}/c/ne/goal/goal-util.c)
 target_include_directories(goal-util 

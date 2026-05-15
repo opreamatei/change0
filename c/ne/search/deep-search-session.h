@@ -25,10 +25,11 @@
     "\"max\"," \
     "\"goal_id\"," \
     "\"method\"," \
-    "\"offset\"" \
+    "\"offset\"," \
+    "\"profile_section\"" \
   "]," \
   "\"properties\":{" \
-    "\"command\":{\"type\":[\"integer\",\"null\"],\"enum\":[1,2,3,4,5,6,7,null]}," \
+    "\"command\":{\"type\":[\"integer\",\"null\"],\"enum\":[1,2,3,4,5,6,7,8,9,null]}," \
     "\"finished\":{\"type\":[\"boolean\",\"null\"]}," \
     "\"conclusion\":{\"type\":[\"string\",\"null\"]}," \
     "\"percentage\":{\"type\":[\"integer\",\"null\"],\"minimum\":1,\"maximum\":100}," \
@@ -43,7 +44,8 @@
     "\"max\":{\"type\":[\"integer\",\"null\"],\"minimum\":0}," \
     "\"goal_id\":{\"type\":[\"string\",\"null\"]}," \
     "\"method\":{\"type\":[\"string\",\"null\"],\"enum\":[\"siblings\",\"parents\",\"linked-siblings\",\"linked-siblings-hidden\",\"uncles\",\"uncles-hidden\",\"history\",null]}," \
-    "\"offset\":{\"type\":[\"integer\",\"null\"],\"minimum\":0}" \
+    "\"offset\":{\"type\":[\"integer\",\"null\"],\"minimum\":0}," \
+    "\"profile_section\":{\"type\":[\"string\",\"null\"],\"enum\":[\"inputs\",\"goal-activity\",null]}" \
   "}" \
 "}"
 

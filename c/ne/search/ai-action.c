@@ -9,6 +9,7 @@
 #include "search.h"
 #include "command-parsing.h"
 #include "globals.h"
+#include "profile/user-profile.h"
 
 static ds_emit_like_func ds_emit = NULL;
 
@@ -254,9 +255,12 @@ void run4(json_value* doc, String *dynamic_mem, char* ds_id){
 
 		CatFixed(&data, "Current user Root Goals: {");
 
+		_Bool first = 1;
+
 		for (size_t i = 0; i < goals_len; i++){
 			const Goal* g = goals[i];
 
+			if (!g) continue;
 			if (g->parent > 0) continue;
 
 			const char* started_on;
@@ -281,6 +285,12 @@ void run4(json_value* doc, String *dynamic_mem, char* ds_id){
 				finished_on = finished_buf;
 			}
 
+			if (!first)
+				CatFixed(&data, ",");
+
+			Goal *root = CalcGoalRoot((Goal *)g);
+			size_t effective_priority = root ? root->priority : g->priority;
+
 			CatTemplateString(
 					&data,
 					"{\"name\":\"%s\", "
@@ -296,12 +306,10 @@ void run4(json_value* doc, String *dynamic_mem, char* ds_id){
 					started_on,
 					(size_t)g->required_time,
 					g->id,
-					g->priority
+					effective_priority
 					);
 
-			if (i + 1 < goals_len){
-				CatFixed(&data, ",");
-			}
+			first = 0;
 		}
 
 		CatFixed(&data, "}");
@@ -325,6 +333,9 @@ void run4(json_value* doc, String *dynamic_mem, char* ds_id){
 }
 
 static void CatGoalTree(String* data, const Goal* g, int_fast64_t depth){
+	Goal *root = CalcGoalRoot((Goal *)g);
+	size_t effective_priority = root ? root->priority : g->priority;
+
 	CatTemplateString(
 			data,
 			"{\"name\":\"%s\", "
@@ -333,11 +344,11 @@ static void CatGoalTree(String* data, const Goal* g, int_fast64_t depth){
 			"\"id\":\"%s\", "
 			"\"priority\":%zu, "
 			"\"children\":[",
-			g->title,
-			g->extra_info,
+			g->title.p,
+			g->extra_info.p,
 			(size_t)g->required_time,
 			g->id,
-			g->priority
+			effective_priority
 			);
 
 	if (depth > 0 && g->subgoals_len > 0){
@@ -472,5 +483,43 @@ void run7(json_value* doc, String *dynamic_mem, char* ds_id){
 
 	CatString(dynamic_mem, data.p, data.len);
 
+	FreeString(&data);
+}
+
+void run8(json_value* doc, String *dynamic_mem, char* ds_id){
+	if (!dynamic_mem || !doc) return;
+	lazy_load();
+
+	char section[32];
+	size_t section_length = 0;
+	size_t max = 10;
+
+	if (decompose_command_8_params(doc, dynamic_mem, &section, &section_length, &max) == 0) return;
+
+	String data;
+	InitString(&data, 1024);
+	change_assert(data.p, "Failed to allocate memory for command 8 data.\n");
+
+	SerializeUserProfileHistorySection(section, max, &data);
+
+	ds_emit(ds_id, "cmd-8", c_str(&data), data.len);
+	CatString(dynamic_mem, data.p, data.len);
+	FreeString(&data);
+}
+
+void run9(json_value* doc, String *dynamic_mem, char* ds_id){
+	if (!dynamic_mem || !doc) return;
+	lazy_load();
+
+	if (decompose_command_9_params(doc, dynamic_mem) == 0) return;
+
+	String data;
+	InitString(&data, 1024);
+	change_assert(data.p, "Failed to allocate memory for command 9 data.\n");
+
+	SerializeUserProfileDerivedSummary(&data);
+
+	ds_emit(ds_id, "cmd-9", c_str(&data), data.len);
+	CatString(dynamic_mem, data.p, data.len);
 	FreeString(&data);
 }

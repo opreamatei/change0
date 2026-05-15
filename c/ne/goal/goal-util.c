@@ -154,6 +154,7 @@ Goal *FindGoalByID(goalIDType id){
 
 	for (size_t i = 0; i < len; i++){
 		Goal* goal = goals[i];
+		if (!goal) continue;
 		if (strcmp(goal->id, id) == 0)
 			return goal;
 	}
@@ -189,6 +190,7 @@ static size_t EstimateGoalsJSONSize(Goal **container, size_t goals_amm) {
 
     for (size_t i = 0; i < goals_amm; i++) {
         Goal *g = container[i];
+	if (!g) continue;
 
         total += 256; 
 
@@ -216,8 +218,11 @@ void SerializeAllGoals(String *buffer){
 
 	CatFixed(buffer, "[");
 
+	_Bool first = 1;
+
 	for (size_t i = 0; i < goals_amm; i++) {
 		Goal *g = container[i];
+		if (!g) continue;
 
 		char *esc_title = json_escape_dup(g->title.p ? g->title.p : "");
 		char *esc_extra_info = json_escape_dup(g->extra_info.p ? g->extra_info.p : "");
@@ -226,6 +231,9 @@ void SerializeAllGoals(String *buffer){
 		cassert(esc_title, "Failed to escape goal title.\n");
 		cassert(esc_extra_info, "Failed to escape goal extra info.\n");
 		cassert(esc_id, "Failed to escape goal id.\n");
+
+		if (!first)
+			CatFixed(buffer, ",");
 
 		CatTemplateString(buffer,
 				"{"
@@ -272,7 +280,8 @@ void SerializeAllGoals(String *buffer){
 			CatTemplateString(buffer, "%zu", g->subgoals[j]);
 		}
 
-		CatTemplateString(buffer, "]}%c", i != goals_amm - 1 ? ',' : ' ');
+		CatFixed(buffer, "]}");
+		first = 0;
 
 		free(esc_title);
 		free(esc_extra_info);
@@ -481,4 +490,3 @@ Goal** GetLeafDueGoals(size_t *size){
 
 	return out;
 }
-

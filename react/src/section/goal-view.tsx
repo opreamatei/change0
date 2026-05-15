@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { ROOT_GOAL_ID } from '../config/utils'
 import {
   findGoalByGlobalIndex,
@@ -16,6 +17,7 @@ export interface GoalViewerProps {
   onNavigate: (goalId: string) => void
   onStartGoal: (goal: Goal) => void
   onEndGoal: (goal: Goal) => void
+  onRepairGoal: (goal: Goal, reason: string) => void
 }
 
 function StateBadge({ goal }: { goal: Goal }) {
@@ -48,6 +50,7 @@ function ActionButtons({
   onNavigate,
   onStartGoal,
   onEndGoal,
+  onRepairGoal,
 }: {
   goal: Goal
   pendingGoalIndex: number | null
@@ -55,35 +58,83 @@ function ActionButtons({
   onNavigate: (goalId: string) => void
   onStartGoal: (goal: Goal) => void
   onEndGoal: (goal: Goal) => void
+  onRepairGoal: (goal: Goal, reason: string) => void
 }) {
   const state = inferGoalState(goal)
   const isPending = pendingGoalIndex === goal.globalIndex
+  const [repairOpen, setRepairOpen] = useState(false)
+  const [repairReason, setRepairReason] = useState('')
+
+  function submitRepair() {
+    if (!repairReason.trim()) return
+    onRepairGoal(goal, repairReason.trim())
+    setRepairOpen(false)
+    setRepairReason('')
+  }
 
   return (
-    <div className="flex flex-wrap gap-2">
-      <button
-        type="button"
-        className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50"
-        onClick={() => onNavigate(goal.id)}
-      >
-        Open
-      </button>
-      <button
-        type="button"
-        className="rounded border border-green-300 bg-green-50 px-3 py-1.5 text-sm text-green-700 hover:bg-green-100 disabled:border-neutral-200 disabled:bg-transparent disabled:text-neutral-300"
-        onClick={() => onStartGoal(goal)}
-        disabled={isPending || state !== 'idle' || !canStart}
-      >
-        Start
-      </button>
-      <button
-        type="button"
-        className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50 disabled:border-neutral-200 disabled:text-neutral-300"
-        onClick={() => onEndGoal(goal)}
-        disabled={isPending || state !== 'started'}
-      >
-        End
-      </button>
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50"
+          onClick={() => onNavigate(goal.id)}
+        >
+          Open
+        </button>
+        <button
+          type="button"
+          className="rounded border border-green-300 bg-green-50 px-3 py-1.5 text-sm text-green-700 hover:bg-green-100 disabled:border-neutral-200 disabled:bg-transparent disabled:text-neutral-300"
+          onClick={() => onStartGoal(goal)}
+          disabled={isPending || state !== 'idle' || !canStart}
+        >
+          Start
+        </button>
+        <button
+          type="button"
+          className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50 disabled:border-neutral-200 disabled:text-neutral-300"
+          onClick={() => onEndGoal(goal)}
+          disabled={isPending || state !== 'started'}
+        >
+          End
+        </button>
+        <button
+          type="button"
+          className="rounded border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm text-amber-700 hover:bg-amber-100 disabled:border-neutral-200 disabled:bg-transparent disabled:text-neutral-300"
+          onClick={() => setRepairOpen((v) => !v)}
+          disabled={isPending}
+        >
+          Repair
+        </button>
+      </div>
+      {repairOpen && (
+        <div className="flex gap-2">
+          <input
+            type="text"
+            className="flex-1 rounded border border-neutral-300 px-3 py-1.5 text-sm text-black placeholder-neutral-400 focus:border-amber-400 focus:outline-none"
+            placeholder="Describe what needs to change..."
+            value={repairReason}
+            onChange={(e) => setRepairReason(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') submitRepair() }}
+            autoFocus
+          />
+          <button
+            type="button"
+            className="rounded border border-amber-400 bg-amber-50 px-3 py-1.5 text-sm text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+            onClick={submitRepair}
+            disabled={!repairReason.trim()}
+          >
+            Confirm
+          </button>
+          <button
+            type="button"
+            className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50"
+            onClick={() => { setRepairOpen(false); setRepairReason('') }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -96,6 +147,7 @@ function GoalCard({
   onNavigate,
   onStartGoal,
   onEndGoal,
+  onRepairGoal,
 }: {
   goal: Goal
   label: string
@@ -104,6 +156,7 @@ function GoalCard({
   onNavigate: (goalId: string) => void
   onStartGoal: (goal: Goal) => void
   onEndGoal: (goal: Goal) => void
+  onRepairGoal: (goal: Goal, reason: string) => void
 }) {
   const state = inferGoalState(goal)
 
@@ -137,6 +190,7 @@ function GoalCard({
         onNavigate={onNavigate}
         onStartGoal={onStartGoal}
         onEndGoal={onEndGoal}
+        onRepairGoal={onRepairGoal}
       />
     </article>
   )
@@ -152,6 +206,7 @@ export default function GoalViewer(props: GoalViewerProps) {
     onNavigate,
     onStartGoal,
     onEndGoal,
+    onRepairGoal,
   } = props
 
   const outerParentGoal = parentGoal?.parent
@@ -185,6 +240,7 @@ export default function GoalViewer(props: GoalViewerProps) {
           onNavigate={onNavigate}
           onStartGoal={onStartGoal}
           onEndGoal={onEndGoal}
+          onRepairGoal={onRepairGoal}
         />
       )}
 
@@ -211,6 +267,7 @@ export default function GoalViewer(props: GoalViewerProps) {
                 onNavigate={onNavigate}
                 onStartGoal={onStartGoal}
                 onEndGoal={onEndGoal}
+                onRepairGoal={onRepairGoal}
               />
             ))}
           </div>

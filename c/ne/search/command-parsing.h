@@ -55,6 +55,16 @@ _Bool decompose_command_7_params(
 		time_t *offset_schedule
 		);
 
+_Bool decompose_command_8_params(
+		json_value *doc, String *ErrorBuff,
+		char (*section)[32], size_t *section_length,
+		size_t *max
+		);
+
+_Bool decompose_command_9_params(
+		json_value *doc, String *ErrorBuff
+		);
+
 void cat_perc_to_buffer(String *buffer, int_fast64_t percentage);
 
 void parse_exec_response(json_value* doc, _Bool *finished, json_value** original_conclusion, int_fast64_t *command);

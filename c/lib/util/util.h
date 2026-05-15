@@ -42,6 +42,8 @@ double atod(char s[], int precision);
 #ifndef STRING_SEARCH_FUNCTIONS
 #define STRING_SEARCH_FUNCTIONS
 
+void trim_newline_inplace(char *s);
+
 char* searchFirstDigit(char *source);
 
 char* searchFirstDigitWithComma(char *source);

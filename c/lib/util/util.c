@@ -249,6 +249,14 @@ void lowerAll(char** s, size_t len){
 		a[i] = a[i] < 'a' ? a[i] + ('a' - 'A') : a[i];
 }
 
+void trim_newline_inplace(char *s)
+{
+	if (!s)
+		return;
+
+	s[strcspn(s, "\n")] = '\0';
+}
+
 void InitString(String* s, size_t init_cap){
 	s->cap = init_cap + 1;
 	s->len = 0;

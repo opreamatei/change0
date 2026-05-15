@@ -44,13 +44,15 @@ static void AICallExtractionGoalSchema(String *input, String *out, String* feedb
     FreeString(result);
 }
 
-_Bool ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t *estimated_time, _Bool forceEstTime, String *feedback){
+_Bool ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t *estimated_time, size_t *priority, _Bool forceEstTime, String *feedback){
 	
 	String json_extract_result;
 
 	// extract process goals
 	InitString(title, 256); InitString(extrainfo, 1024);
 	InitString(&json_extract_result, 2048);
+	if (priority)
+		*priority = 0;
 
 	if (feedback)
 		EmptyString(feedback);
@@ -86,6 +88,17 @@ _Bool ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t
 				return 0;
 			
 			*estimated_time = candidate.value->u.integer;
+		}else if (strcmp(candidate.name, "priority") == 0){
+			if (candidate.value->type == json_null) {
+				if (priority)
+					*priority = 0;
+				continue;
+			}
+			if (candidate.value->type != json_integer)
+				return 0;
+
+			if (priority)
+				*priority = (size_t)CLAMP(0, 5, candidate.value->u.integer);
 		}
 	}
 
@@ -95,7 +108,7 @@ _Bool ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t
 	if (title->len < 3)
 		CatFixed(feedback, "\nFeedback Error : Title length is too small or you haven't passed a title.\n");
 
-	if (estimated_time == 0 && forceEstTime)
+	if (*estimated_time == 0 && forceEstTime)
 		CatFixed(feedback, "\nFeedback Error : You either forgot to pass estimated_time or its length was set to 0 which is not allowed.\n");
 	
 

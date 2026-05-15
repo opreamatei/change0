@@ -11,5 +11,7 @@ void run4(json_value* doc, String *dynamic_mem, char* ds_id);
 void run5(json_value* doc, String *dynamic_mem, char* ds_id);
 void run6(json_value* doc, String *dynamic_mem, char* ds_id);
 void run7(json_value* doc, String *dynamic_mem, char* ds_id);
+void run8(json_value* doc, String *dynamic_mem, char* ds_id);
+void run9(json_value* doc, String *dynamic_mem, char* ds_id);
 
 #endif

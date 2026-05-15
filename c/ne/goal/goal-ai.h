@@ -8,7 +8,7 @@
 "{" \
   "\"type\":\"object\"," \
   "\"additionalProperties\":false," \
-  "\"required\":[\"title\",\"extrainfo\",\"estimated_time\"]," \
+  "\"required\":[\"title\",\"extrainfo\",\"estimated_time\",\"priority\"]," \
   "\"properties\":{" \
     "\"title\":{" \
       "\"type\":\"string\"" \
@@ -19,6 +19,11 @@
     "\"estimated_time\":{" \
       "\"type\":[\"integer\",\"null\"]," \
       "\"minimum\":0" \
+    "}," \
+    "\"priority\":{" \
+      "\"type\":[\"integer\",\"null\"]," \
+      "\"minimum\":0," \
+      "\"maximum\":5" \
     "}" \
   "}" \
 "}"
@@ -64,7 +69,7 @@
   "}" \
 "}"
 
-_Bool ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t *estimated_time, _Bool forceEstTime, String* feedback);
+_Bool ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t *estimated_time, size_t *priority, _Bool forceEstTime, String* feedback);
 void SetGoalShortenPrompt(Goal* g, String* prompt, time_t now);
 void SetGoalDecompositionPrompt(Goal* g, String* prompt, time_t now);
 String *CallGoalDecompositionAI(String *prompt);

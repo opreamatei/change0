@@ -274,13 +274,13 @@ _Bool decompose_command_5_params(
 		int_fast64_t *depth
 		){
 	*depth = -1;
-	*goal_id[0] = '\0';
+	(*goal_id)[0] = '\0';
 
 	for (size_t i = 0; i < doc->u.object.length; i++){
 		json_object_entry entry = doc->u.object.values[i];
 
 		if (!strcmp(entry.name, "goal_id") && entry.value->type == json_string){
-			size_t goal_id_len = entry.value->u.string.length;
+			size_t goal_id_len = MIN(entry.value->u.string.length, sizeof(*goal_id) - 1);
 			memcpy(*goal_id, entry.value->u.string.ptr, goal_id_len);
 			(*goal_id)[goal_id_len] = '\0';
 		}
@@ -292,6 +292,11 @@ _Bool decompose_command_5_params(
 
 	if ((*goal_id)[0] == '\0'){
 		CatFixed(ErrorBuff, "Error : You must pass a \"goal_id\" parameter in command 5.\n");
+		return 0;
+	}
+
+	if (strlen(*goal_id) != GOAL_ID_SIZE){
+		CatFixed(ErrorBuff, "Error : command 5 requires an exact runtime goal id, not a title or summary.\n");
 		return 0;
 	}
 
@@ -369,14 +374,77 @@ _Bool decompose_command_7_params(
 		json_value *doc, String *ErrorBuff,
 		time_t *offset_schedule
 		){
+	_Bool received_offset = 0;
 	*offset_schedule = 0;
 
 	for (size_t i = 0; i < doc->u.object.length; i++){
 		json_object_entry entry = doc->u.object.values[i];
 
-		if (!strcmp(entry.name, "offset") && entry.value->type == json_integer)
+		if (!strcmp(entry.name, "offset") && entry.value->type == json_integer){
+			if (entry.value->u.integer < 0){
+				CatFixed(ErrorBuff, "Error : \"offset\" parameter must be >= 0.\n");
+				return 0;
+			}
 			*offset_schedule = entry.value->u.integer;
+			received_offset = 1;
+		}
 	}
 
+	if (!received_offset){
+		CatFixed(ErrorBuff, "Error : You must pass an \"offset\" parameter in command 7.\n");
+		return 0;
+	}
+
+	return 1;
+}
+
+_Bool decompose_command_8_params(
+		json_value *doc, String *ErrorBuff,
+		char (*section)[32], size_t *section_length,
+		size_t *max
+		){
+	*section_length = 0;
+	*max = 10;
+	(*section)[0] = '\0';
+
+	for (size_t i = 0; i < doc->u.object.length; i++){
+		json_object_entry entry = doc->u.object.values[i];
+
+		if (!strcmp(entry.name, "profile_section") && entry.value->type == json_string){
+			if (
+					strcmp(entry.value->u.string.ptr, "inputs") != 0 &&
+					strcmp(entry.value->u.string.ptr, "goal-activity") != 0
+			   ){
+				CatFixed(ErrorBuff, "Error : \"profile_section\" must be \"inputs\" or \"goal-activity\".\n");
+				return 0;
+			}
+
+			*section_length = MIN(entry.value->u.string.length, 31);
+			memcpy(*section, entry.value->u.string.ptr, *section_length);
+			(*section)[*section_length] = '\0';
+		}
+
+		if (!strcmp(entry.name, "max") && entry.value->type == json_integer){
+			if (entry.value->u.integer < 0){
+				CatFixed(ErrorBuff, "Error : \"max\" parameter must be >= 0.\n");
+				return 0;
+			}
+			*max = (size_t)entry.value->u.integer;
+		}
+	}
+
+	if (*section_length == 0){
+		CatFixed(ErrorBuff, "Error : You must pass a \"profile_section\" parameter in command 8. Valid sections: inputs, goal-activity.\n");
+		return 0;
+	}
+
+	return 1;
+}
+
+_Bool decompose_command_9_params(
+		json_value *doc, String *ErrorBuff
+		){
+	(void)doc;
+	(void)ErrorBuff;
 	return 1;
 }

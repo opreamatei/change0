@@ -415,6 +415,7 @@ function openGoalStructureInspector(goal){
   }
   const rows=[
     ["title",goal.title||"Untitled goal"],
+    ["id",goal.id||""],
     ["extra info",(goal.extra_info||"No extra info").trim()||"No extra info"],
     ["length",formatGoalLength(goal)],
     ["min pause to next",formatDurationSeconds(goal.min_pause_to_next)],

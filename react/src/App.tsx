@@ -12,6 +12,7 @@ import {
   type GoalEventEnvelope,
   type GoalEventPayload,
   loadGoalsFromServer,
+  repairGoalOnServer,
   startGoalOnServer,
   type Goal,
 } from './goal'
@@ -232,6 +233,24 @@ function App() {
     }
   }
 
+  async function runRepairGoal(targetGoal: Goal, reason: string) {
+    try {
+      setPendingGoalIndex(targetGoal.globalIndex)
+      setError(null)
+      setMessage('Repairing goal...')
+
+      await repairGoalOnServer(targetGoal, reason)
+      await refreshGoals({ silent: true })
+      setMessage('Goal repaired.')
+    } catch (actionError) {
+      const nextError = actionError instanceof Error ? actionError.message : String(actionError)
+      setError(nextError)
+      setMessage(nextError)
+    } finally {
+      setPendingGoalIndex(null)
+    }
+  }
+
   async function runDevTimeAction(action: 'reset' | number) {
     try {
       setDevTimeBusy(true)
@@ -344,6 +363,7 @@ function App() {
             onNavigate={navigateToGoal}
             onStartGoal={(targetGoal) => void runGoalAction(targetGoal, 'start')}
             onEndGoal={(targetGoal) => void runGoalAction(targetGoal, 'end')}
+            onRepairGoal={(targetGoal, reason) => void runRepairGoal(targetGoal, reason)}
           />
         ) : (
           <GoalViewer
@@ -355,6 +375,7 @@ function App() {
             onNavigate={navigateToGoal}
             onStartGoal={(targetGoal) => void runGoalAction(targetGoal, 'start')}
             onEndGoal={(targetGoal) => void runGoalAction(targetGoal, 'end')}
+            onRepairGoal={(targetGoal, reason) => void runRepairGoal(targetGoal, reason)}
           />
         )}
         <nav className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-neutral-200 bg-white/95 backdrop-blur">

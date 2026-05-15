@@ -20,7 +20,8 @@ export function buildEndpoints(base){
     goalList:`${base}/goal/list`,
     goalExport:`${base}/goal/export`,
     goalLoad:`${base}/goal/load`,
-    goalDecompose:`${base}/goal/decompose`
+    goalDecompose:`${base}/goal/decompose`,
+    goalRepair:`${base}/goal/repair`
   };
 }
 

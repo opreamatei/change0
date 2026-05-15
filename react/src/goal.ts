@@ -285,6 +285,20 @@ export async function endGoalOnServer(goal: Goal, baseUrl = SERVER_BASE_URL) {
   return postGoalStatusAction(buildGoalEndUrl(baseUrl), { goalId: goal.id, goalIndex: goal.globalIndex })
 }
 
+export async function repairGoalOnServer(goal: Goal, reason: string, baseUrl = SERVER_BASE_URL) {
+  const response = await fetch(`${baseUrl}/goal/repair`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ 'goal-id': goal.id, reason }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Goal repair failed: ${response.status}`)
+  }
+
+  return (await response.json()) as { ok: boolean; 'goal-id': string; goal_index: number }
+}
+
 export function applyGoalEvent(goals: Goal[], goalId: string, payload: GoalEventPayload) {
   return goals.map((goal) => {
     const goalIndex = payload.goal_index

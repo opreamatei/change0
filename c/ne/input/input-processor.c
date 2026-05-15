@@ -3,6 +3,7 @@
 #include "json.h"
 #include "openai.h"
 #include "json-to-graph.h"
+#include "profile/user-profile.h"
 #include <string.h>
 #include <stdio.h>
 #include "config.h"
@@ -124,6 +125,7 @@ static json_value* extract_ai_json(json_value *root){
 void DecomposeInputIntoGraph(String *input){
 
 	json_value* root = NULL; 
+	UserProfileRecordInput("input_to_graph", input ? input->p : "");
 
 	printf("Generating response ...\n");
 	root = call_gpt_decomposition(input);

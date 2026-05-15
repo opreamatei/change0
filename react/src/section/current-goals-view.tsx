@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   formatGoalDate,
   formatGoalDuration,
@@ -17,6 +17,7 @@ export interface CurrentGoalsViewProps {
   onNavigate: (goalId: string) => void
   onStartGoal: (goal: Goal) => void
   onEndGoal: (goal: Goal) => void
+  onRepairGoal: (goal: Goal, reason: string) => void
 }
 
 function ActionButtons({
@@ -26,6 +27,7 @@ function ActionButtons({
   onNavigate,
   onStartGoal,
   onEndGoal,
+  onRepairGoal,
 }: {
   goal: Goal
   pendingGoalIndex: number | null
@@ -33,42 +35,91 @@ function ActionButtons({
   onNavigate: (goalId: string) => void
   onStartGoal: (goal: Goal) => void
   onEndGoal: (goal: Goal) => void
+  onRepairGoal: (goal: Goal, reason: string) => void
 }) {
   const state = inferGoalState(goal)
   const isPending = pendingGoalIndex === goal.globalIndex
+  const [repairOpen, setRepairOpen] = useState(false)
+  const [repairReason, setRepairReason] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  function submitRepair() {
+    if (!repairReason.trim()) return
+    onRepairGoal(goal, repairReason.trim())
+    setRepairOpen(false)
+    setRepairReason('')
+  }
 
   return (
-    <div className="flex flex-wrap gap-2">
-      <button
-        type="button"
-        className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50"
-        onClick={() => onNavigate(goal.id)}
-      >
-        Open
-      </button>
-      <button
-        type="button"
-        className="rounded border border-green-300 bg-green-50 px-3 py-1.5 text-sm text-green-700 hover:bg-green-100 disabled:border-neutral-200 disabled:bg-transparent disabled:text-neutral-300"
-        onClick={() => onStartGoal(goal)}
-        disabled={isPending || state !== 'idle' || !canStart}
-      >
-        Start
-      </button>
-      <button
-        type="button"
-        className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50 disabled:border-neutral-200 disabled:text-neutral-300"
-        onClick={() => onEndGoal(goal)}
-        disabled={isPending || state !== 'started'}
-      >
-        End
-      </button>
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50"
+          onClick={() => onNavigate(goal.id)}
+        >
+          Open
+        </button>
+        <button
+          type="button"
+          className="rounded border border-green-300 bg-green-50 px-3 py-1.5 text-sm text-green-700 hover:bg-green-100 disabled:border-neutral-200 disabled:bg-transparent disabled:text-neutral-300"
+          onClick={() => onStartGoal(goal)}
+          disabled={isPending || state !== 'idle' || !canStart}
+        >
+          Start
+        </button>
+        <button
+          type="button"
+          className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50 disabled:border-neutral-200 disabled:text-neutral-300"
+          onClick={() => onEndGoal(goal)}
+          disabled={isPending || state !== 'started'}
+        >
+          End
+        </button>
+        <button
+          type="button"
+          className="rounded border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm text-amber-700 hover:bg-amber-100 disabled:border-neutral-200 disabled:bg-transparent disabled:text-neutral-300"
+          onClick={() => { setRepairOpen((v) => !v); setTimeout(() => inputRef.current?.focus(), 0) }}
+          disabled={isPending}
+        >
+          Repair
+        </button>
+      </div>
+      {repairOpen && (
+        <div className="flex gap-2">
+          <input
+            ref={inputRef}
+            type="text"
+            className="flex-1 rounded border border-neutral-300 px-3 py-1.5 text-sm text-black placeholder-neutral-400 focus:border-amber-400 focus:outline-none"
+            placeholder="Describe what needs to change..."
+            value={repairReason}
+            onChange={(e) => setRepairReason(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') submitRepair() }}
+          />
+          <button
+            type="button"
+            className="rounded border border-amber-400 bg-amber-50 px-3 py-1.5 text-sm text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+            onClick={submitRepair}
+            disabled={!repairReason.trim()}
+          >
+            Confirm
+          </button>
+          <button
+            type="button"
+            className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50"
+            onClick={() => { setRepairOpen(false); setRepairReason('') }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
     </div>
   )
 }
 
 function RunningGoalCard({
-  goal, pendingGoalIndex, onNavigate, onStartGoal, onEndGoal,
-}: { goal: Goal; pendingGoalIndex: number | null; onNavigate: (id: string) => void; onStartGoal: (goal: Goal) => void; onEndGoal: (goal: Goal) => void }) {
+  goal, pendingGoalIndex, onNavigate, onStartGoal, onEndGoal, onRepairGoal,
+}: { goal: Goal; pendingGoalIndex: number | null; onNavigate: (id: string) => void; onStartGoal: (goal: Goal) => void; onEndGoal: (goal: Goal) => void; onRepairGoal: (goal: Goal, reason: string) => void }) {
   return (
     <article className="rounded-xl border border-green-200 bg-green-50 px-5 py-4">
       <div className="mb-3 flex items-center gap-2">
@@ -81,7 +132,7 @@ function RunningGoalCard({
         <span>{formatGoalDuration(goal.requiredTime)} estimated</span>
         {goal.startDate ? <span>Started {formatGoalDate(goal.startDate)}</span> : null}
       </div>
-      <ActionButtons goal={goal} pendingGoalIndex={pendingGoalIndex} canStart={false} onNavigate={onNavigate} onStartGoal={onStartGoal} onEndGoal={onEndGoal} />
+      <ActionButtons goal={goal} pendingGoalIndex={pendingGoalIndex} canStart={false} onNavigate={onNavigate} onStartGoal={onStartGoal} onEndGoal={onEndGoal} onRepairGoal={onRepairGoal} />
     </article>
   )
 }
@@ -104,8 +155,8 @@ function DoneGoalCard({ goal }: { goal: Goal }) {
 }
 
 function NextGoalCard({
-  goal, pendingGoalIndex, onNavigate, onStartGoal, onEndGoal,
-}: { goal: Goal; pendingGoalIndex: number | null; onNavigate: (id: string) => void; onStartGoal: (goal: Goal) => void; onEndGoal: (goal: Goal) => void }) {
+  goal, pendingGoalIndex, onNavigate, onStartGoal, onEndGoal, onRepairGoal,
+}: { goal: Goal; pendingGoalIndex: number | null; onNavigate: (id: string) => void; onStartGoal: (goal: Goal) => void; onEndGoal: (goal: Goal) => void; onRepairGoal: (goal: Goal, reason: string) => void }) {
   return (
     <article className="rounded-xl border border-neutral-200 bg-white px-5 py-4">
       <h3 className="mb-1 text-base font-semibold text-black">{goal.title}</h3>
@@ -113,13 +164,13 @@ function NextGoalCard({
       <div className="mb-4 text-xs text-neutral-500">
         <span>{formatGoalDuration(goal.requiredTime)} estimated</span>
       </div>
-      <ActionButtons goal={goal} pendingGoalIndex={pendingGoalIndex} canStart={true} onNavigate={onNavigate} onStartGoal={onStartGoal} onEndGoal={onEndGoal} />
+      <ActionButtons goal={goal} pendingGoalIndex={pendingGoalIndex} canStart={true} onNavigate={onNavigate} onStartGoal={onStartGoal} onEndGoal={onEndGoal} onRepairGoal={onRepairGoal} />
     </article>
   )
 }
 
 export default function CurrentGoalsView({
-  goals, pendingGoalIndex, statusMessage, onNavigate, onStartGoal, onEndGoal,
+  goals, pendingGoalIndex, statusMessage, onNavigate, onStartGoal, onEndGoal, onRepairGoal,
 }: CurrentGoalsViewProps) {
   const [nextGoals, setNextGoals] = useState<Goal[]>([])
   const [nextError, setNextError] = useState<string | null>(null)
@@ -163,7 +214,7 @@ export default function CurrentGoalsView({
         ) : (
           <div className="space-y-3">
             {running.map((g) => (
-              <RunningGoalCard key={g.globalIndex} goal={g} pendingGoalIndex={pendingGoalIndex} onNavigate={onNavigate} onStartGoal={onStartGoal} onEndGoal={onEndGoal} />
+              <RunningGoalCard key={g.globalIndex} goal={g} pendingGoalIndex={pendingGoalIndex} onNavigate={onNavigate} onStartGoal={onStartGoal} onEndGoal={onEndGoal} onRepairGoal={onRepairGoal} />
             ))}
           </div>
         )}
@@ -203,7 +254,7 @@ export default function CurrentGoalsView({
         ) : (
           <div className="space-y-3">
             {resolvedNextGoals.map((g) => (
-              <NextGoalCard key={g.globalIndex} goal={g} pendingGoalIndex={pendingGoalIndex} onNavigate={onNavigate} onStartGoal={onStartGoal} onEndGoal={onEndGoal} />
+              <NextGoalCard key={g.globalIndex} goal={g} pendingGoalIndex={pendingGoalIndex} onNavigate={onNavigate} onStartGoal={onStartGoal} onEndGoal={onEndGoal} onRepairGoal={onRepairGoal} />
             ))}
           </div>
         )}

@@ -41,6 +41,10 @@ void exec_response(json_value* doc, String *dynamic_mem, size_t depth, String *c
 		run6(doc, dynamic_mem, ds_id);
 	else if (command == 7)
 		run7(doc, dynamic_mem, ds_id);
+	else if (command == 8)
+		run8(doc, dynamic_mem, ds_id);
+	else if (command == 9)
+		run9(doc, dynamic_mem, ds_id);
 	else 
 		CatTemplateString(dynamic_mem, "{Error : Commands are only 1-%d, you passed [%d] }", COMMAND_COUNT, command);
 }
@@ -196,4 +200,3 @@ json_value *call_gpt_judge(String *out, Task *task){
 	ai_openai_response_free(&created);
 	return root;
 }
-

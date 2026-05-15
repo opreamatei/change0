@@ -9,6 +9,7 @@
 #include "search/deep-search-session.h"
 #include "goal/goal.h"
 #include "goal/user-schedule.h"
+#include "middleware/middleware.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -569,6 +570,39 @@ static int json_get_int_field(const char* json, const char* key, int* out_value)
 	return 1;
 }
 
+static int json_get_bool_or_int_field(const char* json, const char* key, int* out_value) {
+	char pattern[128];
+	const char* p;
+
+	if (json_get_int_field(json, key, out_value))
+		return 1;
+
+	if (!json || !key || !out_value) return 0;
+
+	snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+	p = strstr(json, pattern);
+	if (!p) return 0;
+
+	p += strlen(pattern);
+	p = json_skip_ws(p);
+	if (*p != ':') return 0;
+
+	p++;
+	p = json_skip_ws(p);
+
+	if (strncmp(p, "true", 4) == 0) {
+		*out_value = 1;
+		return 1;
+	}
+
+	if (strncmp(p, "false", 5) == 0) {
+		*out_value = 0;
+		return 1;
+	}
+
+	return 0;
+}
+
 /* ========================= GOAL JSON SERIALIZATION ========================= */
 
 static void goal_id_to_cstr(const Goal* g, char out[GOAL_ID_LEN + 1]) {
@@ -650,12 +684,50 @@ static Goal* find_goal_from_request_body(const HttpRequest* req, char out_goal_i
 	return goal;
 }
 
+static Goal* find_goal_from_request_body_by_id(const HttpRequest* req, char out_goal_id[GOAL_ID_LEN + 1]) {
+	char goal_id[256];
+	Goal* goal = NULL;
+
+	if (out_goal_id) {
+		out_goal_id[0] = '\0';
+	}
+
+	if (!req || !req->body) {
+		return NULL;
+	}
+
+	goal_id[0] = '\0';
+
+	if (!(json_get_string_field(req->body, "goal-id", goal_id, sizeof(goal_id)) ||
+	      json_get_string_field(req->body, "goalId", goal_id, sizeof(goal_id)) ||
+	      json_get_string_field(req->body, "id", goal_id, sizeof(goal_id)))) {
+		return NULL;
+	}
+
+	if (!validate_goal_id_32(goal_id)) {
+		return NULL;
+	}
+
+	goal = find_goal_by_id_string(goal_id);
+	if (!goal) {
+		return NULL;
+	}
+
+	if (out_goal_id) {
+		goal_id_to_cstr(goal, out_goal_id);
+	}
+
+	return goal;
+}
+
 static void append_goal_json(String* out, Goal* g) {
 	char goal_id[GOAL_ID_LEN + 1];
 
 	char* esc_id = NULL;
 	char* esc_title = NULL;
 	char* esc_extra_info = NULL;
+	Goal *root = NULL;
+	size_t effective_priority = 0;
 
 	change_assert(out, "append_goal_json got NULL output.\n");
 	change_assert(g, "append_goal_json got NULL goal.\n");
@@ -665,6 +737,8 @@ static void append_goal_json(String* out, Goal* g) {
 	esc_id = json_escape_dup(goal_id);
 	esc_title = json_escape_dup(c_str(&g->title));
 	esc_extra_info = json_escape_dup(c_str(&g->extra_info));
+	root = CalcGoalRoot(g);
+	effective_priority = root ? root->priority : g->priority;
 
 	CatTemplateString(
 		out,
@@ -719,7 +793,7 @@ static void append_goal_json(String* out, Goal* g) {
 		g->next,
 		g->depth,
 		g->retry_depth,
-		g->priority
+		effective_priority
 	);
 
 	free(esc_extra_info);
@@ -1004,6 +1078,11 @@ void ds_emit_event(const char* id, const char* type, const char* buffer, size_t 
 
 void goal_emit_event(const char* id, const char* type, const char* buffer, size_t buffer_len) {
 	server_emit_event(id, type, buffer, buffer_len);
+}
+
+static _Bool middleware_emit_event(const char* id, const char* type, const char* buffer, size_t buffer_len) {
+	server_emit_event(id, type, buffer, buffer_len);
+	return 1;
 }
 
 /* ========================= ROUTE HANDLERS ========================= */
@@ -1637,6 +1716,114 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req) {
 	);
 }
 
+static void handle_post_goal_repair(int client_fd, const HttpRequest* req) {
+	char goal_id[GOAL_ID_LEN + 1];
+	char repair_reason[2048];
+	char event_body[1024];
+	String reason_s;
+	String out;
+	Goal* target = NULL;
+	Goal* repaired = NULL;
+
+	goal_id[0] = '\0';
+	repair_reason[0] = '\0';
+
+	if (!req->body) {
+		send_json_response(
+			client_fd,
+			400,
+			"Bad Request",
+			"{\"ok\":false,\"error\":\"missing_body\"}"
+		);
+		return;
+	}
+
+	target = find_goal_from_request_body_by_id(req, goal_id);
+	if (!target) {
+		send_json_response(
+			client_fd,
+			404,
+			"Not Found",
+			"{\"ok\":false,\"error\":\"goal_not_found_or_invalid_id\"}"
+		);
+		return;
+	}
+
+	if (!json_get_string_field(req->body, "reason", repair_reason, sizeof(repair_reason)) &&
+	    !json_get_string_field(req->body, "repairReason", repair_reason, sizeof(repair_reason)) &&
+	    !json_get_string_field(req->body, "request", repair_reason, sizeof(repair_reason))) {
+		send_json_response(
+			client_fd,
+			400,
+			"Bad Request",
+			"{\"ok\":false,\"error\":\"missing_repair_reason\"}"
+		);
+		return;
+	}
+
+	if (repair_reason[0] == '\0') {
+		send_json_response(
+			client_fd,
+			400,
+			"Bad Request",
+			"{\"ok\":false,\"error\":\"empty_repair_reason\"}"
+		);
+		return;
+	}
+
+	printf("goal/repair goalId=%s reason=%s\n", goal_id, repair_reason);
+
+	InitString(&reason_s, strlen(repair_reason) + 1);
+	CatString(&reason_s, repair_reason, strlen(repair_reason));
+
+	repaired = RepairGoalBranch(target, &reason_s, start_ds_session);
+
+	FreeString(&reason_s);
+
+	if (!repaired) {
+		send_json_response(
+			client_fd,
+			500,
+			"Internal Server Error",
+			"{\"ok\":false,\"error\":\"goal_repair_failed\"}"
+		);
+		return;
+	}
+
+	int event_len = snprintf(
+		event_body,
+		sizeof(event_body),
+		"{\"goal-id\":\"%s\",\"goal_index\":%zu}",
+		repaired->id,
+		repaired->globalIndex
+	);
+
+	if (event_len > 0 && (size_t)event_len < sizeof(event_body)) {
+		goal_emit_event(
+			repaired->id,
+			"goal_repaired",
+			event_body,
+			(size_t)event_len
+		);
+	}
+
+	InitString(&out, 2048);
+	CatFixed(&out, "{\"ok\":true,\"goal\":");
+	append_goal_json(&out, repaired);
+	CatFixed(&out, "}");
+
+	send_response(
+		client_fd,
+		200,
+		"OK",
+		"application/json",
+		out.p,
+		out.len
+	);
+
+	FreeString(&out);
+}
+
 static void handle_post_research_start(int client_fd, const HttpRequest* req) {
 	char research_id[MAX_STREAM_ID_LEN + 1];
 	char task_name[256];
@@ -1773,6 +1960,136 @@ static void handle_post_message(int client_fd, const HttpRequest* req) {
 	);
 }
 
+static void handle_post_middleware_message(int client_fd, const HttpRequest* req) {
+	char session_id[MAX_STREAM_ID_LEN + 1];
+	char input[4096];
+	MiddlewareResult result;
+	String out;
+	char *esc_message = NULL;
+	char *esc_type = NULL;
+	char *esc_permission_id = NULL;
+
+	session_id[0] = '\0';
+	input[0] = '\0';
+
+	if (!req->body) {
+		send_json_response(
+			client_fd,
+			400,
+			"Bad Request",
+			"{\"ok\":false,\"error\":\"missing_body\"}"
+		);
+		return;
+	}
+
+	if (!json_get_string_field(req->body, "sessionId", session_id, sizeof(session_id)) &&
+	    !json_get_string_field(req->body, "session_id", session_id, sizeof(session_id)) &&
+	    !json_get_string_field(req->body, "id", session_id, sizeof(session_id))) {
+		strncpy(session_id, "default", sizeof(session_id) - 1);
+		session_id[sizeof(session_id) - 1] = '\0';
+	}
+
+	if (!json_get_string_field(req->body, "input", input, sizeof(input)) &&
+	    !json_get_string_field(req->body, "message", input, sizeof(input))) {
+		send_json_response(
+			client_fd,
+			400,
+			"Bad Request",
+			"{\"ok\":false,\"error\":\"missing_input\"}"
+		);
+		return;
+	}
+
+	if (input[0] == '\0') {
+		send_json_response(
+			client_fd,
+			400,
+			"Bad Request",
+			"{\"ok\":false,\"error\":\"empty_input\"}"
+		);
+		return;
+	}
+
+	printf("middleware/message sessionId=%s input=%s\n", session_id, input);
+
+	result = RunClientMiddleware(session_id, input, start_ds_session, middleware_emit_event);
+
+	esc_message = json_escape_dup(result.assistant_message.p);
+	esc_type = json_escape_dup(result.response_type.p);
+	esc_permission_id = json_escape_dup(result.permission_id.p);
+
+	InitString(&out, strlen(esc_message) + strlen(esc_type) + strlen(esc_permission_id) + 256);
+	CatTemplateString(
+		&out,
+		"{\"ok\":true,\"sessionId\":\"%s\",\"type\":\"%s\",\"message\":\"%s\",\"permission_id\":\"%s\"}",
+		session_id,
+		esc_type,
+		esc_message,
+		esc_permission_id
+	);
+
+	send_response(client_fd, 200, "OK", "application/json", out.p, out.len);
+
+	free(esc_permission_id);
+	free(esc_type);
+	free(esc_message);
+	FreeString(&out);
+	FreeMiddlewareResult(&result);
+}
+
+static void handle_post_middleware_permission(int client_fd, const HttpRequest* req) {
+	char permission_id[128];
+	int approved_int = 0;
+	_Bool ok;
+
+	permission_id[0] = '\0';
+
+	if (!req->body) {
+		send_json_response(
+			client_fd,
+			400,
+			"Bad Request",
+			"{\"ok\":false,\"error\":\"missing_body\"}"
+		);
+		return;
+	}
+
+	if (!json_get_string_field(req->body, "permissionId", permission_id, sizeof(permission_id)) &&
+	    !json_get_string_field(req->body, "permission_id", permission_id, sizeof(permission_id)) &&
+	    !json_get_string_field(req->body, "id", permission_id, sizeof(permission_id))) {
+		send_json_response(
+			client_fd,
+			400,
+			"Bad Request",
+			"{\"ok\":false,\"error\":\"missing_permission_id\"}"
+		);
+		return;
+	}
+
+	if (!json_get_bool_or_int_field(req->body, "approved", &approved_int)) {
+		send_json_response(
+			client_fd,
+			400,
+			"Bad Request",
+			"{\"ok\":false,\"error\":\"missing_approved\"}"
+		);
+		return;
+	}
+
+	ok = ResolveMiddlewarePermission(permission_id, approved_int != 0, middleware_emit_event);
+	if (!ok) {
+		send_json_response(
+			client_fd,
+			404,
+			"Not Found",
+			"{\"ok\":false,\"error\":\"permission_not_found\"}"
+		);
+		return;
+	}
+
+	send_json_response(client_fd, 200, "OK", "{\"ok\":true}");
+}
+
 static void handle_get_research_events(int client_fd, const char* full_path) {
 	char path_only[256];
 	const char* query = NULL;
@@ -1803,6 +2120,40 @@ static void handle_get_research_events(int client_fd, const char* full_path) {
 	if (research_id[0]) {
 		ds_emit_event(research_id, "sse_connected", "connected", strlen("connected"));
 	}
+}
+
+static void handle_get_middleware_events(int client_fd, const char* full_path) {
+	char path_only[256];
+	const char* query = NULL;
+	char session_id[MAX_STREAM_ID_LEN + 1];
+	static const char* header =
+		"HTTP/1.1 200 OK\r\n"
+		"Content-Type: text/event-stream\r\n"
+		"Cache-Control: no-cache\r\n"
+		"Connection: keep-alive\r\n"
+		"Access-Control-Allow-Origin: *\r\n"
+		"\r\n";
+
+	split_path_and_query(full_path, path_only, sizeof(path_only), &query);
+	session_id[0] = '\0';
+
+	if (!query_get_param(query, "sessionId", session_id, sizeof(session_id)) &&
+	    !query_get_param(query, "session_id", session_id, sizeof(session_id))) {
+		query_get_param(query, "id", session_id, sizeof(session_id));
+	}
+
+	if (send_all(client_fd, header, strlen(header)) != 0) {
+		close(client_fd);
+		return;
+	}
+
+	if (!add_sse_client(client_fd, session_id[0] ? session_id : NULL)) {
+		close(client_fd);
+		return;
+	}
+
+	if (session_id[0])
+		middleware_emit_event(session_id, "sse_connected", "connected", strlen("connected"));
 }
 
 static void handle_get_session_goals(int client_fd) {
@@ -1912,8 +2263,28 @@ static int handle_request(int client_fd, const HttpRequest* req) {
 		return 1;
 	}
 
+	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/middleware/message") == 0) {
+		handle_post_middleware_message(client_fd, req);
+		return 0;
+	}
+
+	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/middleware/permission") == 0) {
+		handle_post_middleware_permission(client_fd, req);
+		return 0;
+	}
+
+	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/middleware/events") == 0) {
+		handle_get_middleware_events(client_fd, req->path);
+		return 1;
+	}
+
 	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/goal/create") == 0) {
 		handle_post_goal_create(client_fd, req);
+		return 0;
+	}
+
+	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/goal/repair") == 0) {
+		handle_post_goal_repair(client_fd, req);
 		return 0;
 	}
 

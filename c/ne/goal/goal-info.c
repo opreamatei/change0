@@ -85,6 +85,7 @@ void SerializeUserGoalHistoryUpTo(Goal* g, String *buffer, int max){
 	for (size_t currentIndex = g->globalIndex;
 			currentIndex-- > INITIAL_GOAL_INDEX && i < max;){
 		Goal *g = FindGoalFromIndex(currentIndex);
+		if (!g) continue;
 
 		if (g->start_date != 0){
 			size_t register_len_size = 0;
