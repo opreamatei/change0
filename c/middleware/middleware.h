@@ -28,4 +28,6 @@ _Bool ResolveMiddlewarePermission(
 	middleware_emit_like_func emit
 );
 
+char* ExportMiddlewareSessionJSON(const char *session_id);
+
 #endif

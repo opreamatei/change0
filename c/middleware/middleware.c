@@ -57,6 +57,8 @@ typedef struct {
 typedef struct {
 	char session_id[64];
 	String history;
+	String events_json;
+	size_t events_count;
 	_Bool used;
 } MiddlewareSessionHistory;
 
@@ -124,12 +126,16 @@ static MiddlewareSessionHistory *get_session_history(const char *session_id)
 	if (free_i == SIZE_MAX)
 		free_i = 0;
 
-	if (chat_histories[free_i].used)
+	if (chat_histories[free_i].used) {
 		FreeString(&chat_histories[free_i].history);
+		FreeString(&chat_histories[free_i].events_json);
+	}
 
 	memset(&chat_histories[free_i], 0, sizeof(chat_histories[free_i]));
 	strncpy(chat_histories[free_i].session_id, session_id, sizeof(chat_histories[free_i].session_id) - 1);
 	InitString(&chat_histories[free_i].history, 4096);
+	InitString(&chat_histories[free_i].events_json, 4096);
+	chat_histories[free_i].events_count = 0;
 	chat_histories[free_i].used = 1;
 
 	return &chat_histories[free_i];
@@ -183,10 +189,43 @@ static _Bool profile_key_requires_permission(const char *key)
 		strcmp(key, "profession") == 0;
 }
 
+static void record_session_event(const char *session_id, const char *type, const char *content)
+{
+	MiddlewareSessionHistory *history;
+	time_t now;
+	char *esc_type;
+	char *esc_content;
+
+	if (!session_id || !*session_id)
+		session_id = "default";
+
+	history = get_session_history(session_id);
+	now = change_time_now();
+	esc_type = json_escape_dup(type ? type : "");
+	esc_content = json_escape_dup(content ? content : "");
+
+	if (history->events_count > 0)
+		CatFixed(&history->events_json, ",");
+
+	CatTemplateString(
+		&history->events_json,
+		"{\"type\":\"%s\",\"content\":\"%s\",\"timestamp\":%lld}",
+		esc_type,
+		esc_content,
+		(long long)now
+	);
+	history->events_count++;
+
+	free(esc_type);
+	free(esc_content);
+}
+
 static void emit_text(middleware_emit_like_func emit, const char *session_id, const char *type, const char *text)
 {
 	if (emit)
 		emit(session_id ? session_id : "default", type ? type : "middleware_event", text ? text : "", text ? strlen(text) : 0);
+
+	record_session_event(session_id, type, text);
 }
 
 static void make_permission_id(char out[64])
@@ -715,6 +754,30 @@ MiddlewareResult RunClientMiddleware(
 	FreeString(&deep_search_feedback);
 	FreeString(&retry_feedback);
 	return result;
+}
+
+char* ExportMiddlewareSessionJSON(const char *session_id)
+{
+	MiddlewareSessionHistory *history;
+	String out;
+	char *esc_session_id;
+
+	if (!session_id || !*session_id)
+		session_id = "default";
+
+	history = get_session_history(session_id);
+	esc_session_id = json_escape_dup(session_id);
+
+	InitString(&out, history->events_json.len + 256);
+	CatTemplateString(
+		&out,
+		"{\"ok\":true,\"session_id\":\"%s\",\"events\":[%s]}",
+		esc_session_id,
+		history->events_json.p ? history->events_json.p : ""
+	);
+
+	free(esc_session_id);
+	return out.p;
 }
 
 _Bool ResolveMiddlewarePermission(

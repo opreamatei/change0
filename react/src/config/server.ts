@@ -15,6 +15,10 @@ export const SERVER_ENDPOINTS = {
   schedule: `${SERVER_BASE_URL}/schedule`,
   sessionGoals: `${SERVER_BASE_URL}/goal/session`,
   goalRepair: `${SERVER_BASE_URL}/goal/repair`,
+  middlewareMessage: `${SERVER_BASE_URL}/middleware/message`,
+  middlewareSession: `${SERVER_BASE_URL}/middleware/session`,
+  middlewareEvents: `${SERVER_BASE_URL}/middleware/events`,
+  middlewarePermission: `${SERVER_BASE_URL}/middleware/permission`,
 } as const
 
 export function buildGoalDecomposeUrl(baseUrl = SERVER_BASE_URL) {

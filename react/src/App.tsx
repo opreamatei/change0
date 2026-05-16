@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import GoalViewer from './section/goal-view'
 import CurrentGoalsView from './section/current-goals-view'
 import ScheduleView from './section/schedule-view'
+import ChatView from './section/chat-view'
 import {
   applyGoalEvent,
   endGoalOnServer,
@@ -33,7 +34,7 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState('Loading goals from server...')
   const [pendingGoalIndex, setPendingGoalIndex] = useState<number | null>(null)
-  const [goalPanel, setGoalPanel] = useState<'structure' | 'current' | 'schedule'>('structure')
+  const [goalPanel, setGoalPanel] = useState<'structure' | 'current' | 'schedule' | 'chat'>('structure')
   const [devTime, setDevTime] = useState<DevTimeState | null>(null)
   const [devTimeBusy, setDevTimeBusy] = useState(false)
   const pendingActionRef = useRef<{ goalId: string; goalIndex: number } | null>(null)
@@ -365,6 +366,8 @@ function App() {
             onEndGoal={(targetGoal) => void runGoalAction(targetGoal, 'end')}
             onRepairGoal={(targetGoal, reason) => void runRepairGoal(targetGoal, reason)}
           />
+        ) : goalPanel === 'chat' ? (
+          <ChatView />
         ) : (
           <GoalViewer
             parentGoal={selectedParentGoal}
@@ -383,6 +386,7 @@ function App() {
             ['structure', 'Structure'],
             ['current', 'Session'],
             ['schedule', 'Schedule'],
+            ['chat', 'Chat'],
           ] as [typeof goalPanel, string][]).map(([panel, label]) => (
             <button
               key={panel}

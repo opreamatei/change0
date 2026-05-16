@@ -2208,6 +2208,36 @@ static void handle_get_schedule(int client_fd) {
 	free(out.p);
 }
 
+static void handle_get_middleware_session(int client_fd, const char* full_path) {
+	char path_only[256];
+	const char *query = NULL;
+	char session_id[MAX_STREAM_ID_LEN + 1];
+	char *result_json = NULL;
+
+	split_path_and_query(full_path, path_only, sizeof(path_only), &query);
+	session_id[0] = '\0';
+
+	if (!query_get_param(query, "sessionId", session_id, sizeof(session_id)) &&
+	    !query_get_param(query, "session_id", session_id, sizeof(session_id))) {
+		query_get_param(query, "id", session_id, sizeof(session_id));
+	}
+
+	if (!session_id[0]) {
+		strncpy(session_id, "default", sizeof(session_id) - 1);
+		session_id[sizeof(session_id) - 1] = '\0';
+	}
+
+	result_json = ExportMiddlewareSessionJSON(session_id);
+	if (!result_json) {
+		send_json_response(client_fd, 500, "Internal Server Error",
+			"{\"ok\":false,\"error\":\"session_export_failed\"}");
+		return;
+	}
+
+	send_response(client_fd, 200, "OK", "application/json", result_json, strlen(result_json));
+	free(result_json);
+}
+
 static void handle_not_found(int client_fd) {
 	send_json_response(
 		client_fd,
@@ -2276,6 +2306,11 @@ static int handle_request(int client_fd, const HttpRequest* req) {
 	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/middleware/events") == 0) {
 		handle_get_middleware_events(client_fd, req->path);
 		return 1;
+	}
+
+	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/middleware/session") == 0) {
+		handle_get_middleware_session(client_fd, req->path);
+		return 0;
 	}
 
 	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/goal/create") == 0) {
