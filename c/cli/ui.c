@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include "json-to-graph.h"
 #include "node.h"
+#include "user-management.c"
 #include "util.h"
 #include "json.h"
 #include "mockopenai.h"
@@ -92,11 +93,15 @@ static void Run(int i){
 	}
 
 	if (options[i].type == SAVEGRAPH){
-		ExportGraphTo(DEFAULT_GRAPH_EXPORT);
+		char directory[USER_DIRECTORY_SIZE];
+		GetUserGraphExportPath(LocalUser, directory);
+		ExportGraphTo(directory);
 	}
 
 	if (options[i].type == SAVEGOALS){
-		ExportGoalsTo(DEFAULT_GOALS_DIRECTORY);
+		char directory[USER_DIRECTORY_SIZE];
+		GetUserGoalExportPath(LocalUser, directory);
+		ExportGoalsTo(directory);
 	}
 
 	if (options[i].type == DEEPRESEARCH){

@@ -1,7 +1,7 @@
 #include "user-profile.h"
 
-#include "config.h"
 #include "util.h"
+#include "user-management.c"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,8 +10,12 @@
 
 static void init_profile_file_if_missing(void)
 {
+	char directory[256];
+	GetUserProfileExportPath(LocalUser ,directory);
+	
+
 	size_t len = 0;
-	char *existing = readFile((char *)DEFAULT_USER_PROFILE_PATH, &len);
+	char *existing = readFile(directory, &len);
 	if (existing) {
 		free(existing);
 		return;
@@ -23,7 +27,7 @@ static void init_profile_file_if_missing(void)
 		USER_PROFILE_GOALS_MARKER
 		USER_PROFILE_DERIVED_MARKER;
 
-	dump_to_file(DEFAULT_USER_PROFILE_PATH, initial_file, sizeof(initial_file) - 1);
+	dump_to_file(directory, initial_file, sizeof(initial_file) - 1);
 }
 
 static void slice_between_markers(
@@ -54,11 +58,14 @@ static void slice_between_markers(
 
 static void read_profile_sections(String *inputs, String *goals, String *derived)
 {
+	char directory[256];
+	GetUserProfileExportPath(LocalUser, directory);
+
 	size_t len = 0;
 	char *file_data = NULL;
 
 	init_profile_file_if_missing();
-	file_data = readFile((char *)DEFAULT_USER_PROFILE_PATH, &len);
+	file_data = readFile(directory, &len);
 	if (!file_data)
 		return;
 
@@ -71,6 +78,9 @@ static void read_profile_sections(String *inputs, String *goals, String *derived
 
 static void write_profile_sections(String *inputs, String *goals, String *derived)
 {
+	char directory[256];
+	GetUserProfileExportPath(LocalUser, directory);
+
 	String out;
 	InitString(&out, inputs->len + goals->len + derived->len + 512);
 
@@ -82,7 +92,8 @@ static void write_profile_sections(String *inputs, String *goals, String *derive
 	CatFixed(&out, USER_PROFILE_DERIVED_MARKER);
 	CatString(&out, derived->p, derived->len);
 
-	dump_to_file(DEFAULT_USER_PROFILE_PATH, out.p, out.len);
+	dump_to_file(directory, out.p, out.len);
+
 	FreeString(&out);
 }
 

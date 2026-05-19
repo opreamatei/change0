@@ -9,11 +9,15 @@
 
 /* Don't change unless you know what you are doing */
 ///////////////////////////////////////////////////////////
+#define USER_DATA_DIRECTORY PROJECT_ROOT "user-data/"
 #define DEFAULT_MOCK_DIRECTORY PROJECT_ROOT "mocks/"
 #define DEFAULT_DUMP_DIRECTORY PROJECT_ROOT "dumps/"
-#define DEFAULT_GRAPH_EXPORT PROJECT_ROOT "graph-copy.json"
-#define DEFAULT_GOALS_DIRECTORY PROJECT_ROOT "goals-copy.json"
-#define DEFAULT_USER_PROFILE_PATH PROJECT_ROOT "user-profile.log"
+
+#define USER_GRAPH_EXPORT_FILENAME USER_DATA_DIRECTORY "graph-copy.json"
+#define USER_GOAL_EXPORT_FILENAME USER_DATA_DIRECTORY "goals-copy.json"
+#define USER_PROFILE_EXPORT_FILENAME USER_DATA_DIRECTORY "user-profile.log"
+#define USER_DIRECTORY_SIZE 256
+
 #define CONFIG_STR(x) #x
 #define CONFIG_XSTR(x) CONFIG_STR(x)
 #define DEFAULT_MOCK_NODES_COUNT 12

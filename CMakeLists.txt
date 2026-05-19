@@ -55,6 +55,7 @@ target_link_libraries(mockopenai PUBLIC openai)
 add_library(ui SHARED ${CMAKE_SOURCE_DIR}/c/cli/ui.c)
 target_include_directories(ui PUBLIC
     ${CMAKE_SOURCE_DIR}/c/cli   
+    ${CMAKE_SOURCE_DIR}/c/srv
     ${CMAKE_SOURCE_DIR}/c       
 )
 target_link_libraries(ui PUBLIC
@@ -64,6 +65,7 @@ target_link_libraries(ui PUBLIC
     graphexport
     inputprocessor
     deepsearchsession
+    user-management
     goal
     http-server
     globals
@@ -245,6 +247,7 @@ add_library(userprofile SHARED ${CMAKE_SOURCE_DIR}/c/ne/profile/user-profile.c)
 target_include_directories(userprofile PUBLIC
 	${CMAKE_SOURCE_DIR}/c/ne/profile
 	${CMAKE_SOURCE_DIR}/c/ne
+	${CMAKE_SOURCE_DIR}/c/srv
 	${CMAKE_SOURCE_DIR}/c/ne/goal
 	${CMAKE_SOURCE_DIR}/c/lib/util
 	${CMAKE_SOURCE_DIR}/c/lib/jsonp
@@ -253,6 +256,7 @@ target_include_directories(userprofile PUBLIC
 target_link_libraries(userprofile PUBLIC
 	util
 	goal-util
+	user-management
 	jsonp
 )
 
@@ -301,6 +305,14 @@ target_include_directories(goal-util
 )
 target_link_libraries(goal-util PUBLIC util globals jsonp)
 
+add_library(journey SHARED ${CMAKE_SOURCE_DIR}/c/srv/journey.c)
+target_include_directories(journey PUBLIC
+	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/ne/goal
+	${CMAKE_SOURCE_DIR}/c/lib/util
+)
+target_include_directories(journey PUBLIC util goal)
+
 add_library(goal-info SHARED ${CMAKE_SOURCE_DIR}/c/ne/goal/goal-info.c)
 target_include_directories(goal-info 
 	PUBLIC
@@ -319,6 +331,15 @@ target_include_directories(goal-ai
 	${CMAKE_SOURCE_DIR}/c/lib/util
 )
 target_link_libraries(goal-ai PUBLIC util goal-info openai deepsearchsession)
+
+add_library(user-management SHARED ${CMAKE_SOURCE_DIR}/c/srv/user-management.c)
+target_include_directories(user-management PUBLIC 
+	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c
+	${CMAKE_SOURCE_DIR}/c/lib/util
+	${CMAKE_SOURCE_DIR}/c/ne/goal
+	)
+target_include_directories(user-management PUBLIC util journey goal)
 
 add_executable(change ${CMAKE_SOURCE_DIR}/c/main.c)
 target_include_directories(change PRIVATE
