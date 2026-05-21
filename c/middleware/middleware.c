@@ -283,7 +283,8 @@ static void build_middleware_context(
 	const char *user_input,
 	String *retry_feedback,
 	String *deep_search_feedback,
-	String *prompt
+	String *prompt,
+	User *user
 ) {
 	String input_history;
 	String goal_history;
@@ -294,9 +295,9 @@ static void build_middleware_context(
 	InitString(&goal_history, 4096);
 	InitString(&derived, 2048);
 
-	SerializeUserProfileHistorySection("inputs", 20, &input_history);
-	SerializeUserProfileHistorySection("goal-activity", 20, &goal_history);
-	SerializeUserProfileDerivedSummary(&derived);
+	SerializeUserProfileHistorySection(user, "inputs", 20, &input_history);
+	SerializeUserProfileHistorySection(user, "goal-activity", 20, &goal_history);
+	SerializeUserProfileDerivedSummary(user, &derived);
 
 	CatTemplateString(
 		prompt,
@@ -507,7 +508,8 @@ static _Bool validate_action(MiddlewareAction *action, String *error)
 static void emit_permission_request(
 	const char *session_id,
 	PendingProfilePermission *pending,
-	middleware_emit_like_func emit
+	middleware_emit_like_func emit,
+	User *user
 ) {
 	String payload;
 	char *esc_id = json_escape_dup(pending->id);
@@ -526,7 +528,7 @@ static void emit_permission_request(
 	);
 
 	emit_text(emit, session_id, "permission_required", payload.p);
-	UserProfileRecordInput("middleware_permission_request", payload.p);
+	UserProfileRecordInput(user, "middleware_permission_request", payload.p);
 
 	free(esc_reason);
 	free(esc_value);
@@ -543,7 +545,8 @@ static _Bool apply_actions(
 	middleware_emit_like_func emit,
 	String *deep_search_feedback,
 	MiddlewareResult *result,
-	String *error
+	String *error,
+	User *user
 ) {
 	for (size_t i = 0; i < actions_len; i++) {
 		MiddlewareAction *action = &actions[i];
@@ -565,7 +568,7 @@ static _Bool apply_actions(
 
 			InitString(&ds_out, 2048);
 			emit_text(emit, session_id, "deep_search_started", action->deep_search_task);
-			start_ds_session(&task, "middleware-deep-search", &ds_out);
+			start_ds_session(&task, "middleware-deep-search", &ds_out, user);
 
 			EmptyString(deep_search_feedback);
 			CatTemplateString(deep_search_feedback, "Deep-search result: [%s]", ds_out.p);
@@ -581,7 +584,7 @@ static _Bool apply_actions(
 
 			if (requires_permission || strcmp(action->type, "ask_permission") == 0) {
 				PendingProfilePermission *pending = store_pending_permission(session_id, action->key, action->value, action->reason);
-				emit_permission_request(session_id, pending, emit);
+				emit_permission_request(session_id, pending, emit, user);
 				EmptyString(&result->response_type);
 				CatFixed(&result->response_type, "permission_required");
 				EmptyString(&result->permission_id);
@@ -589,9 +592,9 @@ static _Bool apply_actions(
 			} else {
 				String detail;
 				InitString(&detail, 1024);
-				UserProfileSetDerivedField(action->key, action->value);
+				UserProfileSetDerivedField(user, action->key, action->value);
 				CatTemplateString(&detail, "%s=%s reason=%s", action->key, action->value, action->reason);
-				UserProfileRecordInput("middleware_profile_set", detail.p);
+				UserProfileRecordInput(user, "middleware_profile_set", detail.p);
 				emit_text(emit, session_id, "profile_updated", detail.p);
 				FreeString(&detail);
 			}
@@ -599,8 +602,8 @@ static _Bool apply_actions(
 		}
 
 		if (strcmp(action->type, "clear_profile") == 0) {
-			UserProfileClearDerivedField(action->key);
-			UserProfileRecordInput("middleware_profile_clear", action->key);
+			UserProfileClearDerivedField(user, action->key);
+			UserProfileRecordInput(user, "middleware_profile_clear", action->key);
 			emit_text(emit, session_id, "profile_updated", action->key);
 			continue;
 		}
@@ -615,7 +618,7 @@ static _Bool apply_actions(
 			CatString(&input2, action->goal_input2, strlen(action->goal_input2));
 
 			emit_text(emit, session_id, "goal_create_started", action->goal_input1);
-			created = CreateUserGoal(&input1, &input2, start_ds_session);
+			created = CreateUserGoal(&input1, &input2, NULL, start_ds_session, user);
 			if (created) {
 				String payload;
 				char *esc_title = json_escape_dup(created->title.p ? created->title.p : "");
@@ -659,7 +662,7 @@ static _Bool apply_actions(
 				root->priority,
 				esc_root_title
 			);
-			UserProfileRecordGoalEvent("goal_priority_changed", root, payload.p);
+			UserProfileRecordGoalEvent(user, "goal_priority_changed", root, payload.p);
 			emit_text(emit, session_id, "goal_priority_changed", payload.p);
 			free(esc_root_title);
 			FreeString(&payload);
@@ -674,7 +677,8 @@ MiddlewareResult RunClientMiddleware(
 	const char *session_id,
 	const char *user_input,
 	start_ds_session_like_func *start_ds_session,
-	middleware_emit_like_func emit
+	middleware_emit_like_func emit,
+	User *user
 ) {
 	MiddlewareResult result;
 	String retry_feedback;
@@ -692,12 +696,12 @@ MiddlewareResult RunClientMiddleware(
 	change_assert(start_ds_session, "Middleware requires deep-search function pointer.\n");
 
 	append_session_message(session_id, "user", user_input);
-	UserProfileRecordInput("middleware_chat_user", user_input);
+	UserProfileRecordInput(user, "middleware_chat_user", user_input);
 
 	String graph_input;
 	InitString(&graph_input, strlen(user_input) + 1);
 	CatString(&graph_input, (char *)user_input, strlen(user_input));
-	DecomposeInputIntoGraph(&graph_input);
+	DecomposeInputIntoGraph(&graph_input, user);
 	FreeString(&graph_input);
 
 	emit_text(emit, session_id, "message_received", user_input);
@@ -714,7 +718,7 @@ MiddlewareResult RunClientMiddleware(
 
 		InitString(&prompt, 12000);
 		InitString(&parse_error, 1024);
-		build_middleware_context(session_id, user_input, &retry_feedback, &deep_search_feedback, &prompt);
+		build_middleware_context(session_id, user_input, &retry_feedback, &deep_search_feedback, &prompt, user);
 
 		ai_result = call_middleware_ai(&prompt);
 		doc = json_parse(ai_result->p, ai_result->len);
@@ -724,7 +728,7 @@ MiddlewareResult RunClientMiddleware(
 			CatFixed(&parse_error, "AI response was not valid JSON.");
 
 		if (parsed) {
-			applied = apply_actions(session_id, actions, actions_len, start_ds_session, emit, &deep_search_feedback, &result, &parse_error);
+			applied = apply_actions(session_id, actions, actions_len, start_ds_session, emit, &deep_search_feedback, &result, &parse_error, user);
 		}
 
 		if (actions)
@@ -737,7 +741,7 @@ MiddlewareResult RunClientMiddleware(
 
 		if (parsed && applied) {
 			append_session_message(session_id, "assistant", result.assistant_message.p);
-			UserProfileRecordInput("middleware_chat_assistant", result.assistant_message.p);
+			UserProfileRecordInput(user, "middleware_chat_assistant", result.assistant_message.p);
 			emit_text(emit, session_id, "assistant_message", result.assistant_message.p);
 			FreeString(&parse_error);
 			break;
@@ -783,7 +787,8 @@ char* ExportMiddlewareSessionJSON(const char *session_id)
 _Bool ResolveMiddlewarePermission(
 	const char *permission_id,
 	_Bool approved,
-	middleware_emit_like_func emit
+	middleware_emit_like_func emit,
+	User *user
 ) {
 	for (size_t i = 0; i < MIDDLEWARE_MAX_PENDING_PERMISSIONS; i++) {
 		if (pending_permissions[i].active && strcmp(pending_permissions[i].id, permission_id) == 0) {
@@ -791,7 +796,7 @@ _Bool ResolveMiddlewarePermission(
 			InitString(&event, 1024);
 
 			if (approved) {
-				UserProfileSetDerivedField(pending_permissions[i].key, pending_permissions[i].value);
+				UserProfileSetDerivedField(user, pending_permissions[i].key, pending_permissions[i].value);
 				CatTemplateString(
 					&event,
 					"{\"permission_id\":\"%s\",\"approved\":true,\"key\":\"%s\",\"value\":\"%s\"}",
@@ -808,7 +813,7 @@ _Bool ResolveMiddlewarePermission(
 				);
 			}
 
-			UserProfileRecordInput("middleware_permission_result", event.p);
+			UserProfileRecordInput(user, "middleware_permission_result", event.p);
 			emit_text(emit, pending_permissions[i].session_id, "permission_resolved", event.p);
 			pending_permissions[i].active = 0;
 			FreeString(&event);

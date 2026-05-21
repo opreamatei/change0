@@ -1,38 +1,108 @@
+/*
+ * Two servers live behind this module:
+ *
+ *   Central server (fixed port): meta-only. /users, /users/create,
+ *     /users/select. Used only by the login flow.
+ *
+ *   Client server (random port): per-user routes. The base URL becomes
+ *     known after the user signs in via the central server, which is
+ *     why endpoint resolution must be lazy.
+ */
+
 export const DEFAULT_SERVER_HOST = '127.0.0.1'
-export const DEFAULT_SERVER_PORT = 8085
-export const SERVER_BASE_URL = `http://${DEFAULT_SERVER_HOST}:${DEFAULT_SERVER_PORT}`
+export const CENTRAL_SERVER_PORT = 8085
+export const CENTRAL_BASE_URL = `http://${DEFAULT_SERVER_HOST}:${CENTRAL_SERVER_PORT}`
+
+const STORAGE_KEY = 'change.clientBaseUrl'
+
+let clientBaseUrl: string | null =
+  (typeof window !== 'undefined' && window.localStorage?.getItem(STORAGE_KEY)) || null
+
+type Listener = (next: string | null) => void
+const listeners = new Set<Listener>()
+
+export function getClientBaseUrl(): string | null {
+  return clientBaseUrl
+}
+
+export function setClientBaseUrl(next: string | null) {
+  clientBaseUrl = next
+  if (typeof window !== 'undefined') {
+    if (next) window.localStorage?.setItem(STORAGE_KEY, next)
+    else window.localStorage?.removeItem(STORAGE_KEY)
+  }
+  for (const l of listeners) l(next)
+}
+
+export function subscribeClientBaseUrl(l: Listener) {
+  listeners.add(l)
+  return () => listeners.delete(l)
+}
+
+/*
+ * Used by code that still wants a base URL for relative paths. Throws if
+ * there is no active client server — callers must guard against this case.
+ */
+export function requireClientBaseUrl(): string {
+  if (!clientBaseUrl) throw new Error('No active client server. Sign in first.')
+  return clientBaseUrl
+}
+
+/*
+ * Back-compat name. Components used to import SERVER_BASE_URL as a
+ * constant; they now get the live value at access time via this getter.
+ */
+export const SERVER_BASE_URL = new Proxy(
+  { toString: () => clientBaseUrl ?? '' },
+  {
+    get(_t, prop) {
+      if (prop === 'toString' || prop === Symbol.toPrimitive) {
+        return () => clientBaseUrl ?? ''
+      }
+      return undefined
+    },
+  },
+) as unknown as string
+
+const path = (suffix: string) => () => `${clientBaseUrl ?? ''}${suffix}`
 
 export const SERVER_ENDPOINTS = {
-  goalCreate: `${SERVER_BASE_URL}/goal/create`,
-  goalEvents: `${SERVER_BASE_URL}/goal/events`,
-  goalList: `${SERVER_BASE_URL}/goal/list`,
-  goalStart: `${SERVER_BASE_URL}/goal/start`,
-  goalEnd: `${SERVER_BASE_URL}/goal/end`,
-  goalDecompose: `${SERVER_BASE_URL}/goal/decompose`,
-  devTime: `${SERVER_BASE_URL}/dev/time`,
-  devTimeAdvance: `${SERVER_BASE_URL}/dev/time/advance`,
-  devTimeReset: `${SERVER_BASE_URL}/dev/time/reset`,
-  schedule: `${SERVER_BASE_URL}/schedule`,
-  sessionGoals: `${SERVER_BASE_URL}/goal/session`,
-  goalRepair: `${SERVER_BASE_URL}/goal/repair`,
-  middlewareMessage: `${SERVER_BASE_URL}/middleware/message`,
-  middlewareSession: `${SERVER_BASE_URL}/middleware/session`,
-  middlewareEvents: `${SERVER_BASE_URL}/middleware/events`,
-  middlewarePermission: `${SERVER_BASE_URL}/middleware/permission`,
-} as const
+  get goalCreate() { return path('/goal/create')() },
+  get goalEvents() { return path('/goal/events')() },
+  get goalList() { return path('/goal/list')() },
+  get goalStart() { return path('/goal/start')() },
+  get goalEnd() { return path('/goal/end')() },
+  get goalDecompose() { return path('/goal/decompose')() },
+  get devTime() { return path('/dev/time')() },
+  get devTimeAdvance() { return path('/dev/time/advance')() },
+  get devTimeReset() { return path('/dev/time/reset')() },
+  get schedule() { return path('/schedule')() },
+  get sessionGoals() { return path('/goal/session')() },
+  get goalRepair() { return path('/goal/repair')() },
+  get middlewareMessage() { return path('/middleware/message')() },
+  get middlewareSession() { return path('/middleware/session')() },
+  get middlewareEvents() { return path('/middleware/events')() },
+  get middlewarePermission() { return path('/middleware/permission')() },
+}
 
-export function buildGoalDecomposeUrl(baseUrl = SERVER_BASE_URL) {
+export const CENTRAL_ENDPOINTS = {
+  users: `${CENTRAL_BASE_URL}/users`,
+  usersCreate: `${CENTRAL_BASE_URL}/users/create`,
+  usersSelect: `${CENTRAL_BASE_URL}/users/select`,
+}
+
+export function buildGoalDecomposeUrl(baseUrl = clientBaseUrl ?? '') {
   return `${baseUrl}/goal/decompose`
 }
 
-export function buildGoalListUrl(baseUrl = SERVER_BASE_URL) {
+export function buildGoalListUrl(baseUrl = clientBaseUrl ?? '') {
   return `${baseUrl}/goal/list`
 }
 
-export function buildGoalStartUrl(baseUrl = SERVER_BASE_URL) {
+export function buildGoalStartUrl(baseUrl = clientBaseUrl ?? '') {
   return `${baseUrl}/goal/start`
 }
 
-export function buildGoalEndUrl(baseUrl = SERVER_BASE_URL) {
+export function buildGoalEndUrl(baseUrl = clientBaseUrl ?? '') {
   return `${baseUrl}/goal/end`
 }

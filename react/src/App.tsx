@@ -3,6 +3,7 @@ import GoalViewer from './section/goal-view'
 import CurrentGoalsView from './section/current-goals-view'
 import ScheduleView from './section/schedule-view'
 import ChatView from './section/chat-view'
+import LoginView, { type LocalUser } from './section/login-view'
 import {
   applyGoalEvent,
   endGoalOnServer,
@@ -17,8 +18,34 @@ import {
   startGoalOnServer,
   type Goal,
 } from './goal'
-import { SERVER_ENDPOINTS } from './config/server'
+import {
+  CENTRAL_ENDPOINTS,
+  SERVER_ENDPOINTS,
+  getClientBaseUrl,
+  setClientBaseUrl,
+} from './config/server'
 import { buildGoalPath, getLocationState, ROOT_GOAL_ID, type RouteName } from './config/utils'
+
+const LOCAL_USER_STORAGE_KEY = 'change.localUser'
+
+function readStoredLocalUser(): LocalUser | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(LOCAL_USER_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as LocalUser
+    if (parsed && parsed.id && parsed.name) return parsed
+    return null
+  } catch {
+    return null
+  }
+}
+
+function writeStoredLocalUser(user: LocalUser | null) {
+  if (typeof window === 'undefined') return
+  if (user) window.localStorage.setItem(LOCAL_USER_STORAGE_KEY, JSON.stringify(user))
+  else window.localStorage.removeItem(LOCAL_USER_STORAGE_KEY)
+}
 
 interface DevTimeState {
   now: number
@@ -37,7 +64,26 @@ function App() {
   const [goalPanel, setGoalPanel] = useState<'structure' | 'current' | 'schedule' | 'chat'>('structure')
   const [devTime, setDevTime] = useState<DevTimeState | null>(null)
   const [devTimeBusy, setDevTimeBusy] = useState(false)
+  const [localUser, setLocalUser] = useState<LocalUser | null>(() => readStoredLocalUser())
+  const [clientBaseUrl, setClientBaseUrlState] = useState<string | null>(() => getClientBaseUrl())
   const pendingActionRef = useRef<{ goalId: string; goalIndex: number } | null>(null)
+
+  function handleLogin(user: LocalUser, baseUrl: string) {
+    setClientBaseUrl(baseUrl)
+    setClientBaseUrlState(baseUrl)
+    writeStoredLocalUser(user)
+    setLocalUser(user)
+    setError(null)
+    setMessage('Loading goals from server...')
+  }
+
+  function handleLogout() {
+    setClientBaseUrl(null)
+    setClientBaseUrlState(null)
+    writeStoredLocalUser(null)
+    setLocalUser(null)
+    setGoals([])
+  }
 
   const selectedParentGoal = useMemo<Goal | null>(() => {
     if (!goalId || goalId === ROOT_GOAL_ID) {
@@ -56,7 +102,7 @@ function App() {
       return []
     }
 
-    return getGoalChildren(goals, selectedParentGoal.globalIndex)
+    return getGoalChildren(goals, selectedParentGoal.localIndex)
   }, [goalId, goals, selectedParentGoal])
 
   useEffect(() => {
@@ -118,6 +164,11 @@ function App() {
   }
 
   useEffect(() => {
+    if (!clientBaseUrl) {
+      setLoading(false)
+      return
+    }
+
     let cancelled = false
 
     async function run() {
@@ -136,9 +187,10 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [clientBaseUrl])
 
   useEffect(() => {
+    if (!clientBaseUrl) return
     const source = new EventSource(SERVER_ENDPOINTS.goalEvents)
 
     source.onmessage = (event) => {
@@ -197,7 +249,7 @@ function App() {
     return () => {
       source.close()
     }
-  }, [])
+  }, [clientBaseUrl])
 
   function navigateToGoal(nextGoalId: string) {
     setGoalId(nextGoalId)
@@ -207,8 +259,8 @@ function App() {
 
   async function runGoalAction(targetGoal: Goal, action: 'start' | 'end') {
     try {
-      pendingActionRef.current = { goalId: targetGoal.id, goalIndex: targetGoal.globalIndex }
-      setPendingGoalIndex(targetGoal.globalIndex)
+      pendingActionRef.current = { goalId: targetGoal.id, goalIndex: targetGoal.localIndex }
+      setPendingGoalIndex(targetGoal.localIndex)
       setError(null)
       setMessage(action === 'start' ? 'Starting goal...' : 'Ending goal...')
 
@@ -236,7 +288,7 @@ function App() {
 
   async function runRepairGoal(targetGoal: Goal, reason: string) {
     try {
-      setPendingGoalIndex(targetGoal.globalIndex)
+      setPendingGoalIndex(targetGoal.localIndex)
       setError(null)
       setMessage('Repairing goal...')
 
@@ -298,6 +350,10 @@ function App() {
     navigateToGoal(ROOT_GOAL_ID)
   }
 
+  if (!localUser || !clientBaseUrl) {
+    return <LoginView onLogin={handleLogin} />
+  }
+
   if (loading) {
     return (
       <main className="min-h-full bg-white px-4 py-8 text-black sm:px-6">
@@ -329,6 +385,16 @@ function App() {
     return (
       <main className="min-h-full bg-white pb-20 px-4 py-8 text-black sm:px-6">
         <aside className="fixed right-3 top-3 z-50 rounded-xl border border-neutral-200 bg-white/95 px-3 py-3 shadow-sm backdrop-blur sm:right-5 sm:top-5">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-neutral-400">{localUser.name}</p>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="rounded border border-neutral-200 px-2 py-0.5 text-[10px] text-neutral-500 hover:bg-neutral-50"
+            >
+              Sign out
+            </button>
+          </div>
           <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-neutral-400">Dev time</p>
           <p className="mb-0.5 text-sm font-medium text-black">{devTimeLabel}</p>
           {devTime && devTime.offsetSeconds !== 0 && (

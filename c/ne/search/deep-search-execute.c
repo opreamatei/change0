@@ -8,7 +8,7 @@
 #include "command-parsing.h"
 #include "config.h"
 
-void exec_response(json_value* doc, String *dynamic_mem, size_t depth, String *conclusion, char* ds_id){
+void exec_response(json_value* doc, String *dynamic_mem, size_t depth, String *conclusion, char* ds_id, User *user){
 
 	_Bool finished = 0;
 	json_value* original_conclusion = NULL;
@@ -42,9 +42,9 @@ void exec_response(json_value* doc, String *dynamic_mem, size_t depth, String *c
 	else if (command == 7)
 		run7(doc, dynamic_mem, ds_id);
 	else if (command == 8)
-		run8(doc, dynamic_mem, ds_id);
+		run8(doc, dynamic_mem, ds_id, user);
 	else if (command == 9)
-		run9(doc, dynamic_mem, ds_id);
+		run9(doc, dynamic_mem, ds_id, user);
 	else 
 		CatTemplateString(dynamic_mem, "{Error : Commands are only 1-%d, you passed [%d] }", COMMAND_COUNT, command);
 }

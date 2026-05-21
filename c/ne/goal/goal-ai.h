@@ -71,7 +71,7 @@
 
 _Bool ExtractGoalFromText(String* text, String* title, String* extrainfo, time_t *estimated_time, size_t *priority, _Bool forceEstTime, String* feedback);
 void SetGoalShortenPrompt(Goal* g, String* prompt, time_t now);
-void SetGoalDecompositionPrompt(Goal* g, String* prompt, time_t now);
+void SetGoalDecompositionPrompt(Goal* g, String* prompt, time_t now, User *user);
 String *CallGoalDecompositionAI(String *prompt);
 void ParseDecompositionSubgoal(json_value *item,String *title,String *extrainfo,size_t *estimated_time,time_t *min_pause_to_next,time_t *pause_to_next);
 

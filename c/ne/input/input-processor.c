@@ -122,10 +122,10 @@ static json_value* extract_ai_json(json_value *root){
     return NULL;
 }
 
-void DecomposeInputIntoGraph(String *input){
+void DecomposeInputIntoGraph(String *input, User *user){
 
-	json_value* root = NULL; 
-	UserProfileRecordInput("input_to_graph", input ? input->p : "");
+	json_value* root = NULL;
+	UserProfileRecordInput(user, "input_to_graph", input ? input->p : "");
 
 	printf("Generating response ...\n");
 	root = call_gpt_decomposition(input);

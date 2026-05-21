@@ -3,6 +3,8 @@
 
 #include "util.h"
 
+typedef struct UserType User;
+
 
 #define OPENAI_DECOMPOSITION_SCHEMA_JSON \
 "{" \
@@ -204,6 +206,6 @@
 "}"
 
 
-void DecomposeInputIntoGraph(String *input);
+void DecomposeInputIntoGraph(String *input, User *user);
 
 #endif

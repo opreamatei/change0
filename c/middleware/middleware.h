@@ -19,13 +19,15 @@ MiddlewareResult RunClientMiddleware(
 	const char *session_id,
 	const char *user_input,
 	start_ds_session_like_func *start_ds_session,
-	middleware_emit_like_func emit
+	middleware_emit_like_func emit,
+	User *user
 );
 
 _Bool ResolveMiddlewarePermission(
 	const char *permission_id,
 	_Bool approved,
-	middleware_emit_like_func emit
+	middleware_emit_like_func emit,
+	User *user
 );
 
 char* ExportMiddlewareSessionJSON(const char *session_id);

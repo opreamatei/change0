@@ -38,7 +38,7 @@ function ActionButtons({
   onRepairGoal: (goal: Goal, reason: string) => void
 }) {
   const state = inferGoalState(goal)
-  const isPending = pendingGoalIndex === goal.globalIndex
+  const isPending = pendingGoalIndex === goal.localIndex
   const [repairOpen, setRepairOpen] = useState(false)
   const [repairReason, setRepairReason] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -214,7 +214,7 @@ export default function CurrentGoalsView({
         ) : (
           <div className="space-y-3">
             {running.map((g) => (
-              <RunningGoalCard key={g.globalIndex} goal={g} pendingGoalIndex={pendingGoalIndex} onNavigate={onNavigate} onStartGoal={onStartGoal} onEndGoal={onEndGoal} onRepairGoal={onRepairGoal} />
+              <RunningGoalCard key={g.localIndex} goal={g} pendingGoalIndex={pendingGoalIndex} onNavigate={onNavigate} onStartGoal={onStartGoal} onEndGoal={onEndGoal} onRepairGoal={onRepairGoal} />
             ))}
           </div>
         )}
@@ -228,7 +228,7 @@ export default function CurrentGoalsView({
           </div>
           <div className="space-y-2">
             {done.map((g) => (
-              <DoneGoalCard key={g.globalIndex} goal={g} />
+              <DoneGoalCard key={g.localIndex} goal={g} />
             ))}
           </div>
         </div>
@@ -254,7 +254,7 @@ export default function CurrentGoalsView({
         ) : (
           <div className="space-y-3">
             {resolvedNextGoals.map((g) => (
-              <NextGoalCard key={g.globalIndex} goal={g} pendingGoalIndex={pendingGoalIndex} onNavigate={onNavigate} onStartGoal={onStartGoal} onEndGoal={onEndGoal} onRepairGoal={onRepairGoal} />
+              <NextGoalCard key={g.localIndex} goal={g} pendingGoalIndex={pendingGoalIndex} onNavigate={onNavigate} onStartGoal={onStartGoal} onEndGoal={onEndGoal} onRepairGoal={onRepairGoal} />
             ))}
           </div>
         )}

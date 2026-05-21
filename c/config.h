@@ -1,8 +1,15 @@
 #ifndef CONFIG_H_MAIN_FILE
 #define CONFIG_H_MAIN_FILE
 
-/* Where the backend server start (warning : the frontend may still try to connect to 8085 even if you change it here) */
-#define HTTP_SERVER_PORT 8085
+/*
+ * Central (meta) server: user list / create / select. Always 8085.
+ * Client server: per-user routes, started on a random ephemeral port
+ * once a user has been selected.
+ */
+#define CENTRAL_SERVER_PORT 8085
+
+#define DEFAULT_JOURNEY_TITLE     "Journey"
+#define DEFAULT_JOURNEY_EXTRA_INFO "default journey"
 
 /* Modify the project root directory to yours, here is mine */
 #define PROJECT_ROOT "/home/nita/dev/c/change2/"
@@ -13,9 +20,11 @@
 #define DEFAULT_MOCK_DIRECTORY PROJECT_ROOT "mocks/"
 #define DEFAULT_DUMP_DIRECTORY PROJECT_ROOT "dumps/"
 
-#define USER_GRAPH_EXPORT_FILENAME USER_DATA_DIRECTORY "graph-copy.json"
-#define USER_GOAL_EXPORT_FILENAME USER_DATA_DIRECTORY "goals-copy.json"
-#define USER_PROFILE_EXPORT_FILENAME USER_DATA_DIRECTORY "user-profile.log"
+/* Per-user file names. Combined with USER_DATA_DIRECTORY <id>/ at runtime. */
+#define USER_GRAPH_EXPORT_FILENAME "graph-copy.json"
+#define USER_GOAL_EXPORT_FILENAME "goals-copy.json"
+#define USER_PROFILE_EXPORT_FILENAME "user-profile.log"
+#define USER_META_FILENAME ".meta"
 #define USER_DIRECTORY_SIZE 256
 
 #define CONFIG_STR(x) #x
@@ -626,6 +635,9 @@
  * - you may alter just as much as you like.
  * */
 #define GOAL_ADAPTATION_PROMPT \
+"This goal is being created within the journey titled [%s], described as: [%s]. " \
+"A journey is a thematic collection of goals. " \
+"If this is the default journey, it represents the user's general ambitions and broad life directions rather than a specific project. " \
 "Adapt the proposed goal [%s] to the specific user, using the stated extrainfo [%s]. " \
 "Server retry feedback and hard constraints for this regeneration: [%s]. Treat this feedback as mandatory correction guidance for the next answer, not as optional context. " \
 "The stated extrainfo explains why the goal may be useful, valuable, or important for the user. " \

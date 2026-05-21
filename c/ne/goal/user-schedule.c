@@ -12,7 +12,7 @@ _Bool SCHEDULE_NEEDS_REFRESH = 1;
 
 static Goal *first_leaf(Goal *g) {
 	while (g->subgoals_len > 0) {
-		g = FindGoalFromIndex(g->subgoals[0]);
+		g = FindGoalFromIndex(g->journey_id, g->subgoals[0]);
 		change_assert(g, "Broken subgoal reference while finding first leaf.\n");
 	}
 
@@ -22,7 +22,7 @@ static Goal *first_leaf(Goal *g) {
 static Goal *next_leaf(Goal *g) {
 	while (1) {
 		if (g->next != 0) {
-			g = FindGoalFromIndex(g->next);
+			g = FindGoalFromIndex(g->journey_id, g->next);
 			change_assert(g, "Broken next reference while refreshing schedule.\n");
 
 			return first_leaf(g);
@@ -32,7 +32,7 @@ static Goal *next_leaf(Goal *g) {
 			return NULL;
 
 		// if no slibing, go to parent
-		g = FindGoalFromIndex(g->parent);
+		g = FindGoalFromIndex(g->journey_id, g->parent);
 		change_assert(g, "Broken parent reference while refreshing schedule.\n");
 	}
 }
@@ -75,8 +75,8 @@ void RefreshSchedule() {
 		if (g->start_date) {
 			start_time = g->start_date;
 		} else {
-			Goal *prev = FindGoalFromIndex(g->prev);
-			change_assert(prev, "Due goal [%zu] has broken prev reference [%zu].\n", g->globalIndex, g->prev);
+			Goal *prev = FindGoalFromIndex(g->journey_id, g->prev);
+			change_assert(prev, "Due goal [%zu] has broken prev reference [%zu].\n", g->localIndex, g->prev);
 
 			start_time = prev->end_date + prev->pauseToNext;
 		}
@@ -84,7 +84,7 @@ void RefreshSchedule() {
 		// TODO make sure you come back to understand this deeply
 		while (g) {
 			SCHEDULE_TABLE[SCHEDULE_TABLE_LEN].time = start_time;
-			SCHEDULE_TABLE[SCHEDULE_TABLE_LEN].goalIndex = g->globalIndex;
+			SCHEDULE_TABLE[SCHEDULE_TABLE_LEN].goalIndex = g->localIndex;
 			SCHEDULE_TABLE_LEN++;
 
 			time_t supposed_end_time = start_time + CalcGoalRequiredTime(g);
@@ -133,7 +133,7 @@ void SerializeScheduleData(String *buffer, time_t threshold){
 
 		if (event.time < absolute_time) continue;
 
-		Goal* goal = FindGoalFromIndex(event.goalIndex);
+		Goal* goal = FindGoalGlobal(event.goalIndex);
 		change_assert(goal, "Found event entry with invalid goal.\n");
 
 			time_t req_time = CalcGoalRequiredTime(goal);
@@ -162,7 +162,7 @@ void SerializeScheduleData(String *buffer, time_t threshold){
 
 		if (event.time < absolute_time) continue;
 
-		Goal* goal = FindGoalFromIndex(event.goalIndex);
+		Goal* goal = FindGoalGlobal(event.goalIndex);
 		change_assert(goal, "Found event entry with invalid goal.\n");
 
 			size_t l;

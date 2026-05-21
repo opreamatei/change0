@@ -157,7 +157,7 @@ function itemList(root,items,active,onClick,empty){
   }
   for(const item of items){
     const button=document.createElement("button");
-    button.className="session-item"+(item.id===active||item.globalIndex===active?" is-active":"");
+    button.className="session-item"+(item.id===active||item.localIndex===active?" is-active":"");
     button.innerHTML=`<div class="session-item__head"><div class="session-item__title">${item.title||item.taskName||"Untitled"}</div>${item.lengthLabel?`<div class="session-item__length">${item.lengthLabel}</div>`:""}</div><div class="session-item__meta">${item.meta||""}</div><div class="session-item__status">${item.status||"Saved"}</div>`;
     button.onclick=()=>onClick(item);
     root.appendChild(button);
@@ -328,8 +328,8 @@ function panels(){
   $("save-goals-copy").disabled=L.load||L.copyBusy;
   $("load-goals-copy").disabled=L.copyBusy;
   itemList($("research-session-list"),R.sessions||[],R.active,item=>selectResearchSession(item.id,true),"No saved deep-search sessions.");
-  const goalItems=L.server.map(goal=>({...goal,title:goal.title,lengthLabel:formatGoalLength(goal),meta:`#${goal.globalIndex} · depth ${goal.depth} · ${goal.subgoals.length} children`,status:goalStatus(goal)}));
-  itemList($("goal-list"),goalItems,L.selected,item=>selectGoal(item.globalIndex,{focus:false}),"No server goals loaded.");
+  const goalItems=L.server.map(goal=>({...goal,title:goal.title,lengthLabel:formatGoalLength(goal),meta:`#${goal.localIndex} · depth ${goal.depth} · ${goal.subgoals.length} children`,status:goalStatus(goal)}));
+  itemList($("goal-list"),goalItems,L.selected,item=>selectGoal(item.localIndex,{focus:false}),"No server goals loaded.");
   $("timeline-total-chip").textContent=`${activeResearch().length} Events`;
   $("timeline-session-chip").textContent=R.active?`Session ${R.active}`:"No Session";
   $("timeline-header-subtitle").textContent=activeResearch().length?"Drag to pan. Hover or click a node for event details.":"Start or open a session.";
@@ -343,12 +343,12 @@ function panels(){
 
 function activeResearch(){return (R.sessions||[]).find(session=>session.id===R.active)?.events||[]}
 function activeGoalEvents(){return (L.items||[]).find(goal=>goal.id===L.active)?.events||[]}
-function selectGoal(globalIndex,{focus=true}={}){
-  const goal=L.byIndex.get(Number(globalIndex));
+function selectGoal(localIndex,{focus=true}={}){
+  const goal=L.byIndex.get(Number(localIndex));
   if(!goal)return false;
-  L.selected=goal.globalIndex;
+  L.selected=goal.localIndex;
   if(focus&&goal.subgoals.length){
-    L.focus=goal.globalIndex;
+    L.focus=goal.localIndex;
     L.explode=false;
   }
   L.detail="Selected.";
@@ -804,7 +804,7 @@ async function startResearch(event){
 function normGoal(raw){
   return{
     id:String(raw?.id||""),
-    globalIndex:Number(raw?.globalIndex||0),
+    localIndex:Number(raw?.localIndex||0),
     title:String(raw?.title||"Untitled goal"),
     extra_info:String(raw?.extra_info||""),
     start_date:Number(raw?.start_date||0),
@@ -834,9 +834,9 @@ async function loadGoals(selectNewest=false){
     const response=await fetch(EP.goalList,{cache:"no-store"});
     const raw=await response.json();
     if(!response.ok||raw.ok===false||!Array.isArray(raw.goals))throw new Error(JSON.stringify(raw));
-    L.server=raw.goals.map(normGoal).filter(goal=>goal.globalIndex>0).sort((a,b)=>a.globalIndex-b.globalIndex);
-    L.byIndex=new Map(L.server.map(goal=>[goal.globalIndex,goal]));
-    if(L.server.length)L.selected=selectNewest?L.server.at(-1).globalIndex:(L.byIndex.has(L.selected)?L.selected:L.server[0].globalIndex);
+    L.server=raw.goals.map(normGoal).filter(goal=>goal.localIndex>0).sort((a,b)=>a.localIndex-b.localIndex);
+    L.byIndex=new Map(L.server.map(goal=>[goal.localIndex,goal]));
+    if(L.server.length)L.selected=selectNewest?L.server.at(-1).localIndex:(L.byIndex.has(L.selected)?L.selected:L.server[0].localIndex);
     L.detail="Loaded.";
   }catch(error){
     L.detail="Error.";
@@ -950,7 +950,7 @@ function drawGoals(){
   const positions=[];
   let row=0;
   function walk(goal,depth){
-    const children=byParent.get(goal.globalIndex)||[];
+    const children=byParent.get(goal.localIndex)||[];
     const start=row;
     if(!children.length)row++;
     else children.forEach(child=>walk(child,depth+1));
@@ -960,9 +960,9 @@ function drawGoals(){
   const mid=(Math.min(...positions.map(point=>point.y))+Math.max(...positions.map(point=>point.y)))/2;
   positions.forEach(point=>{point.y-=mid});
   goalStructureState.positions=positions;
-  const map=new Map(positions.map(point=>[point.goal.globalIndex,point]));
+  const map=new Map(positions.map(point=>[point.goal.localIndex,point]));
   const screen=point=>({x:point.x+goalStructureState.cameraX+w*.28,y:point.y+goalStructureState.cameraY+h*.54});
-  const hoveredIndex=goalStructureState.hoveredGoal?.globalIndex||0;
+  const hoveredIndex=goalStructureState.hoveredGoal?.localIndex||0;
   let selectedPoint=null;
   c.lineCap="round";
 
@@ -974,7 +974,7 @@ function drawGoals(){
     if(!target)continue;
     const a=screen(point);
     const b=screen(target);
-    const linkedHover=point.goal.globalIndex===hoveredIndex||target.goal.globalIndex===hoveredIndex;
+    const linkedHover=point.goal.localIndex===hoveredIndex||target.goal.localIndex===hoveredIndex;
     const sameDepth=Math.abs(a.x-b.x)<4;
     const bend=sameDepth?Math.max(36,Math.abs(a.y-b.y)*.28):0;
     c.strokeStyle=linkedHover?"rgba(255,255,255,.28)":"rgba(255,255,255,.13)";
@@ -998,7 +998,7 @@ function drawGoals(){
       if(!target)continue;
       const a=screen(point);
       const b=screen(target);
-      const linkedHover=point.goal.globalIndex===hoveredIndex||target.goal.globalIndex===hoveredIndex;
+      const linkedHover=point.goal.localIndex===hoveredIndex||target.goal.localIndex===hoveredIndex;
       c.strokeStyle=linkedHover?"rgba(125,211,252,.4)":"rgba(125,211,252,.24)";
       c.lineWidth=linkedHover?2.2:1.4;
       c.beginPath();
@@ -1009,9 +1009,9 @@ function drawGoals(){
   }
   for(const point of positions){
     const s=screen(point);
-    const selected=point.goal.globalIndex===L.selected;
-    const hovered=point.goal.globalIndex===hoveredIndex;
-    const co=color(point.goal.globalIndex);
+    const selected=point.goal.localIndex===L.selected;
+    const hovered=point.goal.localIndex===hoveredIndex;
+    const co=color(point.goal.localIndex);
     const radius=selected?32:hovered?30:28;
     if(selected||hovered){
       c.beginPath();
@@ -1029,7 +1029,7 @@ function drawGoals(){
     c.fillStyle="#fff";
     c.font=selected||hovered?"740 12px system-ui":"740 11px system-ui";
     c.textAlign="center";
-    c.fillText(String(point.goal.globalIndex),s.x,s.y+4);
+    c.fillText(String(point.goal.localIndex),s.x,s.y+4);
     c.font=selected||hovered?"650 12px system-ui":"650 11px system-ui";
     c.fillText(point.goal.title.slice(0,36),s.x,s.y+46);
     if(selected)selectedPoint={goal:point.goal,x:s.x,y:s.y,hasChildren:point.goal.subgoals.length>0};
@@ -1041,7 +1041,7 @@ function drawGoals(){
 function syncGoalContextAction(point=null){
   const button=$("decompose-selected-goal");
   if(!button)return;
-  const canShow=Boolean(point)&&L.mode!=="timeline"&&!L.decomp&&!point.hasChildren&&!point.goal.end_date&&L.selected===point.goal.globalIndex;
+  const canShow=Boolean(point)&&L.mode!=="timeline"&&!L.decomp&&!point.hasChildren&&!point.goal.end_date&&L.selected===point.goal.localIndex;
   if(!canShow){
     button.disabled=true;
     button.classList.remove("is-visible");
@@ -1076,7 +1076,7 @@ async function decomposeGoal(){
   syncGoalContextAction(null);
   panels();
   try{
-    const response=await fetch(EP.goalDecompose,{method:"POST",cache:"no-store",headers:{"Content-Type":"application/json"},body:JSON.stringify({goalIndex:goal.globalIndex})});
+    const response=await fetch(EP.goalDecompose,{method:"POST",cache:"no-store",headers:{"Content-Type":"application/json"},body:JSON.stringify({goalIndex:goal.localIndex})});
     const raw=await response.json();
     if(!response.ok||raw.ok===false)throw new Error(JSON.stringify(raw));
     L.detail=raw.decomposedNow?"Decomposed.":"Children loaded.";
@@ -1169,7 +1169,7 @@ function handleGoalStructurePointerUp(event){
   if(!wasDragging){
     const hit=pickGoalAt(x,y,w,h);
     if(hit){
-      selectGoal(hit.globalIndex,{focus:false});
+      selectGoal(hit.localIndex,{focus:false});
       goalStructureState.hoveredGoal=hit;
       openGoalStructureInspector(hit);
     }else if(L.focus){
@@ -1190,7 +1190,7 @@ function handleGoalStructureDoubleClick(event){
   const {x,y}=goalStructurePoint(event);
   const hit=pickGoalAt(x,y,w,h);
   if(hit){
-    selectGoal(hit.globalIndex,{focus:true});
+    selectGoal(hit.localIndex,{focus:true});
     goalStructureState.hoveredGoal=hit;
     openGoalStructureInspector(hit);
   }

@@ -29,22 +29,22 @@ typedef struct GoalProgressSnapshot {
 
 void FreeGoal(Goal *g);
 void FreeGoals();
-Goal* CreateUserGoal(String *input1, String *input2, start_ds_session_like_func* start_ds_session);
-Goal* RepairGoalBranch(Goal *old_branch, String *reason, start_ds_session_like_func *start_ds_session);
+Goal* CreateUserGoal(String *input1, String *input2, const char *journey_id, start_ds_session_like_func* start_ds_session, User *user);
+Goal* RepairGoalBranch(Goal *old_branch, String *reason, start_ds_session_like_func *start_ds_session, User *user);
 
 void InitGoalSystem();
-_Bool DecomposeGoal(Goal *g);
-Goal* DecomposeToLeaf(Goal *g);
+_Bool DecomposeGoal(Goal *g, User *user);
+Goal* DecomposeToLeaf(Goal *g, User *user);
 
 void UpdateGoal(Goal *g, time_t now);
-Goal* ComputePartialDecomposition(Goal *goal);
+Goal* ComputePartialDecomposition(Goal *goal, User *user);
 
-time_t StartGoal(goalIDType goalID);
-Goal*  StartGoalDeep(goalIDType goalID);
-Goal*  StartGoalDeepFromGoal(Goal *g);
-time_t EndGoal(goalIDType goalID);
-time_t EndGoalFromGoal(Goal *g);
+time_t StartGoal(goalIDType goalID, User *user);
+Goal*  StartGoalDeep(goalIDType goalID, User *user);
+Goal*  StartGoalDeepFromGoal(Goal *g, User *user);
+time_t EndGoal(goalIDType goalID, User *user);
+time_t EndGoalFromGoal(Goal *g, User *user);
 
-Goal** GetSessionGoals(size_t *out_len);
+Goal** GetSessionGoals(size_t *out_len, User *user);
 
 #endif

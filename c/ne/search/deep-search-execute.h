@@ -4,6 +4,7 @@
 #include "deep-search-session.h"
 #include "json.h"
 #include "util.h"
+#include "srv/user-management.h"
 
 #define OPENAI_DEEP_SEARCH_JUDGE_SCHEMA_JSON \
 "{" \
@@ -16,7 +17,7 @@
   "}" \
 "}"
 
-void exec_response(json_value* doc, String *dynamic_mem, size_t depth, String* conclusion, char *ds_id);
+void exec_response(json_value* doc, String *dynamic_mem, size_t depth, String* conclusion, char *ds_id, User *user);
 
 char *call_gpt_deepsearch(DS_memory *mem, size_t *respsize);
 

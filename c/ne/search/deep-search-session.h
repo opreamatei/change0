@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include "node.h"
 #include "util.h"
+#include "srv/user-management.h"
 
 #define OPENAI_DEEP_SEARCH_SCHEMA_JSON \
 "{" \
@@ -49,7 +50,7 @@
   "}" \
 "}"
 
-void start_ds_session(Task *task, char* id, String* out);
+void start_ds_session(Task *task, char* id, String* out, User *user);
 
 #endif
 
@@ -59,7 +60,7 @@ void start_ds_session(Task *task, char* id, String* out);
 typedef struct {
 	String dynamic;
 	String persistent;
-
+	User *user;
 } DS_memory;
 
 _Bool init_ds_memory(DS_memory *d);

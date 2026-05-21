@@ -236,7 +236,9 @@ void run4(json_value* doc, String *dynamic_mem, char* ds_id){
 	if (!doc || !dynamic_mem) return;
 	lazy_load();
 
-	if (GOAL_CONTAINER_COUNT == INITIAL_GOAL_INDEX){ CatFixed(dynamic_mem, "Warning, you tried to run a goal-oriented command (4,5,6), but the user currently doesn't have any goals. Please avoid commands 4,5,6."); return;}
+	size_t goals_len = 0;
+	Goal **goals = GetGoalsSorted(&goals_len);
+	if (goals_len == 0){ free(goals); CatFixed(dynamic_mem, "Warning, you tried to run a goal-oriented command (4,5,6), but the user currently doesn't have any goals. Please avoid commands 4,5,6."); return;}
 
 	char mode[16] = "roots";
 	size_t mode_length = 5;
@@ -249,9 +251,6 @@ void run4(json_value* doc, String *dynamic_mem, char* ds_id){
 	change_assert(data.p, "Failed to allocate memory for command 4 data.\n");
 
 	if (!strcmp(mode, "roots")){
-
-		size_t goals_len = GOAL_CONTAINER_COUNT - INITIAL_GOAL_INDEX;
-		Goal** goals = GetGoalsContainer(&goals_len);
 
 		CatFixed(&data, "Current user Root Goals: {");
 
@@ -330,6 +329,7 @@ void run4(json_value* doc, String *dynamic_mem, char* ds_id){
 
 	CatString(dynamic_mem, data.p, data.len);
 	FreeString(&data);
+	free(goals);
 }
 
 static void CatGoalTree(String* data, const Goal* g, int_fast64_t depth){
@@ -353,7 +353,7 @@ static void CatGoalTree(String* data, const Goal* g, int_fast64_t depth){
 
 	if (depth > 0 && g->subgoals_len > 0){
 		for (size_t i = 0; i < g->subgoals_len; i++){
-			const Goal* child = FindGoalFromIndex(g->subgoals[i]);
+			const Goal* child = FindGoalFromIndex(g->journey_id, g->subgoals[i]);
 
 			CatGoalTree(data, child, depth - 1);
 
@@ -377,7 +377,7 @@ void run5(json_value* doc, String *dynamic_mem, char* ds_id){
 	if (!doc || !dynamic_mem) return;
 	lazy_load();
 
-	if (GOAL_CONTAINER_COUNT == INITIAL_GOAL_INDEX){ CatFixed(dynamic_mem, "Warning, you tried to run a goal-oriented command (4,5,6), but the user currently doesn't have any goals. Please avoid commands 4,5,6."); return;}
+	{ size_t _tmp = 0; Goal **_g = GetGoalsSorted(&_tmp); free(_g); if (_tmp == 0){ CatFixed(dynamic_mem, "Warning, you tried to run a goal-oriented command (4,5,6), but the user currently doesn't have any goals. Please avoid commands 4,5,6."); return;} }
 
 	goalIDType goal_id;
 	int_fast64_t depth = 0;
@@ -411,7 +411,7 @@ void run6(json_value* doc, String *dynamic_mem, char* ds_id){
 	if (!doc || !dynamic_mem) return;
 	lazy_load();
 
-	if (GOAL_CONTAINER_COUNT == INITIAL_GOAL_INDEX){ CatFixed(dynamic_mem, "Warning, you tried to run a goal-oriented command (4,5,6), but the user currently doesn't have any goals. Please avoid commands 4,5,6."); return;}
+	{ size_t _tmp = 0; Goal **_g = GetGoalsSorted(&_tmp); free(_g); if (_tmp == 0){ CatFixed(dynamic_mem, "Warning, you tried to run a goal-oriented command (4,5,6), but the user currently doesn't have any goals. Please avoid commands 4,5,6."); return;} }
 
 	goalIDType goal_id;
 	char method[32];
@@ -486,7 +486,7 @@ void run7(json_value* doc, String *dynamic_mem, char* ds_id){
 	FreeString(&data);
 }
 
-void run8(json_value* doc, String *dynamic_mem, char* ds_id){
+void run8(json_value* doc, String *dynamic_mem, char* ds_id, User *user){
 	if (!dynamic_mem || !doc) return;
 	lazy_load();
 
@@ -500,14 +500,14 @@ void run8(json_value* doc, String *dynamic_mem, char* ds_id){
 	InitString(&data, 1024);
 	change_assert(data.p, "Failed to allocate memory for command 8 data.\n");
 
-	SerializeUserProfileHistorySection(section, max, &data);
+	SerializeUserProfileHistorySection(user, section, max, &data);
 
 	ds_emit(ds_id, "cmd-8", c_str(&data), data.len);
 	CatString(dynamic_mem, data.p, data.len);
 	FreeString(&data);
 }
 
-void run9(json_value* doc, String *dynamic_mem, char* ds_id){
+void run9(json_value* doc, String *dynamic_mem, char* ds_id, User *user){
 	if (!dynamic_mem || !doc) return;
 	lazy_load();
 
@@ -517,7 +517,7 @@ void run9(json_value* doc, String *dynamic_mem, char* ds_id){
 	InitString(&data, 1024);
 	change_assert(data.p, "Failed to allocate memory for command 9 data.\n");
 
-	SerializeUserProfileDerivedSummary(&data);
+	SerializeUserProfileDerivedSummary(user, &data);
 
 	ds_emit(ds_id, "cmd-9", c_str(&data), data.len);
 	CatString(dynamic_mem, data.p, data.len);

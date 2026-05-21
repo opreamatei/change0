@@ -34,20 +34,25 @@
 #define MAX_STREAM_ID_LEN   63
 #define GOAL_ID_LEN         32
 
-#define GRAPH_COPY_PATH     DEFAULT_GRAPH_EXPORT
-#define GOALS_COPY_PATH     DEFAULT_GOALS_DIRECTORY
-
 static _Bool started = 0;
 static int server_fd = -1;
+static int server_port = 0;
 static pthread_t server_thread;
 static pthread_mutex_t server_lock = PTHREAD_MUTEX_INITIALIZER;
+
+int client_server_port(void)
+{
+	int p;
+	pthread_mutex_lock(&server_lock);
+	p = server_port;
+	pthread_mutex_unlock(&server_lock);
+	return p;
+}
 
 /* ========================= EXTERNAL GRAPH API ========================= */
 
 extern _Bool ExportGraphTo(char* path);
 extern void LoadGraphFromFile(char* path);
-extern void ExportGoalsTo(char* path);
-extern void LoadGoalsFromFile(char* path);
 
 /* ========================= HTTP REQUEST ========================= */
 
@@ -616,12 +621,13 @@ static void goal_id_to_cstr(const Goal* g, char out[GOAL_ID_LEN + 1]) {
 }
 
 static Goal* find_goal_by_id_string(const char* goal_id) {
-	size_t goals_len = 0;
-	Goal** goals = GetGoalsContainer(&goals_len);
-
-	if (!goal_id || !goals)
+	if (!goal_id)
 		return NULL;
 
+	size_t goals_len = 0;
+	Goal** goals = GetGoalsSorted(&goals_len);
+
+	Goal *found = NULL;
 	for (size_t i = 0; i < goals_len; i++) {
 		Goal* g = goals[i];
 		char cur_id[GOAL_ID_LEN + 1];
@@ -631,11 +637,14 @@ static Goal* find_goal_by_id_string(const char* goal_id) {
 
 		goal_id_to_cstr(g, cur_id);
 
-		if (strcmp(cur_id, goal_id) == 0)
-			return g;
+		if (strcmp(cur_id, goal_id) == 0) {
+			found = g;
+			break;
+		}
 	}
 
-	return NULL;
+	free(goals);
+	return found;
 }
 
 static Goal* find_goal_from_request_body(const HttpRequest* req, char out_goal_id[GOAL_ID_LEN + 1]) {
@@ -654,13 +663,13 @@ static Goal* find_goal_from_request_body(const HttpRequest* req, char out_goal_i
 	goal_id[0] = '\0';
 
 	if (json_get_int_field(req->body, "goalIndex", &goal_index_int) ||
-	    json_get_int_field(req->body, "globalIndex", &goal_index_int) ||
+	    json_get_int_field(req->body, "localIndex", &goal_index_int) ||
 	    json_get_int_field(req->body, "goal-index", &goal_index_int)) {
 		if (goal_index_int <= 0) {
 			return NULL;
 		}
 
-		goal = ExternalFindGoal((size_t)goal_index_int);
+		goal = FindGoalGlobal((size_t)goal_index_int);
 	} else if (
 		json_get_string_field(req->body, "goal-id", goal_id, sizeof(goal_id)) ||
 		json_get_string_field(req->body, "goalId", goal_id, sizeof(goal_id)) ||
@@ -744,7 +753,7 @@ static void append_goal_json(String* out, Goal* g) {
 		out,
 		"{"
 			"\"id\":\"%s\","
-			"\"globalIndex\":%zu,"
+			"\"localIndex\":%zu,"
 			"\"title\":\"%s\","
 			"\"title_len\":%zu,"
 			"\"extra_info\":\"%s\","
@@ -757,7 +766,7 @@ static void append_goal_json(String* out, Goal* g) {
 			"\"subgoals_len\":%zu,"
 			"\"subgoals\":[",
 		esc_id,
-		g->globalIndex,
+		g->localIndex,
 		esc_title,
 		g->title.len,
 		esc_extra_info,
@@ -804,17 +813,10 @@ static void append_goal_json(String* out, Goal* g) {
 static char* serialize_goals_container_json(void) {
 	size_t goals_len = 0;
 	size_t active_count = 0;
-	
-	Goal** goals = GetGoalsContainer(&goals_len);
+
+	Goal** goals = GetGoalsSorted(&goals_len);
 
 	String out;
-
-	if (!goals && goals_len > 0) {
-		char* error = malloc(128);
-		cassert(error, "Failed to allocate error json.\n");
-		snprintf(error, 128, "{\"ok\":false,\"error\":\"goals_container_null\"}");
-		return error;
-	}
 
 	for (size_t i = 0; i < goals_len; i++) {
 		if (goals[i])
@@ -848,10 +850,11 @@ static char* serialize_goals_container_json(void) {
 
 	CatString(&out, FSTRING_SIZE_PARAMS("]}"));
 
+	free(goals);
 	return out.p;
 }
 
-static char* serialize_goal_children_json(Goal* g) {
+static char* serialize_goal_children_json(Goal* g, User *user) {
 	String out;
 	char goal_id[GOAL_ID_LEN + 1];
 	char* esc_goal_id = NULL;
@@ -865,7 +868,7 @@ static char* serialize_goal_children_json(Goal* g) {
 	}
 
 	if (g->subgoals_len == 0 && g->required_time >= 60 * 15) {
-		decomposed_now = DecomposeGoal(g);
+		decomposed_now = DecomposeGoal(g, user);
 	}
 
 	goal_id_to_cstr(g, goal_id);
@@ -881,7 +884,7 @@ static char* serialize_goal_children_json(Goal* g) {
 			"\"goalId\":\"%s\","
 			"\"decomposedNow\":%s,"
 			"\"goal\":",
-		g->globalIndex,
+		g->localIndex,
 		esc_goal_id,
 		decomposed_now ? "true" : "false"
 	);
@@ -893,7 +896,7 @@ static char* serialize_goal_children_json(Goal* g) {
 	_Bool first_child = 1;
 
 	for (size_t i = 0; i < g->subgoals_len; i++) {
-		Goal* child = ExternalFindGoal(g->subgoals[i]);
+		Goal* child = FindGoalGlobal(g->subgoals[i]);
 
 		if (!child)
 			continue;
@@ -1112,8 +1115,19 @@ static void handle_get_graph(int client_fd) {
 	free(graph_json);
 }
 
-static void handle_post_graph_export(int client_fd) {
-	if (!ExportGraphTo((char*)GRAPH_COPY_PATH)) {
+static void handle_post_graph_export(int client_fd, User *user) {
+	char path[USER_DIRECTORY_SIZE];
+	char body[USER_DIRECTORY_SIZE + 32];
+
+	if (!user) {
+		send_json_response(client_fd, 409, "Conflict",
+			"{\"ok\":false,\"error\":\"no_active_user\"}");
+		return;
+	}
+
+	GetUserGraphExportPath(user, path);
+
+	if (!ExportGraphTo(path)) {
 		send_json_response(
 			client_fd,
 			500,
@@ -1123,16 +1137,23 @@ static void handle_post_graph_export(int client_fd) {
 		return;
 	}
 
-	send_json_response(
-		client_fd,
-		200,
-		"OK",
-		"{\"ok\":true,\"path\":\"" GRAPH_COPY_PATH "\"}"
-	);
+	snprintf(body, sizeof(body), "{\"ok\":true,\"path\":\"%s\"}", path);
+	send_json_response(client_fd, 200, "OK", body);
 }
 
-static void handle_get_graph_load(int client_fd) {
-	if (access(GRAPH_COPY_PATH, R_OK) != 0) {
+static void handle_get_graph_load(int client_fd, User *user) {
+	char path[USER_DIRECTORY_SIZE];
+	char body[USER_DIRECTORY_SIZE + 32];
+
+	if (!user) {
+		send_json_response(client_fd, 409, "Conflict",
+			"{\"ok\":false,\"error\":\"no_active_user\"}");
+		return;
+	}
+
+	GetUserGraphExportPath(user, path);
+
+	if (access(path, R_OK) != 0) {
 		if (errno == ENOENT) {
 			send_json_response(
 				client_fd,
@@ -1152,14 +1173,10 @@ static void handle_get_graph_load(int client_fd) {
 		return;
 	}
 
-	LoadGraphFromFile((char*)GRAPH_COPY_PATH);
+	LoadGraphFromFile(path);
 
-	send_json_response(
-		client_fd,
-		200,
-		"OK",
-		"{\"ok\":true,\"path\":\"" GRAPH_COPY_PATH "\"}"
-	);
+	snprintf(body, sizeof(body), "{\"ok\":true,\"path\":\"%s\"}", path);
+	send_json_response(client_fd, 200, "OK", body);
 }
 
 static void handle_get_goal_list(int client_fd) {
@@ -1187,49 +1204,37 @@ static void handle_get_goal_list(int client_fd) {
 	free(goals_json);
 }
 
-static void handle_post_goal_export(int client_fd) {
-	ExportGoalsTo((char*)GOALS_COPY_PATH);
-
-	send_json_response(
-		client_fd,
-		200,
-		"OK",
-		"{\"ok\":true,\"path\":\"" GOALS_COPY_PATH "\"}"
-	);
-}
-
-static void handle_get_goal_load(int client_fd) {
-	if (access(GOALS_COPY_PATH, R_OK) != 0) {
-		if (errno == ENOENT) {
-			send_json_response(
-				client_fd,
-				404,
-				"Not Found",
-				"{\"ok\":false,\"error\":\"goals_copy_not_found\"}"
-			);
-			return;
-		}
-
-		send_json_response(
-			client_fd,
-			500,
-			"Internal Server Error",
-			"{\"ok\":false,\"error\":\"goals_copy_not_readable\"}"
-		);
+static void handle_post_goal_export(int client_fd, User *user) {
+	if (!user) {
+		send_json_response(client_fd, 409, "Conflict",
+			"{\"ok\":false,\"error\":\"no_active_user\"}");
 		return;
 	}
 
-	LoadGoalsFromFile((char*)GOALS_COPY_PATH);
-
-	send_json_response(
-		client_fd,
-		200,
-		"OK",
-		"{\"ok\":true,\"path\":\"" GOALS_COPY_PATH "\"}"
-	);
+	SaveUser(user);
+	send_json_response(client_fd, 200, "OK", "{\"ok\":true}");
 }
 
-static void handle_post_goal_decompose(int client_fd, const HttpRequest* req) {
+static void handle_get_goal_load(int client_fd, User *user) {
+	if (!user) {
+		send_json_response(client_fd, 409, "Conflict",
+			"{\"ok\":false,\"error\":\"no_active_user\"}");
+		return;
+	}
+
+	for (size_t i = 0; i < user->journey_count; i++) {
+		Journey *j = FindJourneyByID(user->journeys[i]);
+		if (!j) continue;
+		char path[USER_DIRECTORY_SIZE];
+		GetUserJourneyPath(user, j->id, path);
+		if (access(path, R_OK) == 0)
+			LoadJourneyFromFile(j, path);
+	}
+
+	send_json_response(client_fd, 200, "OK", "{\"ok\":true}");
+}
+
+static void handle_post_goal_decompose(int client_fd, const HttpRequest* req, User *user) {
 	int goal_index_int = 0;
 	char goal_id[256];
 	Goal* goal = NULL;
@@ -1248,7 +1253,7 @@ static void handle_post_goal_decompose(int client_fd, const HttpRequest* req) {
 	}
 
 	if (json_get_int_field(req->body, "goalIndex", &goal_index_int) ||
-	    json_get_int_field(req->body, "globalIndex", &goal_index_int) ||
+	    json_get_int_field(req->body, "localIndex", &goal_index_int) ||
 	    json_get_int_field(req->body, "goal-index", &goal_index_int)) {
 
 		if (goal_index_int <= 0) {
@@ -1261,7 +1266,7 @@ static void handle_post_goal_decompose(int client_fd, const HttpRequest* req) {
 			return;
 		}
 
-		goal = ExternalFindGoal((size_t)goal_index_int);
+		goal = FindGoalGlobal((size_t)goal_index_int);
 	} else if (
 		json_get_string_field(req->body, "goal-id", goal_id, sizeof(goal_id)) ||
 		json_get_string_field(req->body, "goalId", goal_id, sizeof(goal_id)) ||
@@ -1298,7 +1303,7 @@ static void handle_post_goal_decompose(int client_fd, const HttpRequest* req) {
 		return;
 	}
 
-	result_json = serialize_goal_children_json(goal);
+	result_json = serialize_goal_children_json(goal, user);
 
 	if (!result_json) {
 		send_json_response(
@@ -1326,8 +1331,9 @@ static void handle_post_goal_status_action(
 	int client_fd,
 	const HttpRequest* req,
 	const char* event_type,
-	time_t (*action_fn)(Goal*),
-	const char* date_field_name
+	time_t (*action_fn)(Goal*, User*),
+	const char* date_field_name,
+	User *user
 ) {
 	char goal_id[GOAL_ID_LEN + 1];
 	char event_body[256];
@@ -1381,13 +1387,13 @@ static void handle_post_goal_status_action(
 		}
 	}
 
-	action_time = action_fn(goal);
+	action_time = action_fn(goal, user);
 	event_len = snprintf(
 		event_body,
 		sizeof(event_body),
 		"{\"goal-id\":\"%s\",\"goal_index\":%zu,\"%s\":%lld,\"start_date\":%lld,\"end_date\":%lld}",
 		goal_id,
-		goal->globalIndex,
+		goal->localIndex,
 		date_field_name,
 		(long long)action_time,
 		(long long)goal->start_date,
@@ -1404,7 +1410,7 @@ static void handle_post_goal_status_action(
 		sizeof(response_body),
 		"{\"ok\":true,\"goal-id\":\"%s\",\"goal_index\":%zu,\"at\":%lld,\"start_date\":%lld,\"end_date\":%lld}",
 		esc_goal_id,
-		goal->globalIndex,
+		goal->localIndex,
 		(long long)action_time,
 		(long long)goal->start_date,
 		(long long)goal->end_date
@@ -1593,9 +1599,10 @@ static void handle_post_dev_time_reset(int client_fd) {
 	);
 }
 
-static void handle_post_goal_create(int client_fd, const HttpRequest* req) {
+static void handle_post_goal_create(int client_fd, const HttpRequest* req, User *user) {
 	char title[256];
 	char extra_info[2048];
+	char journey_id[64];
 	char event_body[256];
 	char response_body[256];
 	char* esc_goal_id = NULL;
@@ -1607,6 +1614,7 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req) {
 
 	title[0] = '\0';
 	extra_info[0] = '\0';
+	journey_id[0] = '\0';
 
 	if (!req->body) {
 		send_json_response(
@@ -1639,9 +1647,12 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req) {
 		return;
 	}
 
-	printf("goal/create title=%s extraInfo=%s\n",
+	json_get_string_field(req->body, "journeyId", journey_id, sizeof(journey_id));
+
+	printf("goal/create title=%s extraInfo=%s journeyId=%s\n",
 	       title,
-	       extra_info);
+	       extra_info,
+	       journey_id);
 
 	InitString(&title_s, strlen(title) + 1);
 	InitString(&extra_info_s, strlen(extra_info) + 1);
@@ -1649,7 +1660,7 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req) {
 	CatString(&title_s, title, strlen(title));
 	CatString(&extra_info_s, extra_info, strlen(extra_info));
 
-	goal = CreateUserGoal(&title_s, &extra_info_s, start_ds_session);
+	goal = CreateUserGoal(&title_s, &extra_info_s, journey_id[0] ? journey_id : NULL, start_ds_session, user);
 
 	FreeString(&extra_info_s);
 	FreeString(&title_s);
@@ -1716,7 +1727,7 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req) {
 	);
 }
 
-static void handle_post_goal_repair(int client_fd, const HttpRequest* req) {
+static void handle_post_goal_repair(int client_fd, const HttpRequest* req, User *user) {
 	char goal_id[GOAL_ID_LEN + 1];
 	char repair_reason[2048];
 	char event_body[1024];
@@ -1776,7 +1787,7 @@ static void handle_post_goal_repair(int client_fd, const HttpRequest* req) {
 	InitString(&reason_s, strlen(repair_reason) + 1);
 	CatString(&reason_s, repair_reason, strlen(repair_reason));
 
-	repaired = RepairGoalBranch(target, &reason_s, start_ds_session);
+	repaired = RepairGoalBranch(target, &reason_s, start_ds_session, user);
 
 	FreeString(&reason_s);
 
@@ -1795,7 +1806,7 @@ static void handle_post_goal_repair(int client_fd, const HttpRequest* req) {
 		sizeof(event_body),
 		"{\"goal-id\":\"%s\",\"goal_index\":%zu}",
 		repaired->id,
-		repaired->globalIndex
+		repaired->localIndex
 	);
 
 	if (event_len > 0 && (size_t)event_len < sizeof(event_body)) {
@@ -1824,7 +1835,7 @@ static void handle_post_goal_repair(int client_fd, const HttpRequest* req) {
 	FreeString(&out);
 }
 
-static void handle_post_research_start(int client_fd, const HttpRequest* req) {
+static void handle_post_research_start(int client_fd, const HttpRequest* req, User *user) {
 	char research_id[MAX_STREAM_ID_LEN + 1];
 	char task_name[256];
 	int min_rounds = 0;
@@ -1899,7 +1910,7 @@ static void handle_post_research_start(int client_fd, const HttpRequest* req) {
 
 	ds_emit_event(research_id, "research_started", "deep search started", strlen("deep search started"));
 
-	start_ds_session(&task, research_id, &out);
+	start_ds_session(&task, research_id, &out, user);
 
 	send_response(
 		client_fd,
@@ -1914,7 +1925,7 @@ static void handle_post_research_start(int client_fd, const HttpRequest* req) {
 	FreeString(&task.name);
 }
 
-static void handle_post_message(int client_fd, const HttpRequest* req) {
+static void handle_post_message(int client_fd, const HttpRequest* req, User *user) {
 	char input[1024];
 	size_t input_size;
 	String inputS;
@@ -1948,7 +1959,7 @@ static void handle_post_message(int client_fd, const HttpRequest* req) {
 	InitString(&inputS, input_size + 1);
 	CatString(&inputS, input, input_size);
 
-	DecomposeInputIntoGraph(&inputS);
+	DecomposeInputIntoGraph(&inputS, user);
 
 	FreeString(&inputS);
 
@@ -1960,7 +1971,7 @@ static void handle_post_message(int client_fd, const HttpRequest* req) {
 	);
 }
 
-static void handle_post_middleware_message(int client_fd, const HttpRequest* req) {
+static void handle_post_middleware_message(int client_fd, const HttpRequest* req, User *user) {
 	char session_id[MAX_STREAM_ID_LEN + 1];
 	char input[4096];
 	MiddlewareResult result;
@@ -2012,7 +2023,7 @@ static void handle_post_middleware_message(int client_fd, const HttpRequest* req
 
 	printf("middleware/message sessionId=%s input=%s\n", session_id, input);
 
-	result = RunClientMiddleware(session_id, input, start_ds_session, middleware_emit_event);
+	result = RunClientMiddleware(session_id, input, start_ds_session, middleware_emit_event, user);
 
 	esc_message = json_escape_dup(result.assistant_message.p);
 	esc_type = json_escape_dup(result.response_type.p);
@@ -2037,7 +2048,7 @@ static void handle_post_middleware_message(int client_fd, const HttpRequest* req
 	FreeMiddlewareResult(&result);
 }
 
-static void handle_post_middleware_permission(int client_fd, const HttpRequest* req) {
+static void handle_post_middleware_permission(int client_fd, const HttpRequest* req, User *user) {
 	char permission_id[128];
 	int approved_int = 0;
 	_Bool ok;
@@ -2076,7 +2087,7 @@ static void handle_post_middleware_permission(int client_fd, const HttpRequest* 
 		return;
 	}
 
-	ok = ResolveMiddlewarePermission(permission_id, approved_int != 0, middleware_emit_event);
+	ok = ResolveMiddlewarePermission(permission_id, approved_int != 0, middleware_emit_event, user);
 	if (!ok) {
 		send_json_response(
 			client_fd,
@@ -2156,9 +2167,9 @@ static void handle_get_middleware_events(int client_fd, const char* full_path) {
 		middleware_emit_event(session_id, "sse_connected", "connected", strlen("connected"));
 }
 
-static void handle_get_session_goals(int client_fd) {
+static void handle_get_session_goals(int client_fd, User *user) {
 	size_t len = 0;
-	Goal **session = GetSessionGoals(&len);
+	Goal **session = GetSessionGoals(&len, user);
 	String out;
 
 	InitString(&out, 512 + len * 512);
@@ -2186,7 +2197,7 @@ static void handle_get_schedule(int client_fd) {
 	CatTemplateString(&out, "{\"ok\":true,\"count\":%zu,\"entries\":[", len);
 
 	for (size_t i = 0; i < len; i++) {
-		Goal* g = FindGoalFromIndex(entries[i].goalIndex);
+		Goal* g = FindGoalGlobal(entries[i].goalIndex);
 		char* esc_title = json_escape_dup(g ? c_str(&g->title) : "");
 
 		if (i > 0) CatString(&out, FSTRING_SIZE_PARAMS(","));
@@ -2257,7 +2268,7 @@ static void handle_bad_request(int client_fd) {
 }
 
 /* returns 1 if caller should keep socket open */
-static int handle_request(int client_fd, const HttpRequest* req) {
+static int handle_request(int client_fd, const HttpRequest* req, User *user) {
 	char path_only[256];
 	const char* query_unused = NULL;
 
@@ -2274,17 +2285,17 @@ static int handle_request(int client_fd, const HttpRequest* req) {
 	}
 
 	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/graph/export") == 0) {
-		handle_post_graph_export(client_fd);
+		handle_post_graph_export(client_fd, user);
 		return 0;
 	}
 
 	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/graph/load") == 0) {
-		handle_get_graph_load(client_fd);
+		handle_get_graph_load(client_fd, user);
 		return 0;
 	}
 
 	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/research/start") == 0) {
-		handle_post_research_start(client_fd, req);
+		handle_post_research_start(client_fd, req, user);
 		return 0;
 	}
 
@@ -2294,12 +2305,12 @@ static int handle_request(int client_fd, const HttpRequest* req) {
 	}
 
 	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/middleware/message") == 0) {
-		handle_post_middleware_message(client_fd, req);
+		handle_post_middleware_message(client_fd, req, user);
 		return 0;
 	}
 
 	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/middleware/permission") == 0) {
-		handle_post_middleware_permission(client_fd, req);
+		handle_post_middleware_permission(client_fd, req, user);
 		return 0;
 	}
 
@@ -2314,12 +2325,12 @@ static int handle_request(int client_fd, const HttpRequest* req) {
 	}
 
 	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/goal/create") == 0) {
-		handle_post_goal_create(client_fd, req);
+		handle_post_goal_create(client_fd, req, user);
 		return 0;
 	}
 
 	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/goal/repair") == 0) {
-		handle_post_goal_repair(client_fd, req);
+		handle_post_goal_repair(client_fd, req, user);
 		return 0;
 	}
 
@@ -2334,17 +2345,17 @@ static int handle_request(int client_fd, const HttpRequest* req) {
 	}
 
 	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/goal/session") == 0) {
-		handle_get_session_goals(client_fd);
+		handle_get_session_goals(client_fd, user);
 		return 0;
 	}
 
 	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/goal/export") == 0) {
-		handle_post_goal_export(client_fd);
+		handle_post_goal_export(client_fd, user);
 		return 0;
 	}
 
 	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/goal/load") == 0) {
-		handle_get_goal_load(client_fd);
+		handle_get_goal_load(client_fd, user);
 		return 0;
 	}
 
@@ -2382,7 +2393,7 @@ static int handle_request(int client_fd, const HttpRequest* req) {
 			return 0;
 		}
 
-		Goal* leaf = StartGoalDeepFromGoal(orig);
+		Goal* leaf = StartGoalDeepFromGoal(orig, user);
 		if (!leaf) {
 			send_json_response(client_fd, 409, "Conflict", "{\"ok\":false,\"error\":\"goal_not_startable\"}");
 			return 0;
@@ -2392,14 +2403,14 @@ static int handle_request(int client_fd, const HttpRequest* req) {
 
 		event_len = snprintf(event_body, sizeof(event_body),
 			"{\"goal-id\":\"%s\",\"goal_index\":%zu,\"start_date\":%lld,\"end_date\":%lld}",
-			leaf_id, leaf->globalIndex, (long long)leaf->start_date, (long long)leaf->end_date);
+			leaf_id, leaf->localIndex, (long long)leaf->start_date, (long long)leaf->end_date);
 		if (event_len > 0 && (size_t)event_len < sizeof(event_body))
 			goal_emit_event(leaf_id, "goal_started", event_body, (size_t)event_len);
 
 		esc_leaf_id = json_escape_dup(leaf_id);
 		response_len = snprintf(response_body, sizeof(response_body),
 			"{\"ok\":true,\"goal-id\":\"%s\",\"goal_index\":%zu,\"at\":%lld,\"start_date\":%lld,\"end_date\":%lld}",
-			esc_leaf_id, leaf->globalIndex, (long long)leaf->start_date, (long long)leaf->start_date, (long long)leaf->end_date);
+			esc_leaf_id, leaf->localIndex, (long long)leaf->start_date, (long long)leaf->start_date, (long long)leaf->end_date);
 		free(esc_leaf_id);
 
 		if (response_len < 0 || (size_t)response_len >= sizeof(response_body)) {
@@ -2412,17 +2423,17 @@ static int handle_request(int client_fd, const HttpRequest* req) {
 	}
 
 	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/goal/end") == 0) {
-		handle_post_goal_status_action(client_fd, req, "goal_ended", EndGoalFromGoal, "end_date");
+		handle_post_goal_status_action(client_fd, req, "goal_ended", EndGoalFromGoal, "end_date", user);
 		return 0;
 	}
 
 	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/goal/decompose") == 0) {
-		handle_post_goal_decompose(client_fd, req);
+		handle_post_goal_decompose(client_fd, req, user);
 		return 0;
 	}
 
 	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/message") == 0) {
-		handle_post_message(client_fd, req);
+		handle_post_message(client_fd, req, user);
 		return 0;
 	}
 
@@ -2435,7 +2446,7 @@ static int handle_request(int client_fd, const HttpRequest* req) {
 	return 0;
 }
 
-static void handle_client(int client_fd) {
+static void handle_client(int client_fd, User *user) {
 	HttpRequest req;
 	int keep_open = 0;
 
@@ -2445,7 +2456,7 @@ static void handle_client(int client_fd) {
 		return;
 	}
 
-	keep_open = handle_request(client_fd, &req);
+	keep_open = handle_request(client_fd, &req, user);
 	free_http_request(&req);
 
 	if (!keep_open) {
@@ -2456,7 +2467,7 @@ static void handle_client(int client_fd) {
 /* ========================= SERVER THREAD ========================= */
 
 static void* server_thread_main(void* arg) {
-	(void)arg;
+	User *user = (User *)arg;
 
 	while (1) {
 		struct sockaddr_in client_addr;
@@ -2486,7 +2497,7 @@ static void* server_thread_main(void* arg) {
 			continue;
 		}
 
-		handle_client(client_fd);
+		handle_client(client_fd, user);
 		prune_dead_sse_clients();
 	}
 
@@ -2495,10 +2506,12 @@ static void* server_thread_main(void* arg) {
 
 /* ========================= PUBLIC API ========================= */
 
-void start_server(int port) {
+void start_server(int port, User *user) {
 	struct sockaddr_in addr;
+	socklen_t addr_len = sizeof(addr);
 	int opt = 1;
 	int rc;
+	int bound_port = 0;
 
 	/*
 	 * Critical for SSE:
@@ -2547,6 +2560,14 @@ void start_server(int port) {
 		return;
 	}
 
+	/* Resolve ephemeral port when caller passed 0. */
+	if (getsockname(server_fd, (struct sockaddr*)&addr, &addr_len) == 0)
+		bound_port = ntohs(addr.sin_port);
+	else
+		bound_port = port;
+
+	server_port = bound_port;
+
 	if (listen(server_fd, SERVER_BACKLOG) < 0) {
 		perror("listen");
 		close(server_fd);
@@ -2558,7 +2579,7 @@ void start_server(int port) {
 
 	started = 1;
 
-	rc = pthread_create(&server_thread, NULL, server_thread_main, NULL);
+	rc = pthread_create(&server_thread, NULL, server_thread_main, user);
 	if (rc != 0) {
 		started = 0;
 		close(server_fd);
@@ -2570,7 +2591,8 @@ void start_server(int port) {
 
 	pthread_mutex_unlock(&server_lock);
 
-	printf("Server listening on http://127.0.0.1:%d\n", port);
+	printf("Client server (user=%s) listening on http://127.0.0.1:%d\n",
+		user && user->name.p ? user->name.p : "?", bound_port);
 }
 
 void stop_server(void) {
@@ -2588,6 +2610,7 @@ void stop_server(void) {
 	started = 0;
 	local_fd = server_fd;
 	server_fd = -1;
+	server_port = 0;
 	need_join = 1;
 
 	pthread_mutex_unlock(&server_lock);

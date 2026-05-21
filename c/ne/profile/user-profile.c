@@ -1,18 +1,17 @@
 #include "user-profile.h"
 
 #include "util.h"
-#include "user-management.c"
+#include "user-management.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 // AI GENERATED Mostly
 
-static void init_profile_file_if_missing(void)
+static void init_profile_file_if_missing(User *u)
 {
-	char directory[256];
-	GetUserProfileExportPath(LocalUser ,directory);
-	
+	char directory[USER_DIRECTORY_SIZE];
+	GetUserProfileExportPath(u, directory);
 
 	size_t len = 0;
 	char *existing = readFile(directory, &len);
@@ -56,15 +55,15 @@ static void slice_between_markers(
 	CatString(out, (char *)start, (size_t)(end - start));
 }
 
-static void read_profile_sections(String *inputs, String *goals, String *derived)
+static void read_profile_sections(User *u, String *inputs, String *goals, String *derived)
 {
-	char directory[256];
-	GetUserProfileExportPath(LocalUser, directory);
+	char directory[USER_DIRECTORY_SIZE];
+	GetUserProfileExportPath(u, directory);
 
 	size_t len = 0;
 	char *file_data = NULL;
 
-	init_profile_file_if_missing();
+	init_profile_file_if_missing(u);
 	file_data = readFile(directory, &len);
 	if (!file_data)
 		return;
@@ -76,10 +75,10 @@ static void read_profile_sections(String *inputs, String *goals, String *derived
 	free(file_data);
 }
 
-static void write_profile_sections(String *inputs, String *goals, String *derived)
+static void write_profile_sections(User *u, String *inputs, String *goals, String *derived)
 {
-	char directory[256];
-	GetUserProfileExportPath(LocalUser, directory);
+	char directory[USER_DIRECTORY_SIZE];
+	GetUserProfileExportPath(u, directory);
 
 	String out;
 	InitString(&out, inputs->len + goals->len + derived->len + 512);
@@ -289,17 +288,20 @@ static void append_goal_record(String *goals, const char *event_type, Goal *goal
 	free(esc_event);
 }
 
-void UserProfileRecordInput(const char *source, const char *text)
+void UserProfileRecordInput(User *u, const char *source, const char *text)
 {
 	String inputs, goals, derived;
 	UserProfileDerivedState state;
+
+	if (!u)
+		return;
 
 	InitString(&inputs, 1024);
 	InitString(&goals, 1024);
 	InitString(&derived, 1024);
 	derived_state_init(&state);
 
-	read_profile_sections(&inputs, &goals, &derived);
+	read_profile_sections(u, &inputs, &goals, &derived);
 	parse_derived_state(&derived, &state);
 
 	time_t now = change_time_now();
@@ -314,7 +316,7 @@ void UserProfileRecordInput(const char *source, const char *text)
 		CatString(&state.latest_input, (char *)text, strlen(text));
 
 	write_derived_state(&derived, &state);
-	write_profile_sections(&inputs, &goals, &derived);
+	write_profile_sections(u, &inputs, &goals, &derived);
 
 	derived_state_free(&state);
 	FreeString(&derived);
@@ -333,7 +335,7 @@ static void copy_derived_line_if_not_key(String *out, const char *line, const ch
 	CatFixed(out, "\n");
 }
 
-static void rewrite_derived_field(const char *key, const char *value, _Bool keep_field)
+static void rewrite_derived_field(User *u, const char *key, const char *value, _Bool keep_field)
 {
 	String inputs, goals, derived, new_derived;
 	char *cursor = NULL;
@@ -343,12 +345,15 @@ static void rewrite_derived_field(const char *key, const char *value, _Bool keep
 
 	change_assert(key && *key, "Derived profile field key must not be empty.\n");
 
+	if (!u)
+		return;
+
 	InitString(&inputs, 1024);
 	InitString(&goals, 1024);
 	InitString(&derived, 1024);
 	InitString(&new_derived, 1024);
 
-	read_profile_sections(&inputs, &goals, &derived);
+	read_profile_sections(u, &inputs, &goals, &derived);
 
 	if (derived.len > 0) {
 		cursor = malloc(derived.len + 1);
@@ -382,7 +387,7 @@ static void rewrite_derived_field(const char *key, const char *value, _Bool keep
 		free(esc_value);
 	}
 
-	write_profile_sections(&inputs, &goals, &new_derived);
+	write_profile_sections(u, &inputs, &goals, &new_derived);
 
 	FreeString(&new_derived);
 	FreeString(&derived);
@@ -390,14 +395,14 @@ static void rewrite_derived_field(const char *key, const char *value, _Bool keep
 	FreeString(&inputs);
 }
 
-void UserProfileSetDerivedField(const char *key, const char *value)
+void UserProfileSetDerivedField(User *u, const char *key, const char *value)
 {
-	rewrite_derived_field(key, value, 1);
+	rewrite_derived_field(u, key, value, 1);
 }
 
-void UserProfileClearDerivedField(const char *key)
+void UserProfileClearDerivedField(User *u, const char *key)
 {
-	rewrite_derived_field(key, "", 0);
+	rewrite_derived_field(u, key, "", 0);
 }
 
 static void append_last_lines(String *src, size_t max_entries, String *out)
@@ -430,17 +435,23 @@ static void append_last_lines(String *src, size_t max_entries, String *out)
 	CatString(out, src->p + start, src->len - start);
 }
 
-void SerializeUserProfileHistorySection(const char *section, size_t max_entries, String *out)
+void SerializeUserProfileHistorySection(User *u, const char *section, size_t max_entries, String *out)
 {
 	String inputs, goals, derived;
 	const char *normalized = section ? section : "";
 
 	change_assert(out, "SerializeUserProfileHistorySection requires output string.\n");
 
+	if (!u) {
+		EmptyString(out);
+		CatFixed(out, "No active user.\n");
+		return;
+	}
+
 	InitString(&inputs, 1024);
 	InitString(&goals, 1024);
 	InitString(&derived, 1024);
-	read_profile_sections(&inputs, &goals, &derived);
+	read_profile_sections(u, &inputs, &goals, &derived);
 
 	EmptyString(out);
 
@@ -459,16 +470,22 @@ void SerializeUserProfileHistorySection(const char *section, size_t max_entries,
 	FreeString(&inputs);
 }
 
-void SerializeUserProfileDerivedSummary(String *out)
+void SerializeUserProfileDerivedSummary(User *u, String *out)
 {
 	String inputs, goals, derived;
 
 	change_assert(out, "SerializeUserProfileDerivedSummary requires output string.\n");
 
+	if (!u) {
+		EmptyString(out);
+		CatFixed(out, "No active user.\n");
+		return;
+	}
+
 	InitString(&inputs, 1024);
 	InitString(&goals, 1024);
 	InitString(&derived, 1024);
-	read_profile_sections(&inputs, &goals, &derived);
+	read_profile_sections(u, &inputs, &goals, &derived);
 
 	EmptyString(out);
 	CatFixed(out, "Automated MVP user-profile summary:\n");
@@ -483,13 +500,13 @@ void SerializeUserProfileDerivedSummary(String *out)
 	FreeString(&inputs);
 }
 
-void UserProfileRecordGoalEvent(const char *event_type, Goal *goal, const char *details)
+void UserProfileRecordGoalEvent(User *u, const char *event_type, Goal *goal, const char *details)
 {
 	String inputs, goals, derived;
 	UserProfileDerivedState state;
 	time_t now = change_time_now();
 
-	if (!goal || !event_type)
+	if (!u || !goal || !event_type)
 		return;
 
 	InitString(&inputs, 1024);
@@ -497,7 +514,7 @@ void UserProfileRecordGoalEvent(const char *event_type, Goal *goal, const char *
 	InitString(&derived, 1024);
 	derived_state_init(&state);
 
-	read_profile_sections(&inputs, &goals, &derived);
+	read_profile_sections(u, &inputs, &goals, &derived);
 	parse_derived_state(&derived, &state);
 
 	append_goal_record(&goals, event_type, goal, details, now);
@@ -527,7 +544,7 @@ void UserProfileRecordGoalEvent(const char *event_type, Goal *goal, const char *
 	}
 
 	write_derived_state(&derived, &state);
-	write_profile_sections(&inputs, &goals, &derived);
+	write_profile_sections(u, &inputs, &goals, &derived);
 
 	derived_state_free(&state);
 	FreeString(&derived);

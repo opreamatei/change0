@@ -68,6 +68,7 @@ target_link_libraries(ui PUBLIC
     user-management
     goal
     http-server
+    central-server
     globals
 )
 
@@ -182,6 +183,7 @@ target_include_directories(aiaction PUBLIC
     ${CMAKE_SOURCE_DIR}/c/ne/search
     ${CMAKE_SOURCE_DIR}/c/ne/goal
     ${CMAKE_SOURCE_DIR}/c/ne
+    ${CMAKE_SOURCE_DIR}/c/srv
 )
 target_link_libraries(aiaction PUBLIC
     jsonp
@@ -260,19 +262,39 @@ target_link_libraries(userprofile PUBLIC
 	jsonp
 )
 
+add_dependencies(userprofile user-management)
+
 add_library(http-server SHARED ${CMAKE_SOURCE_DIR}/c/srv/http-server.c)
 target_include_directories(http-server PUBLIC
 	${CMAKE_SOURCE_DIR}/c
 	${CMAKE_SOURCE_DIR}/c/ne
 	${CMAKE_SOURCE_DIR}/c/lib/util
+	${CMAKE_SOURCE_DIR}/c/lib/jsonp
+	${CMAKE_SOURCE_DIR}/c/srv
 )
-target_link_libraries(http-server PUBLIC 
+target_link_libraries(http-server PUBLIC
 	node
 	graphexport
 	util
 	goal
 	inputprocessor
 	middleware
+	user-management
+	pthread
+)
+
+add_library(central-server SHARED ${CMAKE_SOURCE_DIR}/c/srv/central-server.c)
+target_include_directories(central-server PUBLIC
+	${CMAKE_SOURCE_DIR}/c
+	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/lib/util
+	${CMAKE_SOURCE_DIR}/c/lib/jsonp
+)
+target_link_libraries(central-server PUBLIC
+	util
+	jsonp
+	user-management
+	http-server
 	pthread
 )
 
@@ -308,10 +330,14 @@ target_link_libraries(goal-util PUBLIC util globals jsonp)
 add_library(journey SHARED ${CMAKE_SOURCE_DIR}/c/srv/journey.c)
 target_include_directories(journey PUBLIC
 	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/ne
 	${CMAKE_SOURCE_DIR}/c/ne/goal
 	${CMAKE_SOURCE_DIR}/c/lib/util
+	${CMAKE_SOURCE_DIR}/c/lib/jsonp
+	${CMAKE_SOURCE_DIR}/c/lib/hd
+	${CMAKE_SOURCE_DIR}/c
 )
-target_include_directories(journey PUBLIC util goal)
+target_link_libraries(journey PUBLIC util)
 
 add_library(goal-info SHARED ${CMAKE_SOURCE_DIR}/c/ne/goal/goal-info.c)
 target_include_directories(goal-info 
@@ -333,13 +359,14 @@ target_include_directories(goal-ai
 target_link_libraries(goal-ai PUBLIC util goal-info openai deepsearchsession)
 
 add_library(user-management SHARED ${CMAKE_SOURCE_DIR}/c/srv/user-management.c)
-target_include_directories(user-management PUBLIC 
+target_include_directories(user-management PUBLIC
 	${CMAKE_SOURCE_DIR}/c/srv
 	${CMAKE_SOURCE_DIR}/c
 	${CMAKE_SOURCE_DIR}/c/lib/util
+	${CMAKE_SOURCE_DIR}/c/lib/jsonp
 	${CMAKE_SOURCE_DIR}/c/ne/goal
 	)
-target_include_directories(user-management PUBLIC util journey goal)
+target_link_libraries(user-management PUBLIC util journey)
 
 add_executable(change ${CMAKE_SOURCE_DIR}/c/main.c)
 target_include_directories(change PRIVATE
@@ -353,10 +380,10 @@ target_include_directories(change PRIVATE
 target_link_libraries(
 	change PRIVATE
 
-	hd jsonp node util ui 
-	graphexport search deepsearchsession 
-	deepsearchexecute openai 
-	mockopenai mocks aiaction json2graph 
-	graphengine inputprocessor http-server
+	hd jsonp node util ui
+	graphexport search deepsearchsession
+	deepsearchexecute openai
+	mockopenai mocks aiaction json2graph
+	graphengine inputprocessor http-server central-server
 	goal
 )

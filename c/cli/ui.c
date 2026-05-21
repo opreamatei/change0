@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include "json-to-graph.h"
 #include "node.h"
-#include "user-management.c"
+#include "user-management.h"
 #include "util.h"
 #include "json.h"
 #include "mockopenai.h"
@@ -17,6 +17,7 @@
 #include <termios.h>
 #include <string.h>
 #include "srv/http-server.h"
+#include "srv/central-server.h"
 #include "globals.h"
 #include "goal/goal.h"
 
@@ -52,7 +53,13 @@ static void SetUpContexts(){
 	}
 }
 
+static User *cli_user = NULL;
+
 void UIStart(){
+	InitUserSystem();
+
+	cli_user = USER_COUNT > 0 ? &USER_TABLE[0] : NULL;
+
 	InitNodes();
 	SetUpContexts();
 	InitGlobalPointerMap();
@@ -62,6 +69,56 @@ void UIStart(){
 	SetGlobalPointerF("goal_emit", &goal_emit_event);
 
 	InitGoalSystem();
+}
+
+static User *prompt_select_or_create_user(void)
+{
+	clear();
+	printf("Active users in user-data/:\n\n");
+	for (size_t i = 0; i < USER_COUNT; i++) {
+		User *u = &USER_TABLE[i];
+		printf("  [%zu] %s  (%s)\n", i + 1, u->name.p ? u->name.p : "?", u->id);
+	}
+	printf("  [n] create new user\n\n");
+	printf("Choose: ");
+
+	char *line = NULL;
+	size_t cap = 0;
+	int len = mygetline(&line, &cap, stdin);
+	if (len <= 0) {
+		if (line) free(line);
+		return cli_user;
+	}
+	trim_newline_inplace(line);
+
+	User *chosen = NULL;
+	if (line[0] == 'n' || line[0] == 'N') {
+		printf("New user name: ");
+		char *name_raw = NULL;
+		size_t name_cap = 0;
+		int name_len = mygetline(&name_raw, &name_cap, stdin);
+		if (name_len > 0) {
+			trim_newline_inplace(name_raw);
+			String name;
+			InitString(&name, strlen(name_raw) + 1);
+			CatString(&name, name_raw, strlen(name_raw));
+			chosen = NewUser(&name);
+			FreeString(&name);
+		}
+		if (name_raw) free(name_raw);
+	} else {
+		size_t idx = (size_t)strtoul(line, NULL, 10);
+		if (idx >= 1 && idx <= USER_COUNT)
+			chosen = &USER_TABLE[idx - 1];
+	}
+
+	free(line);
+
+	if (!chosen)
+		chosen = &USER_TABLE[0];
+
+	cli_user = chosen;
+	return chosen;
 }
 
 static void Run(int i){
@@ -83,7 +140,7 @@ static void Run(int i){
 				String input; InitString(&input, input_size + 1);
 				CatString(&input, input_raw, input_size);
 
-				DecomposeInputIntoGraph(&input);
+				DecomposeInputIntoGraph(&input, cli_user);
 
 				FreeString(&input);
 			}
@@ -94,14 +151,12 @@ static void Run(int i){
 
 	if (options[i].type == SAVEGRAPH){
 		char directory[USER_DIRECTORY_SIZE];
-		GetUserGraphExportPath(LocalUser, directory);
+		GetUserGraphExportPath(cli_user, directory);
 		ExportGraphTo(directory);
 	}
 
 	if (options[i].type == SAVEGOALS){
-		char directory[USER_DIRECTORY_SIZE];
-		GetUserGoalExportPath(LocalUser, directory);
-		ExportGoalsTo(directory);
+		SaveUser(cli_user);
 	}
 
 	if (options[i].type == DEEPRESEARCH){
@@ -124,7 +179,7 @@ static void Run(int i){
 		if (input_raw) free(input_raw);
 		
 		String out; InitString(&out, 2048);
-		start_ds_session(&task, "default", &out);
+		start_ds_session(&task, "default", &out, cli_user);
 
 		printf("See result in:\n\n%s%s\n", PROJECT_ROOT, "deep-search-result.txt");
 		dump_to_file(PROJECT_ROOT "deep-search-result.txt", out.p, out.len);
@@ -136,11 +191,23 @@ static void Run(int i){
 		RegenMocksOpenAI();
 
 	if (options[i].type == STARTSERVER){
-		start_server(HTTP_SERVER_PORT);
-		printf("Server is up and running...\n\n");
+		start_central_server(CENTRAL_SERVER_PORT);
+		printf("Central server is up. Press enter to stop.\n\n");
+		WaitForInput();
+		stop_central_server();
+		printf("Central server stopped, press enter to continue\n");
+		WaitForInput();
+	}
+
+	if (options[i].type == STARTCLIENTSERVER){
+		User *u = prompt_select_or_create_user();
+		start_server(0, u);
+		printf("\nClient server is up on port %d (user: %s). Press enter to stop.\n\n",
+			client_server_port(),
+			u && u->name.p ? u->name.p : "?");
 		WaitForInput();
 		stop_server();
-		printf("You stopped the server, press enter to continue\n");
+		printf("Client server stopped, press enter to continue\n");
 		WaitForInput();
 	}
 
@@ -160,7 +227,7 @@ static void Run(int i){
 		String input0; InitString(&input0, input_size0 + 1);
 		String input1; InitString(&input1, input_size1 + 1);
 
-		Goal *g = CreateUserGoal(&input0, &input1, start_ds_session);
+		Goal *g = CreateUserGoal(&input0, &input1, NULL, start_ds_session, cli_user);
 
 		FreeString(&input0);
 		FreeString(&input1);
@@ -228,7 +295,10 @@ void UILoop(){
 }
 
 void UIKill(){
+	stop_server();
+	stop_central_server();
 	FreeNodes();
 	FreeGlobalPointerMap();
 	FreeGoals();
+	FreeUserSystem();
 }

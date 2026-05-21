@@ -1,5 +1,5 @@
 import {
-  SERVER_BASE_URL,
+  getClientBaseUrl,
   buildGoalEndUrl,
   buildGoalDecomposeUrl,
   buildGoalListUrl,
@@ -21,7 +21,7 @@ export interface GoalInit {
   parent: number | null
   prev: number | null
   next: number | null
-  globalIndex: number
+  localIndex: number
   depth: number
   retryDepth: number
   priority: number
@@ -38,7 +38,7 @@ export interface GoalStatusActionPayload {
 
 export interface GoalListResponseItem {
   id: string
-  globalIndex: number
+  localIndex: number
   title: string
   extra_info: string
   start_date: number
@@ -102,7 +102,7 @@ export class Goal implements GoalInit {
     'parent',
     'prev',
     'next',
-    'globalIndex',
+    'localIndex',
     'depth',
     'retryDepth',
     'priority',
@@ -120,7 +120,7 @@ export class Goal implements GoalInit {
   parent: number | null
   prev: number | null
   next: number | null
-  globalIndex: number
+  localIndex: number
   depth: number
   retryDepth: number
   priority: number
@@ -138,7 +138,7 @@ export class Goal implements GoalInit {
     this.parent = init.parent
     this.prev = init.prev
     this.next = init.next
-    this.globalIndex = init.globalIndex
+    this.localIndex = init.localIndex
     this.depth = init.depth
     this.retryDepth = init.retryDepth
     this.priority = init.priority
@@ -162,7 +162,7 @@ export class Goal implements GoalInit {
       parent: item.parent > 0 ? item.parent : null,
       prev: item.prev > 0 ? item.prev : null,
       next: item.next > 0 ? item.next : null,
-      globalIndex: item.globalIndex,
+      localIndex: item.localIndex,
       depth: item.depth,
       retryDepth: item.retry_depth,
       priority: item.priority,
@@ -170,10 +170,10 @@ export class Goal implements GoalInit {
   }
 
   toDecomposePayload(): GoalDecomposePayload {
-    return { goalIndex: this.globalIndex }
+    return { goalIndex: this.localIndex }
   }
 
-  static decomposeUrl(baseUrl = SERVER_BASE_URL) {
+  static decomposeUrl(baseUrl = getClientBaseUrl() ?? '') {
     return buildGoalDecomposeUrl(baseUrl)
   }
 
@@ -196,8 +196,8 @@ export interface GoalEdge {
   relation: GoalRelation
 }
 
-export function findGoalByGlobalIndex(goals: Goal[], globalIndex: number) {
-  return goals.find((goal) => goal.globalIndex === globalIndex) ?? null
+export function findGoalByGlobalIndex(goals: Goal[], localIndex: number) {
+  return goals.find((goal) => goal.localIndex === localIndex) ?? null
 }
 
 export function findGoalById(goals: Goal[], id: string) {
@@ -235,7 +235,7 @@ export function formatGoalDate(value: number | null) {
   return date.toLocaleString()
 }
 
-export async function loadGoalsFromServer(baseUrl = SERVER_BASE_URL) {
+export async function loadGoalsFromServer(baseUrl = getClientBaseUrl() ?? '') {
   const response = await fetch(buildGoalListUrl(baseUrl), {
     method: 'GET',
     cache: 'no-store',
@@ -251,8 +251,8 @@ export async function loadGoalsFromServer(baseUrl = SERVER_BASE_URL) {
 
   return items
     .filter((item) => {
-      if (seen.has(item.globalIndex)) return false
-      seen.add(item.globalIndex)
+      if (seen.has(item.localIndex)) return false
+      seen.add(item.localIndex)
       return true
     })
     .map(Goal.fromServer)
@@ -277,15 +277,15 @@ async function postGoalStatusAction(url: string, payload: GoalStatusActionPayloa
   return (await response.json()) as GoalStatusActionResponse
 }
 
-export async function startGoalOnServer(goal: Goal, baseUrl = SERVER_BASE_URL) {
-  return postGoalStatusAction(buildGoalStartUrl(baseUrl), { goalId: goal.id, goalIndex: goal.globalIndex })
+export async function startGoalOnServer(goal: Goal, baseUrl = getClientBaseUrl() ?? "") {
+  return postGoalStatusAction(buildGoalStartUrl(baseUrl), { goalId: goal.id, goalIndex: goal.localIndex })
 }
 
-export async function endGoalOnServer(goal: Goal, baseUrl = SERVER_BASE_URL) {
-  return postGoalStatusAction(buildGoalEndUrl(baseUrl), { goalId: goal.id, goalIndex: goal.globalIndex })
+export async function endGoalOnServer(goal: Goal, baseUrl = getClientBaseUrl() ?? "") {
+  return postGoalStatusAction(buildGoalEndUrl(baseUrl), { goalId: goal.id, goalIndex: goal.localIndex })
 }
 
-export async function repairGoalOnServer(goal: Goal, reason: string, baseUrl = SERVER_BASE_URL) {
+export async function repairGoalOnServer(goal: Goal, reason: string, baseUrl = getClientBaseUrl() ?? "") {
   const response = await fetch(`${baseUrl}/goal/repair`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -302,7 +302,7 @@ export async function repairGoalOnServer(goal: Goal, reason: string, baseUrl = S
 export function applyGoalEvent(goals: Goal[], goalId: string, payload: GoalEventPayload) {
   return goals.map((goal) => {
     const goalIndex = payload.goal_index
-    const matchesGoal = goalIndex ? goal.globalIndex === goalIndex : goal.id === goalId
+    const matchesGoal = goalIndex ? goal.localIndex === goalIndex : goal.id === goalId
 
     if (!matchesGoal) {
       return goal
@@ -515,11 +515,11 @@ export function createMockGoals(template: MockGoalTemplate): Goal[] {
     parent: number | null,
     siblingPosition: number,
   ): number {
-    const globalIndex = nextGlobalIndex++
+    const localIndex = nextGlobalIndex++
     const childIndexes: number[] = []
 
     const goal = new Goal({
-      id: `mock-goal-${globalIndex}`,
+      id: `mock-goal-${localIndex}`,
       title: node.title,
       extraInfo: node.extraInfo ?? '',
       startDate: node.startDate ?? null,
@@ -531,7 +531,7 @@ export function createMockGoals(template: MockGoalTemplate): Goal[] {
       parent,
       prev: null,
       next: null,
-      globalIndex,
+      localIndex,
       depth,
       retryDepth: 0,
       priority: node.priority ?? Math.max(1, 100 - depth * 10 - siblingPosition),
@@ -542,7 +542,7 @@ export function createMockGoals(template: MockGoalTemplate): Goal[] {
     const children = node.children ?? []
 
     for (let i = 0; i < children.length; i += 1) {
-      const childIndex = visit(children[i], depth + 1, globalIndex, i)
+      const childIndex = visit(children[i], depth + 1, localIndex, i)
       childIndexes.push(childIndex)
     }
 
@@ -556,7 +556,7 @@ export function createMockGoals(template: MockGoalTemplate): Goal[] {
 
     goal.subgoals = childIndexes
 
-    return globalIndex
+    return localIndex
   }
 
   visit(template, 0, null, 0)
@@ -583,7 +583,7 @@ export interface PreparedGoalNode {
   progress: number
   parentIndex: number
   groupId: number
-  globalIndex: number
+  localIndex: number
 }
 
 export interface InteractionNode {
@@ -596,7 +596,7 @@ export interface InteractionNode {
   progress: number
   parentId: number | null
   parentIndex: number
-  globalIndex: number
+  localIndex: number
 }
 
 export interface PrepareGoalMapOptions {

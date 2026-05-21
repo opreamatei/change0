@@ -3,20 +3,24 @@
 
 #include <stddef.h>
 #include <time.h>
+#include <string.h>
 #include "config.h"
 #include "node.h"
 #include "util.h"
+#include "globals.h"
+
+/* Forward declaration — callers that need the full struct include user-management.h directly. */
+typedef struct UserType User;
 
 #define GOAL_REQUIRED_TIME_ERROR_MARGIN 0.5
-#define INITIAL_GOAL_INDEX 1 // must be > 0
+#define INITIAL_GOAL_INDEX 1 /* must be > 0 */
 #define GOAL_ID_SIZE 32
 #define GOAL_MIN_SECONDS 60 * 16
 
 typedef _Bool (*goal_emit_like_func)(const char* id, const char *type, const char *buffer, size_t buffer_len);
-
+typedef const char* (*journey_str_func)(const char *id);
 typedef char goalIDType[GOAL_ID_SIZE + 1];
-
-typedef void (start_ds_session_like_func)(Task *task, char* id, String* out);
+typedef void (start_ds_session_like_func)(Task *task, char* id, String* out, User *user);
 
 typedef struct GoalType {
 	String title;
@@ -35,43 +39,40 @@ typedef struct GoalType {
 
 	time_t minPauseToNext;
 	time_t pauseToNext;
-	
-	size_t globalIndex;
+
+	size_t localIndex;
 	size_t depth;
 	size_t retry_depth;
 
 	size_t priority;
 
 	goalIDType id;
+	char journey_id[33]; /* ID of the journey this root goal belongs to; empty for sub-goals */
 } Goal;
+
+/* Second param changed from string goal_id to Goal* so callers pass the pointer directly. */
+typedef void (*journey_add_root_func)(const char *journey_id, Goal *g);
 
 enum GOAL_STATUS {
 	GOAL_VALID=0,
 	GOAL_INVALID
 };
 
-extern Goal *GOAL_CONTAINER[1024];
-extern size_t GOAL_CONTAINER_COUNT;
-
-static inline Goal *FindGoalFromIndex(size_t index)
-{
-    if (index == 0 || index >= GOAL_CONTAINER_COUNT)
-        return NULL;
-
-    return GOAL_CONTAINER[index];
+static inline void link_goals(Goal *a, Goal *b) {
+	a->next = b->localIndex;
+	b->prev = a->localIndex;
 }
 
-static inline void link_goals(Goal* a, Goal* b){
-	a->next = b->globalIndex;
-	b->prev = a->globalIndex;
-}
-
-static void create_goal_task(String* input1, String* input2, String *feedback, Task *task){
+static void create_goal_task(String* input1, String* input2, String *feedback, Task *task, const char *journey_title, const char *journey_info){
 	size_t feedback_len = feedback ? feedback->len : 0;
-	ResizeString(&task->name, sizeof(GOAL_ADAPTATION_PROMPT) + input1->len + input2->len + feedback_len + 32);
+	size_t jt_len = journey_title ? strlen(journey_title) : 0;
+	size_t ji_len = journey_info  ? strlen(journey_info)  : 0;
+	ResizeString(&task->name, sizeof(GOAL_ADAPTATION_PROMPT) + jt_len + ji_len + input1->len + input2->len + feedback_len + 32);
 	size_t new_len = sprintf(
 		c_str(&task->name),
 		GOAL_ADAPTATION_PROMPT,
+		journey_title ? journey_title : DEFAULT_JOURNEY_TITLE,
+		journey_info  ? journey_info  : DEFAULT_JOURNEY_EXTRA_INFO,
 		c_str(input1),
 		c_str(input2),
 		feedback ? c_str(feedback) : ""
@@ -79,26 +80,31 @@ static void create_goal_task(String* input1, String* input2, String *feedback, T
 	cassert(new_len < task->name.cap, "This should be impossible...\n");
 
 	task->name.len = new_len;
-		
+
 	task->minDepth = 1;
-} 
+}
+
+/* Implemented in journey.c; declared here so goal files can use without a circular include. */
+Goal *FindGoalFromIndex(const char *journey_id, size_t index);
+Goal *FindGoalGlobal(size_t index);
+Goal **GetGoalsSorted(size_t *out_count);
+void ClearAllJourneyGoals(void);
+void RemoveGoalFromJourneys(Goal *g);
 
 void GoalSystemLazyLoad(goal_emit_like_func *goal_emit);
+void JourneySystemLazyLoad(journey_str_func *title, journey_str_func *info);
 void CreateSubgoalId(Goal *parent, size_t child_index, char out[33]);
-Goal *CreateGoal(char goalId[], String *input_goal, String *input_extrainfo, size_t estimated_time, size_t parent_index, size_t depth);
-Goal *ExternalFindGoal(size_t id);
+Goal *CreateGoal(char goalId[], String *input_goal, String *input_extrainfo, size_t estimated_time, size_t parent_index, size_t depth, const char *journey_id);
 
 time_t CalcGoalRequiredTime(Goal *g);
 enum GOAL_STATUS ValidateGoal(Goal *g, time_t now);
 void CreateGoalDSId(char* name, char* deep_search_id);
-void PersonalizeGoal(String* input1, String *input2, String* out, char* goalId, String *feedback, start_ds_session_like_func start_ds_session);
+void PersonalizeGoal(String* input1, String *input2, String* out, char* goalId, String *feedback, start_ds_session_like_func start_ds_session, const char *journey_id, User *user);
 
-Goal **GetGoalsContainer(size_t *len);
 Goal *CalcGoalRoot(Goal *g);
 Goal *FindGoalByID(goalIDType id);
+void SerializeGoalList(Goal **goals, size_t count, String *buffer);
 void SerializeAllGoals(String *buffer);
-void ExportGoalsTo(char* path);
-void LoadGoalsFromFile(char* path);
 
 Goal** GetLeafDueGoals(size_t *size);
 

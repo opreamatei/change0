@@ -7,6 +7,8 @@
 #include "deep-search-session.h"
 #include "goal-info.h"
 
+static journey_str_func journey_get_title = NULL;
+
 static void AICallExtractionGoalSchema(String *input, String *out, String* feedback)
 {
     String prompt;
@@ -166,7 +168,7 @@ void SetGoalShortenPrompt(Goal* g, String* prompt, time_t now){
 	FreeString(&goal_brothers_chain);
 }
 
-void SetGoalDecompositionPrompt(Goal* g, String* prompt, time_t now){
+void SetGoalDecompositionPrompt(Goal* g, String* prompt, time_t now, User *user){
 	time_t old_required_time = g->required_time;
 
 	time_t estimated_end_date = g->start_date + old_required_time;
@@ -200,7 +202,21 @@ void SetGoalDecompositionPrompt(Goal* g, String* prompt, time_t now){
 	InitString(&task.name, 2048);
 	CatTemplateString(&task.name, GOAL_DECOMPOSITION_PERSONAL_CONTEXT_PROMPT, g->title.p, g->extra_info.p, goal_parent_chain.p);
 
-	start_ds_session(&task, g->id, &personalization_context);
+	start_ds_session(&task, g->id, &personalization_context, user);
+
+	/* Prepend journey title to the personalization context (cheap: title only). */
+	Goal *root = CalcGoalRoot(g);
+	if (root->journey_id[0]) {
+		JourneySystemLazyLoad(&journey_get_title, NULL);
+		const char *jt = journey_get_title(root->journey_id);
+		if (jt && jt[0]) {
+			String with_journey; InitString(&with_journey, personalization_context.len + 128);
+			CatTemplateString(&with_journey, "[Journey: %s]\n", jt);
+			CatString(&with_journey, personalization_context.p, personalization_context.len);
+			FreeString(&personalization_context);
+			personalization_context = with_journey;
+		}
+	}
 
 	char* user_action_raw = user_action.p;
 	char* same_layer_raw = same_layer.p;

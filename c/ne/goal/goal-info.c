@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+static journey_str_func journey_get_title = NULL;
+
 char* SerializeGoal(Goal* g, size_t *length, char* relation, _Bool showExtraInfo){
 	*length = sizeof(OTHER_GOAL_TEMPLATE_RICH) + g->extra_info.len + g->title.len + 512;
 
@@ -47,57 +49,48 @@ char* SerializeGoal(Goal* g, size_t *length, char* relation, _Bool showExtraInfo
 void SerializeUserGoalHistory(String *buffer, size_t max){
 
 	size_t i = 0;
+	size_t total = 0;
+	Goal **goals = GetGoalsSorted(&total);
 
-	for (size_t currentIndex = GOAL_CONTAINER_COUNT;
-			currentIndex-- > INITIAL_GOAL_INDEX && i < max;){
-
-		Goal *g = FindGoalFromIndex(currentIndex);
-
-		if (!g) continue;
-
-		if (g->start_date != 0){
-
-			size_t register_len_size = 0;
-
-			char* info = SerializeGoal(
-					g,
-					&register_len_size,
-					"example-goal",
-					1
-					);
-
-			cassert(info, "Something failed when providing goal info.\n");
-
-			CatString(buffer, info, register_len_size);
-
-			free(info);
-
-			i++;
-		}
-	}
-}
- 
-void SerializeUserGoalHistoryUpTo(Goal* g, String *buffer, int max){
-
-	size_t currentIndex = g->globalIndex - 1;
-	int i = 0;
-
-	for (size_t currentIndex = g->globalIndex;
-			currentIndex-- > INITIAL_GOAL_INDEX && i < max;){
-		Goal *g = FindGoalFromIndex(currentIndex);
+	for (size_t idx = total; idx-- > 0 && i < max;) {
+		Goal *g = goals[idx];
 		if (!g) continue;
 
 		if (g->start_date != 0){
 			size_t register_len_size = 0;
 			char* info = SerializeGoal(g, &register_len_size, "example-goal", 1);
-			cassert(info, "Something failed when provdiing info.\n");
+			cassert(info, "Something failed when providing goal info.\n");
 			CatString(buffer, info, register_len_size);
 			free(info);
 			i++;
 		}
-
-		currentIndex --;
 	}
+
+	free(goals);
+}
+ 
+void SerializeUserGoalHistoryUpTo(Goal* g, String *buffer, int max){
+
+	size_t total = 0;
+	Goal **goals = GetGoalsSorted(&total);
+	int i = 0;
+
+	for (size_t idx = total; idx-- > 0 && i < max;) {
+		Goal *cg = goals[idx];
+		if (!cg) continue;
+		if (cg->localIndex >= g->localIndex) continue;
+
+		if (cg->start_date != 0){
+			size_t register_len_size = 0;
+			char* info = SerializeGoal(cg, &register_len_size, "example-goal", 1);
+			cassert(info, "Something failed when providing info.\n");
+			CatString(buffer, info, register_len_size);
+			free(info);
+			i++;
+		}
+	}
+
+	free(goals);
 }
 
 void SerializeSlibingGoals(Goal *g, String *buffer){
@@ -106,10 +99,10 @@ void SerializeSlibingGoals(Goal *g, String *buffer){
 		return;
 	}
 
-	Goal* parent = FindGoalFromIndex(g->parent);
+	Goal* parent = FindGoalFromIndex(g->journey_id, g->parent);
 
 	for (size_t i = 0; i < parent->subgoals_len; i++){
-		Goal *slibing = FindGoalFromIndex(parent->subgoals[i]);
+		Goal *slibing = FindGoalFromIndex(parent->journey_id, parent->subgoals[i]);
 
 		size_t len = 0;
 		char* info = SerializeGoal(slibing, &len, "brother-goal", 1);
@@ -120,9 +113,19 @@ void SerializeSlibingGoals(Goal *g, String *buffer){
 }
 
 void SerializeGoalParentChain(Goal *g, String *buffer){
-	
+	Goal *root = g;
+	while (root->parent != 0)
+		root = FindGoalFromIndex(root->journey_id, root->parent);
+
+	if (root->journey_id[0]) {
+		JourneySystemLazyLoad(&journey_get_title, NULL);
+		const char *jt = journey_get_title(root->journey_id);
+		if (jt && jt[0])
+			CatTemplateString(buffer, "[Journey: %s]\n", jt);
+	}
+
 	while (g->parent != 0){
-		g = FindGoalFromIndex(g->parent);
+		g = FindGoalFromIndex(g->journey_id, g->parent);
 
 		size_t len;
 		char* info = SerializeGoal(g, &len, "parent-goal", 1);
@@ -139,7 +142,7 @@ void SerializeGoalLinkedSlibingsChain(Goal *g, String *buffer, _Bool displayInfo
 	Goal* original = g;
 
 	while (g->next != 0){
-		g = FindGoalFromIndex(g->next);
+		g = FindGoalFromIndex(g->journey_id, g->next);
 
 		size_t len;
 		char* info = SerializeGoal(g, &len, "follow-up-goal", displayInfo);
@@ -152,7 +155,7 @@ void SerializeGoalLinkedSlibingsChain(Goal *g, String *buffer, _Bool displayInfo
 	g = original;
 	CatString(buffer, FSTRING_SIZE_PARAMS("\n\nPrevious goals: \n"));
 	while (g->prev != 0){
-		g = FindGoalFromIndex(g->prev);
+		g = FindGoalFromIndex(g->journey_id, g->prev);
 
 		size_t len;
 		char* info = SerializeGoal(g, &len, "prev-goal", displayInfo);
@@ -168,7 +171,7 @@ void SerializeGoalParentSlibings(Goal *g, String *buffer, _Bool displayInfo){
 		CatString(buffer, FSTRING_SIZE_PARAMS("Root goal has no uncle because it's a root goal."));
 		return;
 	}
-	Goal* parent = FindGoalFromIndex(g->parent);
+	Goal* parent = FindGoalFromIndex(g->journey_id, g->parent);
 	if (parent == 0){
 		CatString(buffer, FSTRING_SIZE_PARAMS("This is a root goal, it doesn't have any uncles."));
 		return;
@@ -183,67 +186,45 @@ void SerializeGoalParentSlibings(Goal *g, String *buffer, _Bool displayInfo){
 void SerializeDueGoals(String *buffer, size_t max){
 
 	size_t emitted = 0;
+	size_t total = 0;
+	Goal **goals = GetGoalsSorted(&total);
 
-	for (size_t currentIndex = GOAL_CONTAINER_COUNT;
-			currentIndex-- > INITIAL_GOAL_INDEX && emitted < max;){
-
-		Goal *g = FindGoalFromIndex(currentIndex);
-
+	for (size_t idx = total; idx-- > 0 && emitted < max;) {
+		Goal *g = goals[idx];
 		if (!g) continue;
 
-		// due / unfinished goals only
 		if (g->end_date == 0){
-
 			size_t len = 0;
-
-			char* info = SerializeGoal(
-					g,
-					&len,
-					"due-goal",
-					1
-					);
-
+			char* info = SerializeGoal(g, &len, "due-goal", 1);
 			cassert(info, "Something failed when serializing due goal.\n");
-
 			CatString(buffer, info, len);
-
 			free(info);
-
 			emitted++;
 		}
 	}
+
+	free(goals);
 }
 
 void SerializeLeafDueGoals(String *buffer, size_t max){
 
 	size_t emitted = 0;
+	size_t total = 0;
+	Goal **goals = GetGoalsSorted(&total);
 
-	for (size_t currentIndex = GOAL_CONTAINER_COUNT;
-			currentIndex-- > INITIAL_GOAL_INDEX && emitted < max;){
-
-		Goal *g = FindGoalFromIndex(currentIndex);
-
+	for (size_t idx = total; idx-- > 0 && emitted < max;) {
+		Goal *g = goals[idx];
 		if (!g) continue;
 
-		// due / unfinished goals only
-		if (g->end_date == 0){
-
+		if (g->end_date == 0 && g->subgoals_len == 0){
 			size_t len = 0;
-
-			char* info = SerializeGoal(
-					g,
-					&len,
-					"due-goal",
-					1
-					);
-
-			cassert(info, "Something failed when serializing due goal.\n");
-
+			char* info = SerializeGoal(g, &len, "due-goal", 1);
+			cassert(info, "Something failed when serializing leaf due goal.\n");
 			CatString(buffer, info, len);
-
 			free(info);
-
 			emitted++;
 		}
 	}
+
+	free(goals);
 }

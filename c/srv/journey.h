@@ -1,35 +1,36 @@
 #ifndef JOURNEY_HEADER_COMPONENTS
 #define JOURNEY_HEADER_COMPONENTS
 
-#define MAX_ROOT_GOALS_PER_JOURNEY 10
+#define MAX_GOALS_PER_JOURNEY 512
 #define JOURNEY_ID_SIZE 32
 #define MAX_JOURNEYS 64
 
-#define DEFAULT_JOURNEY_TITLE "default"
 #include "goal.h"
 
 typedef char journey_id_like[JOURNEY_ID_SIZE];
 
 typedef struct JourneyType {
-
-	Goal RootGoals[MAX_ROOT_GOALS_PER_JOURNEY];
 	journey_id_like id;
-
 	String title;
-
+	String extra_info;
+	Goal *goals[MAX_GOALS_PER_JOURNEY];
+	size_t goals_count;
 } Journey;
 
-extern Journey JOURNEY_TABLE[MAX_JOURNEYS];
-extern size_t JOURNEY_COUNT;
+extern Journey JourneyTable[MAX_JOURNEYS];
+extern size_t JourneyCount;
 
-_Bool MatchesJourneyID(Journey* j, journey_id_like id);
-Journey* FindJourneyByID(journey_id_like id);
+_Bool MatchesJourneyID(Journey *j, const char *id);
+Journey *FindJourneyByID(const char *id);
 
-Journey* NewJourney(String *name);
-void FreeJourney(Journey *journey);
+Journey *NewJourney(String *name);
+Journey *AllocJourney(void);   /* allocate empty slot; caller sets id and calls LoadJourneyFromFile */
+void AddGoalToJourney(Journey *j, Goal *g);
 
-void InitJourneySystem();
-void FreeJourneySystem();
+void InitJourneySystem(void);
+void FreeJourneySystem(void);
 
+void ExportJourneyTo(const Journey *j, const char *path);
+void LoadJourneyFromFile(Journey *j, const char *path);
 
 #endif

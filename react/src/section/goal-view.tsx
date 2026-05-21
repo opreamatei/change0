@@ -61,7 +61,7 @@ function ActionButtons({
   onRepairGoal: (goal: Goal, reason: string) => void
 }) {
   const state = inferGoalState(goal)
-  const isPending = pendingGoalIndex === goal.globalIndex
+  const isPending = pendingGoalIndex === goal.localIndex
   const [repairOpen, setRepairOpen] = useState(false)
   const [repairReason, setRepairReason] = useState('')
 
@@ -260,7 +260,7 @@ export default function GoalViewer(props: GoalViewerProps) {
           <div className="space-y-3">
             {childrenGoals.map((goal, index) => (
               <GoalCard
-                key={goal.globalIndex}
+                key={goal.localIndex}
                 goal={goal}
                 label={`#${index + 1}`}
                 pendingGoalIndex={pendingGoalIndex}

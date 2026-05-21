@@ -1,0 +1,6 @@
+CompileFlags:
+  Add:
+    - -Ic/lib/jsonp
+    - -Ic/lib/util
+    - -Ic/lib/hd
+    - -Ic

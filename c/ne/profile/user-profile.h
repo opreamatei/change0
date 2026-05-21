@@ -3,6 +3,7 @@
 
 #include "util.h"
 #include "goal/goal-util.h"
+#include "user-management.h"
 
 #define USER_PROFILE_HEADER "CHANGE_USER_PROFILE_V1\n"
 #define USER_PROFILE_INPUTS_MARKER "\n=== INPUT_HISTORY ===\n"
@@ -20,11 +21,11 @@ typedef struct {
 	time_t updated_at;
 } UserProfileDerivedState;
 
-void UserProfileRecordInput(const char *source, const char *text);
-void UserProfileRecordGoalEvent(const char *event_type, Goal *goal, const char *details);
-void SerializeUserProfileHistorySection(const char *section, size_t max_entries, String *out);
-void SerializeUserProfileDerivedSummary(String *out);
-void UserProfileSetDerivedField(const char *key, const char *value);
-void UserProfileClearDerivedField(const char *key);
+void UserProfileRecordInput(User *u, const char *source, const char *text);
+void UserProfileRecordGoalEvent(User *u, const char *event_type, Goal *goal, const char *details);
+void SerializeUserProfileHistorySection(User *u, const char *section, size_t max_entries, String *out);
+void SerializeUserProfileDerivedSummary(User *u, String *out);
+void UserProfileSetDerivedField(User *u, const char *key, const char *value);
+void UserProfileClearDerivedField(User *u, const char *key);
 
 #endif

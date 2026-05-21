@@ -1,483 +1,489 @@
-# CHANGE: review tehnic, arhitectură și flow-uri
+# CHANGE Technical Documentation
 
-Documentul descrie ce face codul din `c/` pe baza implementării actuale, nu pe baza intențiilor din README. Accentul este pe sistem, pe fluxurile reale și pe ce încearcă aplicația să obțină.
+This document describes the current runtime architecture of the `c/` tree.
+The codebase is a local, AI-driven system that turns user input into graph
+updates, goal objects, schedule data, profile memory, deep-search sessions,
+and HTTP/SSE output.
 
-## 1. Ce încearcă să construiască proiectul
+## Scope
 
-`c/` implementează un backend C pentru un sistem personal de modelare a utilizatorului. Ideea centrală nu este un chatbot general, ci un motor care încearcă să țină simultan trei reprezentări:
+The application has two layers:
 
-1. o memorie semantică despre utilizator, sub formă de graf;
-2. un sistem de goal-uri, cu decompoziție și progres;
-3. un schedule derivat din goal-uri, pentru presiune temporală și disponibilitate.
+- `c/` is the runtime engine, persistence layer, CLI shell, and HTTP server.
+- `react/` is the frontend client that consumes the HTTP and SSE APIs.
 
-LLM-ul nu este produsul principal. Este folosit punctual ca adaptor semantic între text liber și structurile interne:
+This document focuses on `c/`, because that is where the actual behavior is
+implemented.
 
-- transformă textul utilizatorului în update-uri de graf;
-- alege comenzi în deep search;
-- validează dacă deep search-ul a ajuns la o concluzie suficient de bună;
-- normalizează goal-uri;
-- poate decomprima sau repara o ramură de goal-uri.
+## Boot Sequence
 
-Arhitectural, produsul este:
+The executable starts in [`c/main.c`](c/main.c). `main()` calls `UIStart()`,
+enters `UILoop()`, and finally calls `UIKill()`.
 
-- un runtime stateful, monolitic, în memorie;
-- cu orchestrare procedurală în C;
-- cu apeluri OpenAI doar la marginile unde e nevoie de interpretare semantică;
-- expus prin CLI și HTTP/SSE.
+`UIStart()` in [`c/cli/ui.c`](c/cli/ui.c) performs the real initialization:
 
-## 2. Entry point și bootstrap real
+- it loads the user system from `user-data/`
+- it initializes the node graph storage
+- it creates the five root contexts: `profesie`, `emotie`, `pasiuni`,
+  `generalitati`, and `subiectiv`
+- it initializes the global pointer map
+- it registers the deep-search and goal emit callbacks
+- it initializes the goal subsystem
 
-Intrarea în program este minimă în [c/main.c](/home/nita/dev/c/change2/c/main.c:1):
+Those root contexts are the top-level parent nodes for the identity graph.
+Everything else in the graph is stored under one of those contexts.
 
-- `UIStart()`
-- `UILoop()`
-- `UIKill()`
+## Core Data Model
 
-Bootstrap-ul real este în [c/cli/ui.c](/home/nita/dev/c/change2/c/cli/ui.c:1). `UIStart()` face, în ordine:
+### Nodes and Connections
 
-1. `InitNodes()`
-2. `SetUpContexts()`
-3. `InitGlobalPointerMap()`
-4. înregistrează callback-ul `ds_emit`
-5. înregistrează callback-ul `goal_emit`
-6. `InitGoalSystem()`
+The graph lives in [`c/ne/node.h`](c/ne/node.h) and
+[`c/ne/node.c`](c/ne/node.c).
 
-Asta spune mult despre modelul de execuție:
+Each `Node` stores:
 
-- există un singur runtime global;
-- sistemul nu este multi-tenant;
-- serverul HTTP, CLI-ul, goal-urile și graful partajează aceeași memorie;
-- callback-urile globale sunt folosite ca mecanism de integrare între subsisteme.
+- a label
+- a parent context or parent node
+- activation and weight
+- an array of outgoing connections
+- counters such as `times_seen` and `times_used`
+- timestamps used by the decay and refresh logic
 
-Nu există izolare per user, per sesiune sau per request.
+Each `Connection` stores:
 
-## 3. Harta sistemului din `c/`
+- target node index
+- activation and weight
+- pending touches
+- last touched time
 
-### `c/ne/`
+Parenting is important. `read_node_activation()` and `read_node_weight()`
+multiply a node by its ancestor chain, so a child node inherits structure from
+its parents.
 
-Zona principală de domain logic. `ne` este efectiv "neuro engine", dar implementarea e mai degrabă un motor simbolic cu heuristici decât ceva neural.
+### Graph Refresh
 
-Submodule importante:
+The graph is periodically normalized in
+[`c/ne/graph/graph-engine.c`](c/ne/graph/graph-engine.c).
 
-- `node.*`: stocare noduri și muchii;
-- `graph/graph-engine.*`: refresh, decay, recalcul de greutăți;
-- `input/*`: ingestie text -> JSON -> graf;
-- `search/*`: deep search ghidat de AI peste graf, goal-uri și schedule;
-- `goal/*`: creare, decompoziție, reparație și serializare goal-uri;
-- `profile/*`: logging de input-uri și urme de interacțiune.
+`RefreshGraph()` does three things:
 
-### `c/srv/`
+- decays node and connection activation over time
+- applies pending touches using a logarithmic boost
+- recomputes node weight from connection support and usage signals
 
-Wrapper HTTP și SSE. Expune graful, goal-urile, deep search-ul și evenimente live.
+The weight update uses the tunable constants in [`c/config.h`](c/config.h):
 
-### `c/cli/`
+- `ACTIVATION_IMPORTANCE_TO_NODE_WEIGHT`
+- `NCOUNT_PENALTY_TO_NODE_WEIGHT`
+- `SUPPORT_MERIT_TO_NODE_WEIGHT`
+- `NODE_OLD_WEIGHT_RELEVANCE`
+- `ACT_HALFTIME`
 
-Shell local pentru bootstrapping, debugging și operare manuală.
+In practice, this makes the graph self-stabilizing: old activation fades,
+recent touches matter, and the strongest structural neighborhood influences
+node weight.
 
-### `c/lib/`
+### Graph Import and Export
 
-Biblioteci locale:
+[`c/ne/input/json-to-graph.c`](c/ne/input/json-to-graph.c) ingests OpenAI
+output and merges it into the graph.
 
-- `util`: string-uri, fișiere, asserts, helpers generici;
-- `jsonp`: parser JSON intern;
-- `openai`: client OpenAI;
-- `hd`: hash dictionary folosit în indexare.
+The merge behavior is:
 
-### `c/globals.*`
+- if a node already exists in the target context, it is touched rather than
+  duplicated
+- otherwise a new node is created
+- existing connections are touched
+- missing connections are added as bidirectional links
 
-Registru global de pointeri. Este un mecanism de service locator foarte simplu.
+[`c/ne/graph/graph-export.c`](c/ne/graph/graph-export.c) serializes the graph
+to JSON for persistence and inspection.
 
-## 4. Modelul de date: user identity ca graf semantic
+## User, Journey, and Goal Storage
 
-### 4.1 Contexte fixe
+### Users
 
-În [c/ne/node.h](/home/nita/dev/c/change2/c/ne/node.h:1) există cinci contexte rădăcină:
+[`c/srv/user-management.c`](c/srv/user-management.c) loads and persists users
+from `user-data/<id>/`.
 
-- `profesie`
-- `emotie`
-- `pasiuni`
-- `generalitati`
-- `subiectiv`
+Each user has:
 
-Acestea sunt create la startup în `SetUpContexts()`. Nu sunt doar etichete; sunt noduri reale, rădăcini ale unor subarbori.
+- a generated id
+- a display name
+- a bounded list of journey ids
 
-Ce încearcă sistemul aici:
+The first user is selected as `LocalUser` on startup unless another user is
+chosen later. User metadata is stored in `.meta`, and the system keeps per-user
+graph, goal, journey, and profile files under the user directory.
 
-- să împartă identitatea utilizatorului pe axe psihologice;
-- să permită același label semantic în contexte diferite;
-- să trateze "cine este userul" ca structură, nu ca text brut.
+### Journeys
 
-### 4.2 Structura nodului
+[`c/srv/journey.c`](c/srv/journey.c) is the container for goals.
 
-`Node` conține:
+A journey stores:
 
-- `label`
-- `_weight`
-- `_activation`
-- `neighbours`
-- `times_seen`
-- `times_used`
-- `parent`
-- `childrenIndex`
-- metadate de decay și touch
+- a journey id
+- title and extra info
+- an array of goal pointers
 
-Interpretarea practică este:
+Journeys matter because goals are not global in a vacuum. A goal is always
+anchored to a journey, and cross references such as `parent`, `prev`, `next`,
+and `subgoals` are local to that journey.
 
-- `_activation`: relevanță curentă, volatilă;
-- `_weight`: importanță structurală, mai lentă;
-- `times_seen`: cât de des apare în explorări;
-- `times_used`: cât de des devine ancoră de investigație;
-- `childrenIndex`: index local pe label sub un părinte dat.
+### Goals
 
-### 4.3 Muchii și propagare
+The goal model is defined in [`c/ne/goal/goal-util.h`](c/ne/goal/goal-util.h)
+and implemented across `goal.c`, `goal-info.c`, `goal-ai.c`, and
+`user-schedule.c`.
 
-`Connection` are și el:
+Each `Goal` stores:
 
-- `_activation`
-- `_weight`
-- `pendingTouches`
-- `target`
+- title and extra info
+- start/end timestamps
+- required time
+- child goal references
+- parent/prev/next links
+- depth, retry depth, and priority
+- a runtime goal id
+- the journey id
 
-Deci nu doar nodurile au stare; și relațiile au saliență și importanță.
+The system treats goals as a timeline graph, not just a tree:
 
-### 4.4 Efectul ierarhiei
+- `parent` defines decomposition structure
+- `prev` and `next` define execution order
+- `subgoals` define the branch expansion
 
-Funcțiile `read_node_activation`, `read_node_weight`, `read_connection_activation`, `read_connection_weight` iau în calcul lanțul de părinți. Asta înseamnă că un nod nu este evaluat izolat: contextul lui modifică scorul efectiv.
+## Message to Graph Flow
 
-Implicația de design:
+The simplest input path is the `/message` route in
+[`c/srv/http-server.c`](c/srv/http-server.c), which calls
+`DecomposeInputIntoGraph()`.
 
-- contextul nu e doar clasificare;
-- contextul influențează scorarea operațională;
-- aceeași noțiune poate avea efect diferit în `emotie` față de `profesie`.
+The flow is:
 
-## 5. Dinamică: de ce se numește "neuro engine"
+1. user input is recorded in the user profile
+2. a prompt is built for OpenAI using the decomposition schema
+3. OpenAI returns a strict JSON document with the five contexts
+4. each context is handed to `AddContextNodesFromJSON()`
+5. nodes and connections are merged into the existing graph
 
-Partea "neuro" vine din update-urile dinamice, nu din ML clasic.
+This same flow is also used by the CLI `u` command and by middleware before it
+invokes larger actions.
 
-În [c/ne/graph/graph-engine.c](/home/nita/dev/c/change2/c/ne/graph/graph-engine.c:1), `RefreshGraph()`:
+## Goal Creation Flow
 
-1. aplică decay exponențial pe activări, în funcție de timp;
-2. consumă `pendingTouches`;
-3. calculează support pentru fiecare nod din vecini;
-4. normalizează după maxime globale;
-5. reconstruiește `weight` folosind o combinație de:
-   - support structural;
-   - `times_seen`;
-   - `times_used`;
-   - constante din `config.h`.
+Goal creation is implemented in [`c/ne/goal/goal.c`](c/ne/goal/goal.c).
 
-Ce vrea să atingă acest mecanism:
+The high-level flow is:
 
-- memorie cu uitare controlată;
-- distincție între ce e important acum și ce e important în general;
-- întărire graduală a conceptelor folosite repetat;
-- penalizare implicită pentru noduri cu multe muchii slabe.
+1. the user gives a title and supporting context
+2. the request is recorded in the profile history
+3. `CreateUserGoal()` calls `PersonalizeGoal()` to build a deep-search task
+4. deep search runs against the current user context
+5. the deep-search output is parsed into a goal title, extra info, estimate,
+   and priority
+6. `create_goal_raw()` creates the root goal
+7. `ComputePartialDecomposition()` decomposes the goal until it becomes small
+   enough or it reaches a leaf
+8. the created goal is recorded in the user profile goal history
 
-Nu este un graf static. Este o memorie euristică care se reașază pe baza utilizării.
+The important detail is that goal creation is not a direct OpenAI text-to-goal
+mapping. It is a two-stage process:
 
-## 6. Flow-ul de ingestie: text liber -> graf intern
+- deep-search produces context and personalization
+- a goal-extraction schema converts that into a concrete goal object
 
-Fluxul este în [c/ne/input/input-processor.c](/home/nita/dev/c/change2/c/ne/input/input-processor.c:1).
+### Goal Decomposition
 
-### 6.1 Pașii reali
+`DecomposeGoal()` uses `SetGoalDecompositionPrompt()` and the goal decomposition
+schema in [`c/ne/goal/goal-ai.h`](c/ne/goal/goal-ai.h).
 
-1. Utilizatorul introduce text.
-2. `DecomposeInputIntoGraph()` loghează input-ul în profil.
-3. Se construiește promptul `DECOMPOSITION_INTO_GRAPH_PROMPT`.
-4. Se face request OpenAI cu schema JSON strictă.
-5. Se parsează răspunsul OpenAI.
-6. Se extrage `output -> content -> text`.
-7. Textul extras se parsează din nou ca JSON.
-8. Pentru fiecare context primit, `AddContextNodesFromJSON(...)` adaugă noduri și legături în graf.
+It creates 2 to 9 subgoals, links them in sequence with `prev`/`next`, stores
+their ids, and recalculates the parent required time by summing child duration
+plus pauses.
 
-### 6.2 Ce încearcă să obțină
+`ComputePartialDecomposition()` keeps decomposing the first branch while the
+goal is still large enough to justify it.
 
-Acest pipeline încearcă să transforme propoziții umane în memorie semantică normalizată:
+### Goal Repair
 
-- nu păstrează input-ul doar ca jurnal;
-- îl proiectează într-o structură exploatabilă de motor;
-- obligă modelul să producă formă strictă, nu text conversațional.
+Goal repair is a separate path in `goal.c`.
 
-### 6.3 Observație critică
+When a goal branch is repaired, the code:
 
-Fiabilitatea flow-ului depinde mult de contractul OpenAI:
+- snapshots the old branch progress
+- runs a deep-search assisted repair context
+- generates a replacement branch
+- validates the replacement with a judge prompt
+- transfers compatible progress into the new tree
+- re-bases parent/child/prev/next references
+- updates user profile and schedule state
 
-- codul parsează un format nested concret;
-- asumă că output-ul text este JSON valid;
-- folosește `cassert`, deci multe erori duc la oprire dură a procesului.
+This is important because repaired goals preserve history rather than starting
+from scratch.
 
-Asta face sistemul bun ca prototip de cercetare, dar fragil ca serviciu robust.
+## Schedule Flow
 
-## 7. Search și deep search: motorul de investigație
+[`c/ne/goal/user-schedule.c`](c/ne/goal/user-schedule.c) converts the current
+goal forest into a time-ordered schedule.
 
-Deep search este partea cea mai specifică a proiectului.
+It works by:
 
-### 7.1 Ce este de fapt
+- finding due leaf goals
+- walking forward through timeline-linked leaves using `next`
+- computing start and end times from `start_date`, `required_time`, and
+  `pauseToNext`
 
-Nu este web search. Este un agent de investigație care operează peste datele interne:
+The schedule is used by:
 
-- graf identitar;
-- goal-uri;
-- schedule.
+- the HTTP `/schedule` endpoint
+- deep search command 7
+- middleware prompts that need workload and time pressure context
 
-Task-ul lui nu este să "rezolve" problema direct, ci să producă concluzii despre utilizator și contextul lui.
+## Profile Memory Flow
 
-### 7.2 Memoria sesiunii
+[`c/ne/profile/user-profile.c`](c/ne/profile/user-profile.c) maintains a
+lightweight user memory file.
 
-În [c/ne/search/deep-search-session.c](/home/nita/dev/c/change2/c/ne/search/deep-search-session.c:1), o sesiune are două memorii:
+The file format has three sections:
 
-- `persistent`: instrucțiuni de sistem + task;
-- `dynamic`: jurnalul rundelor și al evidențelor.
+- input history
+- goal activity history
+- derived summary
 
-Asta este o alegere importantă: agentul nu rulează stateless pe fiecare pas. Primește context cumulativ.
+The derived summary stores operational fields such as:
 
-### 7.3 Bucla de execuție
+- latest input source
+- latest input
+- last goal event
+- last goal id
+- last goal title
+- current focus goal id
+- current focus goal title
 
-`start_ds_session()` face:
+This profile memory is read back into middleware prompts so the AI can respond
+with continuity instead of treating each request as isolated.
 
-1. pregătește promptul persistent din `DS_PERSISTENT_PROMPT`;
-2. rulează `RefreshGraph()`;
-3. emite evenimente de start;
-4. intră într-o buclă externă de judge/retry;
-5. în fiecare buclă externă rulează o buclă internă de think/act până la concluzie;
-6. după concluzie, rulează un judge LLM;
-7. dacă judge-ul respinge rezultatul, injectează feedback în memoria persistentă și reia.
+## Deep Search Flow
 
-### 7.4 Modelul operațional
+Deep search is implemented in `c/ne/search/`.
 
-Agentul trebuie să emită exact o comandă JSON per pas. Execuția reală se face în [c/ne/search/deep-search-execute.c](/home/nita/dev/c/change2/c/ne/search/deep-search-execute.c:1) prin `exec_response(...)`, care mapează `command` la `run1 ... run9`.
+The main entrypoint is `start_ds_session()` in
+[`c/ne/search/deep-search-session.c`](c/ne/search/deep-search-session.c).
 
-Deci designul este:
+The loop is:
 
-- LLM-ul decide următoarea operație;
-- C-ul execută operația;
-- rezultatul devine evidență pentru pasul următor;
-- un al doilea LLM decide dacă investigația e suficient de bună.
+1. build the persistent prompt from `DS_PERSISTENT_PROMPT`
+2. refresh the graph before reasoning
+3. send the current prompt to OpenAI
+4. parse the returned JSON command
+5. execute the selected command in `exec_response()`
+6. ask the judge model whether the output is good enough
+7. if the judge fails, append feedback and repeat
+8. stop only when the judge passes and a conclusion is produced
 
-Este o arhitectură de tip constrained agent, nu un simple prompt-response.
+The command executor in
+[`c/ne/search/deep-search-execute.c`](c/ne/search/deep-search-execute.c)
+routes commands `1` through `9` into the concrete handlers in
+[`c/ne/search/ai-action.c`](c/ne/search/ai-action.c).
 
-### 7.5 Ce încearcă proiectul aici
+Those commands are:
 
-Scopul real pare să fie:
+- `1` global graph filtering
+- `2` local neighbor filtering
+- `3` recursive family exploration
+- `4` goal overview
+- `5` goal tree inspection
+- `6` goal relation inspection
+- `7` schedule reporting
+- `8` profile history section extraction
+- `9` derived profile summary extraction
 
-- să facă reasoning iterativ peste memorie internă;
-- să evite răspunsul superficial dintr-un singur prompt;
-- să forțeze agentul să caute dovezi structurale înainte de concluzie.
+Deep search emits SSE events through the global `ds_emit` pointer so the UI
+can stream progress in real time.
 
-Asta este partea cea mai ambițioasă din repo.
+## Middleware Flow
 
-## 8. Goal system: comportament, nu identitate
+[`c/middleware/middleware.c`](c/middleware/middleware.c) is the higher-level
+assistant router for chat-like interactions.
 
-Prompturile și codul tratează explicit goal-urile ca behavioural evidence, separat de identity graph.
+It does more than plain decomposition:
 
-### 8.1 Rolul subsistemului
+- it records the incoming chat turn
+- it updates the graph from the input
+- it builds a context prompt from profile history, derived profile state, and
+  recent goal activity
+- it asks OpenAI for one strict JSON object
+- it parses actions and applies them
 
-Goal-urile încearcă să captureze:
+Supported actions are:
 
-- ce vrea utilizatorul;
-- ce a început;
-- ce a terminat;
-- ce a abandonat;
-- cum se rupe un obiectiv mare în pași executabili.
+- `reply`
+- `set_profile`
+- `clear_profile`
+- `ask_permission`
+- `create_goal`
+- `set_goal_priority`
+- `call_deep_search`
 
-### 8.2 Inițializare și container
+The middleware also maintains two internal state stores:
 
-`InitGoalSystem()` pornește containerul global. Din nou, totul este global și în memorie.
+- a session history buffer for emitted events and conversation history
+- a pending permission table for profile fields that require approval
 
-### 8.3 Mecanisme importante
+Sensitive profile writes are not committed immediately. They are emitted as a
+permission request and later resolved by `ResolveMiddlewarePermission()`.
 
-În [c/ne/goal/goal.c](/home/nita/dev/c/change2/c/ne/goal/goal.c:1) apar câteva direcții clare:
+If middleware chooses `call_deep_search`, it starts a nested deep-search task
+and folds the result back into the retry prompt.
 
-- serializare recursivă a arborelui de goal-uri;
-- snapshot de progres pentru comparații și reparații;
-- normalizare de titluri;
-- reparație de leaf goals;
-- scurtare automată a goal-ului când utilizatorul eșuează repetat.
+## HTTP Server Flow
 
-### 8.4 Ce încearcă să atingă sistemul
+The per-user HTTP server lives in [`c/srv/http-server.c`](c/srv/http-server.c).
+It is started with `start_server(0)`, which binds to an ephemeral local port
+and stores the chosen port in `client_server_port()`.
 
-Goal system-ul nu vrea doar CRUD. Vrea adaptare:
+The server exposes:
 
-- dacă un goal nu încape în timpul estimat, îl extinde;
-- dacă problema persistă, îl scurtează semantic prin AI;
-- dacă un goal mare e prea abstract, îl poate decompune.
+- graph routes
+- goal routes
+- schedule routes
+- middleware routes
+- research/deep-search routes
+- dev time control routes
+- SSE event streams
 
-Asta sugerează un produs orientat spre auto-management asistat, nu doar knowledge graph.
+### Central Server vs Client Server
 
-## 9. Schedule system: temporalizarea comportamentului
+The app has two servers:
 
-În [c/ne/goal/user-schedule.c](/home/nita/dev/c/change2/c/ne/goal/user-schedule.c:1), schedule-ul este derivat, nu introdus direct.
+- the central server on port `8085` manages users
+- the client server is per-user and gets an OS-selected port
 
-### 9.1 Cum funcționează
+[`c/srv/central-server.c`](c/srv/central-server.c) exposes:
 
-1. identifică due leaf goals;
-2. pentru fiecare, găsește prima frunză executabilă;
-3. construiește o succesiune temporală cu `prev`, `next`, `pauseToNext`;
-4. calculează orele de lucru pe zi și pe săptămână;
-5. serializează rezultatul ca raport textual + JSON embedded.
+- `GET /users`
+- `POST /users/create`
+- `POST /users/select`
+- `GET /users/active`
 
-### 9.2 De ce contează
+Selecting a user switches `LocalUser` and restarts the client server for that
+user.
 
-Schedule-ul adaugă o dimensiune pe care graful identitar nu o are:
+### Client Server Routes
 
-- presiune temporală;
-- cost operațional;
-- ferestre de execuție;
-- densitate de lucru.
+The client server routes are:
 
-În combinație cu deep search, sistemul poate infera nu doar "ce contează", ci și "ce e realist să urmeze".
+- `GET /graph`
+- `POST /graph/export`
+- `GET /graph/load`
+- `POST /research/start`
+- `GET /research/events?id=...`
+- `POST /middleware/message`
+- `POST /middleware/permission`
+- `GET /middleware/events?sessionId=...`
+- `GET /middleware/session?sessionId=...`
+- `POST /goal/create`
+- `POST /goal/repair`
+- `POST /goal/start`
+- `POST /goal/end`
+- `POST /goal/decompose`
+- `GET /goal/events?goal-id=...`
+- `GET /goal/list`
+- `GET /goal/session`
+- `POST /goal/export`
+- `GET /goal/load`
+- `GET /dev/time`
+- `POST /dev/time/advance`
+- `POST /dev/time/reset`
+- `POST /message`
+- `GET /schedule`
 
-## 10. HTTP server: stratul de produs
+The server uses SSE for long-running flows:
 
-În [c/srv/http-server.c](/home/nita/dev/c/change2/c/srv/http-server.c:1), serverul face mai mult decât servire de fișiere:
+- `research` streams deep-search progress
+- `goal` streams goal lifecycle events
+- `middleware` streams middleware status, permission requests, and replies
 
-- gestionează request parsing manual;
-- expune răspunsuri JSON;
-- suportă CORS;
-- ține conexiuni SSE active;
-- multiplexează evenimente de deep search și goal-uri prin `stream_id`.
+## Persistence Layout
 
-Implicații:
+The on-disk layout is controlled by `c/config.h`.
 
-- backend-ul a fost gândit pentru UI interactiv;
-- deep search-ul poate fi urmărit live;
-- goal-urile pot emite progres incremental;
-- frontend-ul React și viewer-ul JS sunt clienți pentru același runtime.
+The important files are:
 
-Este un server custom low-level, fără framework, ceea ce păstrează controlul, dar crește costul de robustețe.
+- `user-data/<id>/.meta`
+- `user-data/<id>/graph-copy.json`
+- `user-data/<id>/goals-copy.json`
+- `user-data/<id>/user-profile.log`
+- `user-data/<id>/journey-<journey_id>.json`
 
-## 11. CLI-ul: consolă de operare și laborator
+Mock graph data lives in:
 
-CLI-ul din `c/cli/ui.c` expune opțiuni precum:
+- `mocks/nodes/`
+- `mocks/action-data/`
 
-- ingestie mesaj;
-- export graf;
-- export goal-uri;
-- deep research;
-- start server;
-- creare goal;
-- regen mock OpenAI.
+OpenAI request/response debugging also writes files in the project root and
+`dumps/` when failures happen.
 
-Asta arată că repo-ul este încă și un mediu de experiment:
+## OpenAI Layer
 
-- poți popula manual sistemul;
-- poți porni serverul din aceeași aplicație;
-- poți itera pe flow-uri AI fără frontend.
+[`c/lib/openai/openai.c`](c/lib/openai/openai.c) is the network layer used by
+the whole engine.
 
-CLI-ul este, practic, interfața de debugging a produsului.
+It:
 
-## 12. Rolul `config.h`
+- reads `OPENAI_API_KEY`
+- connects to `api.openai.com` over TLS
+- sends strict JSON-schema requests
+- parses the HTTP response body
+- extracts the validated output text from the OpenAI response envelope
 
-[c/config.h](/home/nita/dev/c/change2/c/config.h:1) este un amestec de:
+The project depends heavily on strict JSON schemas. If a model output does not
+match the schema, the higher-level code treats it as a failure and retries or
+emits feedback.
 
-- configurație infrastructurală;
-- prompt engineering;
-- constante de scoring;
-- path-uri locale.
+## Global Pointers and Event Wiring
 
-Aici stă mare parte din comportamentul sistemului:
+[`c/globals.c`](c/globals.c) implements a tiny global pointer registry.
 
-- portul serverului;
-- project root;
-- formulele de decay și merit;
-- prompturile pentru deep search;
-- contractele de interpretare pentru agent.
+This is used to avoid direct circular dependencies between subsystems:
 
-Design-wise, `config.h` este aproape un centru de comandă al produsului. E util pentru prototipare rapidă, dar tinde să cupleze tare:
+- deep search gets `ds_emit`
+- goal code gets `goal_emit`
+- journey lookup functions are stored globally for lazy loading
 
-- logică;
-- configurare;
-- prompturi;
-- deployment local.
+This is not a general-purpose service locator. It is a small glue layer for the
+subsystems that need runtime callbacks without hard linking everything together.
 
-## 13. Flow-uri end-to-end importante
+## Practical Execution Order
 
-### Flow A: construire user identity
+If you want to understand the project in the shortest useful order, read the
+files in this sequence:
 
-1. userul scrie text în CLI sau prin server;
-2. textul ajunge în `DecomposeInputIntoGraph`;
-3. OpenAI extrage structură JSON pe contexte;
-4. nodurile și legăturile sunt adăugate în graf;
-5. graful devine baza pentru căutări ulterioare.
+1. [`c/main.c`](c/main.c)
+2. [`c/cli/ui.c`](c/cli/ui.c)
+3. [`c/ne/node.c`](c/ne/node.c)
+4. [`c/ne/graph/graph-engine.c`](c/ne/graph/graph-engine.c)
+5. [`c/ne/input/input-processor.c`](c/ne/input/input-processor.c)
+6. [`c/ne/input/json-to-graph.c`](c/ne/input/json-to-graph.c)
+7. [`c/ne/goal/goal.c`](c/ne/goal/goal.c)
+8. [`c/ne/search/deep-search-session.c`](c/ne/search/deep-search-session.c)
+9. [`c/ne/search/deep-search-execute.c`](c/ne/search/deep-search-execute.c)
+10. [`c/ne/search/ai-action.c`](c/ne/search/ai-action.c)
+11. [`c/middleware/middleware.c`](c/middleware/middleware.c)
+12. [`c/srv/http-server.c`](c/srv/http-server.c)
+13. [`c/srv/central-server.c`](c/srv/central-server.c)
 
-Rezultatul urmărit: o memorie semantică incrementală despre utilizator.
+That order follows the real control flow from startup to user interaction to
+graph updates to AI-driven orchestration.
 
-### Flow B: investigație asistată
+## Notes
 
-1. userul sau UI-ul cere deep search pentru un task;
-2. `start_ds_session()` compune promptul persistent;
-3. agentul alege o comandă internă;
-4. C-ul execută comanda și întoarce evidență;
-5. agentul iterează până produce o concluzie;
-6. un judge verifică suficiența concluziei;
-7. rezultatul final este livrat și emis prin SSE.
-
-Rezultatul urmărit: concluzii argumentate, nu improvizație directă.
-
-### Flow C: management de goal-uri
-
-1. userul definește un goal;
-2. goal-ul poate fi normalizat și decompozat;
-3. progresul actualizează datele de start/end;
-4. la eșec repetat, sistemul extinde sau scurtează goal-ul;
-5. schedule-ul se reconstruiește din leaf goals due.
-
-Rezultatul urmărit: planificare adaptivă pornită din comportament real.
-
-## 14. Ce este interesant tehnic
-
-Cele mai interesante idei din cod sunt:
-
-- separarea între identitate, comportament și timp;
-- folosirea LLM-ului ca transformator controlat de schemă;
-- deep search cu buclă agent + executor + judge;
-- memorie cu activare/greutate și decay temporal;
-- SSE pentru streaming de reasoning operațional.
-
-Ca direcție, proiectul vrea mai mult decât "AI wrapper peste API". Încearcă să construiască un motor intern care să poată susține interpretări personalizate.
-
-## 15. Limite și riscuri tehnice observabile
-
-### Fragilitate operațională
-
-Se folosesc multe `cassert` în flow-uri dependente de rețea și input AI. Asta înseamnă că:
-
-- erorile de format pot opri procesul;
-- serverul și runtime-ul nu par izolate de eșecul unui request;
-- experiența e mai apropiată de prototip decât de serviciu rezilient.
-
-### Stare globală
-
-Global state-ul simplifică integrarea, dar complică:
-
-- concurența;
-- testarea izolată;
-- multi-user support;
-- restart-uri parțiale.
-
-### Cuplare puternică la OpenAI
-
-Contractele JSON sunt mai bune decât free-form prompting, dar sistemul tot depinde de:
-
-- disponibilitatea modelului;
-- structura exactă a răspunsului;
-- prompturi embeddate în C.
-
-### Server HTTP custom
-
-Implementarea manuală oferă control, dar mută în cod propriu responsabilități care de obicei ar fi delegate unui framework:
-
-- parsing robust de request;
-- limite și timeouts;
-- handling de erori și edge cases de socket.
-
-## 16. Concluzie
-
-`c/` conține miezul real al produsului. Nu este doar backend utilitar, ci un motor experimental de modelare a utilizatorului care încearcă să unească:
-
-- memorie semantică;
-- interpretare comportamentală;
-- presiune temporală;
-- investigație ghidată de AI.
-
-Direcția proiectului este clară: un sistem personalizat de reasoning despre utilizator, nu un simplu strat conversațional. Codul are idei bune și destulă ambiție de sistem, dar încă poartă semnele unui prototip: stare globală, fail-fast pe multe ramuri și dependență puternică de contractele LLM.
+- The project is intentionally AI-heavy and uses strict schemas everywhere.
+- Most behaviors are local and stateful; graph, goal, and profile mutations are
+  persisted per user.
+- Deep search and middleware are the two main orchestration layers. Deep
+  search investigates the current state. Middleware decides what to do with a
+  user message.
+- The graph and goal systems are coupled through the profile and schedule
+  layers, but they remain separate data models.

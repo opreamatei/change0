@@ -134,7 +134,7 @@ static _Bool think(DS_memory *mem, String *out, size_t depth, Task* task, char *
 	// check if finished
 
 	String conclusion; InitString(&conclusion, 1024);
-	exec_response(doc, &mem->dynamic, depth, &conclusion, ds_id);
+	exec_response(doc, &mem->dynamic, depth, &conclusion, ds_id, mem->user);
 
 	_Bool terminated = try_terminate(mem, out, depth, task, &conclusion);
 	
@@ -152,12 +152,13 @@ static void lazy_load(){
     }
 }
 
-void start_ds_session(Task *task, char* id, String* out){
+void start_ds_session(Task *task, char* id, String* out, User *user){
 	lazy_load();
 
 	DS_memory mem;
 	if (massert(init_ds_memory(&mem), "Couldn't allocate memory for ds session"))
 		return;
+	mem.user = user;
 
 	InitString(out, 1024);
 	
