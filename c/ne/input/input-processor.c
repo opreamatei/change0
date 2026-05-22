@@ -141,7 +141,7 @@ void DecomposeInputIntoGraph(String *input, User *user){
 	for (size_t i = 0; i < response_target->u.object.length; i++){
 		json_object_entry entry = response_target->u.object.values[i];
 	
-		AddContextNodesFromJSON(entry.name, entry.name_length, entry.value);
+		AddContextNodesFromJSON(entry.name, entry.name_length, entry.value, &user->nodes);
 	}
 
 

@@ -1,8 +1,7 @@
 #include "user-management.h"
 #include "journey.h"
 #include "config.h"
-
-extern _Bool ExportGraphTo(char *path);
+#include "ne/graph/graph-export.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -93,6 +92,7 @@ static User *alloc_user_slot(void)
 
 	memset(u, 0, sizeof(*u));
 	InitString(&u->name, 128);
+	InitNodes(&u->nodes);
 
 	USER_COUNT++;
 
@@ -126,6 +126,7 @@ User *NewUser(const String *name)
 void FreeUser(User *user)
 {
 	FreeString(&user->name);
+	FreeNodes(&user->nodes);
 }
 
 /*
@@ -291,7 +292,7 @@ void SaveUser(User *u) {
 
 	char gr_path[USER_DIRECTORY_SIZE];
 	GetUserGraphExportPath(u, gr_path);
-	ExportGraphTo(gr_path);
+	ExportGraphTo(gr_path, &u->nodes);
 
 	for (size_t i = 0; i < u->journey_count; i++) {
 		Journey *j = FindJourneyByID(u->journeys[i]);

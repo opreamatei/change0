@@ -642,7 +642,7 @@ static _Bool apply_actions(
 
 			memset(goal_id, 0, sizeof(goal_id));
 			memcpy(goal_id, action->goal_id, GOAL_ID_SIZE);
-			goal = FindGoalByID(goal_id);
+			goal = FindGoalByID(goal_id, user->journeys[0]);
 			if (!goal) {
 				CatTemplateString(error, "set_goal_priority could not find goal_id [%s].", action->goal_id);
 				return 0;

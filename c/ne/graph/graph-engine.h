@@ -1,6 +1,8 @@
 #ifndef GRAPH_ENGINE_HEADER
 #define GRAPH_ENGINE_HEADER
 
-void RefreshGraph();
+#include "node.h"
+
+void RefreshGraph(NodeContainer *nc);
 
 #endif

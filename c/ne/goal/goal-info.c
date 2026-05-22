@@ -46,11 +46,11 @@ char* SerializeGoal(Goal* g, size_t *length, char* relation, _Bool showExtraInfo
 	return main_buffer;
 }
 
-void SerializeUserGoalHistory(String *buffer, size_t max){
+void SerializeUserGoalHistory(String *buffer, size_t max, const char *journey_id){
 
 	size_t i = 0;
 	size_t total = 0;
-	Goal **goals = GetGoalsSorted(&total);
+	Goal **goals = GetGoalsSorted(&total, journey_id);
 
 	for (size_t idx = total; idx-- > 0 && i < max;) {
 		Goal *g = goals[idx];
@@ -72,7 +72,7 @@ void SerializeUserGoalHistory(String *buffer, size_t max){
 void SerializeUserGoalHistoryUpTo(Goal* g, String *buffer, int max){
 
 	size_t total = 0;
-	Goal **goals = GetGoalsSorted(&total);
+	Goal **goals = GetGoalsSorted(&total, g->journey_id);
 	int i = 0;
 
 	for (size_t idx = total; idx-- > 0 && i < max;) {
@@ -183,11 +183,11 @@ void SerializeGoalParentSlibings(Goal *g, String *buffer, _Bool displayInfo){
 }
 
 // AI Generated
-void SerializeDueGoals(String *buffer, size_t max){
+void SerializeDueGoals(String *buffer, size_t max, const char *journey_id){
 
 	size_t emitted = 0;
 	size_t total = 0;
-	Goal **goals = GetGoalsSorted(&total);
+	Goal **goals = GetGoalsSorted(&total, journey_id);
 
 	for (size_t idx = total; idx-- > 0 && emitted < max;) {
 		Goal *g = goals[idx];
@@ -206,11 +206,11 @@ void SerializeDueGoals(String *buffer, size_t max){
 	free(goals);
 }
 
-void SerializeLeafDueGoals(String *buffer, size_t max){
+void SerializeLeafDueGoals(String *buffer, size_t max, const char *journey_id){
 
 	size_t emitted = 0;
 	size_t total = 0;
-	Goal **goals = GetGoalsSorted(&total);
+	Goal **goals = GetGoalsSorted(&total, journey_id);
 
 	for (size_t idx = total; idx-- > 0 && emitted < max;) {
 		Goal *g = goals[idx];

@@ -1,9 +1,9 @@
 #include "command-parsing.h"
 #include "string.h"
 
-void print_global_context_nodes(String *buff, char *suffix){
+void print_global_context_nodes(String *buff, char *suffix, NodeContainer *nc){
 	for (uint_fast8_t i = 0; i < CONTEXT_COUNT; i++){
-		CatString(buff, NodeAt(Contexts[i])->label, NodeAt(Contexts[i])->labelLength);
+		CatString(buff, NodeAt(nc, nc->contexts[i])->label, NodeAt(nc, nc->contexts[i])->labelLength);
 		if (i != CONTEXT_COUNT - 1) CatFixed(buff, ","); else CatFixed(buff, suffix);
 	}
 }
@@ -53,12 +53,13 @@ _Bool decompose_command_1_params(
 }
 
 _Bool decompose_command_2_params(
-		json_value *doc, String *ErrorBuff, 
-		int_fast64_t *percentage, 
-		char (*target)[NODE_LABEL_CAP], size_t *target_length, 
+		json_value *doc, String *ErrorBuff,
+		int_fast64_t *percentage,
+		char (*target)[NODE_LABEL_CAP], size_t *target_length,
 		char (*criteria)[16], size_t *criteria_length,
 		int_fast64_t *context,
-		String *intent){
+		String *intent,
+		NodeContainer *nc){
 	*percentage = -1;
 	*target_length = 0;
 	*criteria_length = 0;
@@ -90,14 +91,14 @@ _Bool decompose_command_2_params(
 		if (!strcmp(entry.name, "context") && entry.value->type == json_string){
 			lowerAll(&entry.value->u.string.ptr, entry.value->u.string.length);
 			for (uint_fast8_t i = 0; i < CONTEXT_COUNT; i++){
-				if (strcmp(entry.value->u.string.ptr, NodeAt(Contexts[i])->label) == 0){
-					*context = Contexts[i];
+				if (strcmp(entry.value->u.string.ptr, NodeAt(nc, nc->contexts[i])->label) == 0){
+					*context = nc->contexts[i];
 					break;
 				}
 			}
 			if (*context == -1){
 				CatFixed(ErrorBuff, "Error : You passed an invalid context. Available Contexts:\n");
-				print_global_context_nodes(ErrorBuff, "\n\n");
+				print_global_context_nodes(ErrorBuff, "\n\n", nc);
 				return 0;
 			}
 		}
@@ -108,7 +109,7 @@ _Bool decompose_command_2_params(
 
 	if (*percentage == -1 || *target_length == 0 || *context == -1 || *criteria_length == 0){
 		CatFixed(ErrorBuff, "Error : You must pass a \"percentage\" argument (1-100), a filter \"criteria\" (activation / weight) and a \"context\" (Node parent) in command 2. Available Contexts:\n");
-		print_global_context_nodes(ErrorBuff, "\n\n");
+		print_global_context_nodes(ErrorBuff, "\n\n", nc);
 		return 0;
 	};
 
@@ -124,7 +125,8 @@ _Bool decompose_command_3_params(
 	int_fast64_t *context,
 	int_fast64_t *percA, int_fast64_t *percW,
 	int_fast64_t *depth,
-	String *intent
+	String *intent,
+	NodeContainer *nc
 	){
 
 	*target_length = 0;
@@ -149,14 +151,14 @@ _Bool decompose_command_3_params(
 		if (!strcmp(entry.name, "context") && entry.value->type == json_string){
 			lowerAll(&entry.value->u.string.ptr, entry.value->u.string.length);
 			for (uint_fast8_t i = 0; i < CONTEXT_COUNT; i++){
-				if (strcmp(entry.value->u.string.ptr, NodeAt(Contexts[i])->label) == 0){
-					*context = Contexts[i];
+				if (strcmp(entry.value->u.string.ptr, NodeAt(nc, nc->contexts[i])->label) == 0){
+					*context = nc->contexts[i];
 					break;
 				}
 			}
 			if (*context == -1){
 				CatFixed(ErrorBuff, "Error : You passed an invalid context. Available Contexts:\n");
-				print_global_context_nodes(ErrorBuff, "\n\n");
+				print_global_context_nodes(ErrorBuff, "\n\n", nc);
 				return 0;
 			}
 		}
@@ -167,7 +169,7 @@ _Bool decompose_command_3_params(
 
 	if ((*percW == -1 && *percA == -1) || *target_length == 0 || *context == -1){
 		CatFixed(ErrorBuff, "Error : You must either pass a \"percA\" filter (1-100), either a \"percW\" filter (1-100), or both. You also need a \"context\" (Node parent) in command 3. Available Contexts:\n");
-		print_global_context_nodes(ErrorBuff, "\nYou can also pass an optional \"depth\" parameter (1-5, defaults to 3)\n\n");
+		print_global_context_nodes(ErrorBuff, "\nYou can also pass an optional \"depth\" parameter (1-5, defaults to 3)\n\n", nc);
 		return 0;
 	};
 	

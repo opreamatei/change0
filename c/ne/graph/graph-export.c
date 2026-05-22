@@ -16,8 +16,8 @@ static _Bool WriteGraphAndFreeData(char* directory, char *buf){
 	fprintf(fptr, "%s", buf);
 
 	// Close the file
-	fclose(fptr); 
-	
+	fclose(fptr);
+
 	printf("\n\nSuccessfully exported graph to %s\n", directory);
 
 	if (buf) free(buf);
@@ -25,10 +25,10 @@ static _Bool WriteGraphAndFreeData(char* directory, char *buf){
 	return 1;
 }
 
-char* SeriliazeGraph(){
+char* SeriliazeGraph(NodeContainer *nc){
 	size_t estimated =
-		Nodes.count * 64 +
-		ConnectionCount * 96 +
+		nc->count * 64 +
+		nc->connection_count * 96 +
 		512;
 
 	char *buf = malloc(estimated);
@@ -45,23 +45,18 @@ char* SeriliazeGraph(){
 	memcpy(p, "\"nodes\":[", FSIZE("\"nodes\":["));
 	p += FSIZE("\"nodes\":[");
 
-	for (size_t i = 0; i < Nodes.count; i++) {
-		Node *n = NodeAt(i);
-		//printf("Node : %s | %s\n", n->label, n->parent ? n->parent->label : "NONE");
-	}
-
-	for (size_t i = 0; i < Nodes.count; i++) {
+	for (size_t i = 0; i < nc->count; i++) {
 		if (i) *p++ = ',';
 
-		Node *n = NodeAt(i);
+		Node *n = NodeAt(nc, i);
 
 		if (n->hasParent)
 			p += sprintf(
 					p,
 					"{\"name\":\"%s\",\"activation\":%.2f,\"weight\":%.2f,\"parent\":%zu,\"id\":%zu}\n",
 					n->label,
-					read_node_activation(n),
-					read_node_weight(n),
+					read_node_activation(nc, n),
+					read_node_weight(nc, n),
 					n->parent,
 					n->globalIndex
 				    );
@@ -70,8 +65,8 @@ char* SeriliazeGraph(){
 					p,
 					"{\"name\":\"%s\",\"activation\":%.2f,\"weight\":%.2f,\"id\":%zu}\n",
 					n->label,
-					read_node_activation(n),
-					read_node_weight(n),
+					read_node_activation(nc, n),
+					read_node_weight(nc, n),
 					n->globalIndex
 				    );
 	}
@@ -85,8 +80,8 @@ char* SeriliazeGraph(){
 
 	_Bool firstConnection = 1;
 
-	for (size_t i = 0; i < Nodes.count; i++) {
-		Node *n = NodeAt(i);
+	for (size_t i = 0; i < nc->count; i++) {
+		Node *n = NodeAt(nc, i);
 
 		for (size_t j = 0; j < n->ncount; j++) {
 			Connection c = n->neighbours[j];
@@ -100,8 +95,8 @@ char* SeriliazeGraph(){
 				"{\"nodes\":[%zu,%zu],\"weight\":%.2f,\"activation\":%.2f}\n",
 				n->globalIndex,
 				c.target,
-				read_connection_weight(&c),
-				read_connection_activation(&c)
+				read_connection_weight(nc, &c),
+				read_connection_activation(nc, &c)
 			);
 		}
 	}
@@ -113,8 +108,7 @@ char* SeriliazeGraph(){
 	return buf;
 }
 
-_Bool ExportGraphTo(char* directory){
-	char* buf = SeriliazeGraph();
+_Bool ExportGraphTo(char* directory, NodeContainer *nc){
+	char* buf = SeriliazeGraph(nc);
 	return WriteGraphAndFreeData(directory, buf);
 }
-

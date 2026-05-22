@@ -175,7 +175,7 @@ void start_ds_session(Task *task, char* id, String* out, User *user){
 
 	ds_emit(id, "p-mem", mem.persistent.p, mem.persistent.len);
 
-	RefreshGraph();
+	RefreshGraph(&user->nodes);
 
 	ds_emit(id, "ds-start", "{\"start\" : true}", FSIZE("{\"start\" : true}"));
 	

@@ -63,23 +63,13 @@ Goal *FindGoalFromIndex(const char *journey_id, size_t index) {
 	return j->goals[index - 1];
 }
 
-Goal *FindGoalGlobal(size_t index) {
-	if (index == 0) return NULL;
-	for (size_t i = 0; i < JourneyCount; i++) {
-		Journey *j = &JourneyTable[i];
-		for (size_t k = 0; k < j->goals_count; k++) {
-			if (j->goals[k] && j->goals[k]->localIndex == index)
-				return j->goals[k];
-		}
-	}
-	return NULL;
-}
-
-Goal **GetGoalsSorted(size_t *out_count) {
+Goal **GetGoalsSorted(size_t *out_count, const char *journey_id) {
 	size_t total = 0;
-	for (size_t i = 0; i < JourneyCount; i++)
+	for (size_t i = 0; i < JourneyCount; i++) {
+		if (strcmp(JourneyTable[i].id, journey_id) != 0) continue;
 		for (size_t k = 0; k < JourneyTable[i].goals_count; k++)
 			if (JourneyTable[i].goals[k]) total++;
+	}
 
 	*out_count = total;
 	if (total == 0)
@@ -91,6 +81,7 @@ Goal **GetGoalsSorted(size_t *out_count) {
 	size_t w = 0;
 	for (size_t i = 0; i < JourneyCount; i++) {
 		Journey *j = &JourneyTable[i];
+		if (strcmp(j->id, journey_id) != 0) continue;
 		for (size_t k = 0; k < j->goals_count; k++)
 			if (j->goals[k]) arr[w++] = j->goals[k];
 	}

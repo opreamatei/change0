@@ -365,8 +365,9 @@ target_include_directories(user-management PUBLIC
 	${CMAKE_SOURCE_DIR}/c/lib/util
 	${CMAKE_SOURCE_DIR}/c/lib/jsonp
 	${CMAKE_SOURCE_DIR}/c/ne/goal
+	${CMAKE_SOURCE_DIR}/c/ne
 	)
-target_link_libraries(user-management PUBLIC util journey)
+target_link_libraries(user-management PUBLIC util journey node graphexport)
 
 add_executable(change ${CMAKE_SOURCE_DIR}/c/main.c)
 target_include_directories(change PRIVATE

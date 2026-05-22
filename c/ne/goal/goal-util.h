@@ -86,8 +86,7 @@ static void create_goal_task(String* input1, String* input2, String *feedback, T
 
 /* Implemented in journey.c; declared here so goal files can use without a circular include. */
 Goal *FindGoalFromIndex(const char *journey_id, size_t index);
-Goal *FindGoalGlobal(size_t index);
-Goal **GetGoalsSorted(size_t *out_count);
+Goal **GetGoalsSorted(size_t *out_count, const char *journey_id);
 void ClearAllJourneyGoals(void);
 void RemoveGoalFromJourneys(Goal *g);
 
@@ -102,10 +101,10 @@ void CreateGoalDSId(char* name, char* deep_search_id);
 void PersonalizeGoal(String* input1, String *input2, String* out, char* goalId, String *feedback, start_ds_session_like_func start_ds_session, const char *journey_id, User *user);
 
 Goal *CalcGoalRoot(Goal *g);
-Goal *FindGoalByID(goalIDType id);
+Goal *FindGoalByID(goalIDType id, const char *journey_id);
 void SerializeGoalList(Goal **goals, size_t count, String *buffer);
-void SerializeAllGoals(String *buffer);
+void SerializeAllGoals(String *buffer, const char *journey_id);
 
-Goal** GetLeafDueGoals(size_t *size);
+Goal** GetLeafDueGoals(size_t *size, const char *journey_id);
 
 #endif

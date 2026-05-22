@@ -2,6 +2,7 @@
 #define USER_MANAGEMENT_SYSTEM
 
 #include "util.h"
+#include "ne/node.h"
 #include "journey.h"
 
 #define MAX_USERS 8
@@ -19,6 +20,7 @@ typedef struct UserType {
 	journey_id_like journeys[USER_MAX_JOURNEYS];
 	size_t journey_count;
 
+	NodeContainer nodes;
 } User;
 
 extern User USER_TABLE[MAX_USERS];

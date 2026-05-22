@@ -1610,7 +1610,7 @@ Goal* StartGoalDeepFromGoal(Goal *g, User *user) {
 }
 
 Goal* StartGoalDeep(goalIDType goalID, User *user) {
-	Goal* g = FindGoalByID(goalID);
+	Goal* g = FindGoalByID(goalID, user->journeys[0]);
 	change_assert(g, "Goal not found in StartGoalDeep: %s", goalID);
 	return StartGoalDeepFromGoal(g, user);
 }
@@ -1618,7 +1618,7 @@ Goal* StartGoalDeep(goalIDType goalID, User *user) {
 Goal** GetSessionGoals(size_t *out_len, User *user) {
 	*out_len = 0;
 	size_t goals_len = 0;
-	Goal **goals = GetGoalsSorted(&goals_len);
+	Goal **goals = GetGoalsSorted(&goals_len, user->journeys[0]);
 
 	Goal *seen[1024] = {0};
 	size_t count = 0;
@@ -1644,7 +1644,7 @@ Goal** GetSessionGoals(size_t *out_len, User *user) {
 }
 
 time_t StartGoal(goalIDType goalID, User *user){
-	Goal* g = FindGoalByID(goalID);
+	Goal* g = FindGoalByID(goalID, user->journeys[0]);
 	change_assert(g, "Goal not found, target goal id %s, serialized goals.", goalID);
 
 	time_t now = change_time_now();
@@ -1680,7 +1680,7 @@ time_t EndGoalFromGoal(Goal *g, User *user){
 }
 
 time_t EndGoal(goalIDType goalID, User *user){
-	Goal* g = FindGoalByID(goalID);
+	Goal* g = FindGoalByID(goalID, user->journeys[0]);
 	change_assert(g, "Goal not found, target goal id %s, serialized goals.", goalID);
 
 	return EndGoalFromGoal(g, user);

@@ -37,7 +37,7 @@ static Goal *next_leaf(Goal *g) {
 	}
 }
 
-void RefreshSchedule() {
+void RefreshSchedule(const char *journey_id) {
 	if (SCHEDULE_TABLE) {
 		free(SCHEDULE_TABLE);
 		SCHEDULE_TABLE = NULL;
@@ -46,7 +46,7 @@ void RefreshSchedule() {
 	SCHEDULE_TABLE_LEN = 0;
 
 	size_t due_len = 0;
-	Goal **due = GetLeafDueGoals(&due_len);
+	Goal **due = GetLeafDueGoals(&due_len, journey_id);
 
 	if (due_len == 0) {
 		SCHEDULE_NEEDS_REFRESH = 0;
@@ -85,6 +85,8 @@ void RefreshSchedule() {
 		while (g) {
 			SCHEDULE_TABLE[SCHEDULE_TABLE_LEN].time = start_time;
 			SCHEDULE_TABLE[SCHEDULE_TABLE_LEN].goalIndex = g->localIndex;
+			strncpy(SCHEDULE_TABLE[SCHEDULE_TABLE_LEN].journey_id, g->journey_id, 32);
+			SCHEDULE_TABLE[SCHEDULE_TABLE_LEN].journey_id[32] = '\0';
 			SCHEDULE_TABLE_LEN++;
 
 			time_t supposed_end_time = start_time + CalcGoalRequiredTime(g);
@@ -101,15 +103,15 @@ void RefreshSchedule() {
 	SCHEDULE_NEEDS_REFRESH = 0;
 }
 
-const struct ScheduleEntry* GetSchedule(size_t *out_len) {
+const struct ScheduleEntry* GetSchedule(size_t *out_len, const char *journey_id) {
 	if (SCHEDULE_NEEDS_REFRESH)
-		RefreshSchedule();
+		RefreshSchedule(journey_id);
 	*out_len = SCHEDULE_TABLE_LEN;
 	return SCHEDULE_TABLE;
 }
 
 // The threshold in second filters goals from x seconds away
-void SerializeScheduleData(String *buffer, time_t threshold){
+void SerializeScheduleData(String *buffer, time_t threshold, const char *journey_id){
 	time_t absolute_time = change_time_now() + threshold;
 	char absolute_time_buf[128];
 	snprintf(absolute_time_buf, sizeof(absolute_time_buf), "%s", ctime(&absolute_time));
@@ -118,7 +120,7 @@ void SerializeScheduleData(String *buffer, time_t threshold){
 	CatTemplateString(buffer, "USER SCHEDULE REPORT, starting at or after %s:\n\n[", absolute_time_buf);
 
 	size_t schedule_len = 0;
-	const struct ScheduleEntry *schedule_data = GetSchedule(&schedule_len);
+	const struct ScheduleEntry *schedule_data = GetSchedule(&schedule_len, journey_id);
 
 	time_t day_work_end = absolute_time + 60 * 60 * 24;
 	time_t week_work_end = absolute_time + 60 * 60 * 24 * 7;
@@ -133,7 +135,7 @@ void SerializeScheduleData(String *buffer, time_t threshold){
 
 		if (event.time < absolute_time) continue;
 
-		Goal* goal = FindGoalGlobal(event.goalIndex);
+		Goal* goal = FindGoalFromIndex(event.journey_id, event.goalIndex);
 		change_assert(goal, "Found event entry with invalid goal.\n");
 
 			time_t req_time = CalcGoalRequiredTime(goal);
@@ -162,7 +164,7 @@ void SerializeScheduleData(String *buffer, time_t threshold){
 
 		if (event.time < absolute_time) continue;
 
-		Goal* goal = FindGoalGlobal(event.goalIndex);
+		Goal* goal = FindGoalFromIndex(event.journey_id, event.goalIndex);
 		change_assert(goal, "Found event entry with invalid goal.\n");
 
 			size_t l;

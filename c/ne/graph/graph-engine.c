@@ -48,25 +48,25 @@ static void set_activation(Node *n, time_t now, double boost_per_touch)
     n->pendingTouches = 0;
     n->lastTouched = now;
 }
-				 
-void RefreshGraph(){
-	//if (!Nodes.needsRefresh) return;
-	if (!Nodes.init || Nodes.count == 0) return;
-	
+
+void RefreshGraph(NodeContainer *nc){
+	//if (!nc->needsRefresh) return;
+	if (!nc->init || nc->count == 0) return;
+
 	// decrease connection and activation on every instance
 	time_t currTime = change_time_now();
 
 	double k = ACTIVATION_IMPORTANCE_TO_NODE_WEIGHT;
-	double c = NCOUNT_PENALTY_TO_NODE_WEIGHT; 
-		
+	double c = NCOUNT_PENALTY_TO_NODE_WEIGHT;
+
 	double mx_seen = -1, mx_used = -1, mx_support = -1;
 
-	double *support_buffer = malloc(sizeof(double) * Nodes.count);
+	double *support_buffer = malloc(sizeof(double) * nc->count);
 	cassert(support_buffer, "Couldn't allocate memory for support\n");
 
 	// compute maxes for normalziation
-	for (size_t i = 0; i < Nodes.count; i++){
-		Node* n = NodeAt(i);
+	for (size_t i = 0; i < nc->count; i++){
+		Node* n = NodeAt(nc, i);
 
 		if (n->times_seen > mx_seen) mx_seen = n->times_seen;
 		if (n->times_used > mx_used) mx_used = n->times_used;
@@ -76,7 +76,7 @@ void RefreshGraph(){
 
 		for (size_t j = 0; j < n->ncount; j++){
 			refresh_connection(&n->neighbours[j], currTime, CONN_ACT_INCR);
-			support += read_connection_weight(&n->neighbours[j]) + k * read_connection_activation(&n->neighbours[j]);
+			support += read_connection_weight(nc, &n->neighbours[j]) + k * read_connection_activation(nc, &n->neighbours[j]);
 		}
 
 		support /= 1 + c * n->ncount;
@@ -86,8 +86,8 @@ void RefreshGraph(){
 	}
 
 
-	for (size_t i = 0; i < Nodes.count; i++){
-		Node* n = NodeAt(i);
+	for (size_t i = 0; i < nc->count; i++){
+		Node* n = NodeAt(nc, i);
 
 		double seen_norm = 0;
 		double used_norm = 0;
@@ -109,11 +109,11 @@ void RefreshGraph(){
 
 		// set weight
 		n->_weight = NODE_OLD_WEIGHT_RELEVANCE * old_weight + (1.0 - NODE_OLD_WEIGHT_RELEVANCE) * target_weight;
-		
+
 
 		set_activation(n, currTime, NODE_ACT_INCR);
 	}
 
 	free(support_buffer);
-	Nodes.needsRefresh = 0;
+	nc->needsRefresh = 0;
 }

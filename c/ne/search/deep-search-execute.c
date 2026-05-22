@@ -28,19 +28,19 @@ void exec_response(json_value* doc, String *dynamic_mem, size_t depth, String *c
 	}
 
 	if (command == 1)
-		run1(doc, dynamic_mem, ds_id);
+		run1(doc, dynamic_mem, ds_id, user);
 	else if (command == 2)
-		run2(doc, dynamic_mem, ds_id);
+		run2(doc, dynamic_mem, ds_id, user);
 	else if (command == 3)
-		run3(doc, dynamic_mem, ds_id);
+		run3(doc, dynamic_mem, ds_id, user);
 	else if (command == 4)
-		run4(doc, dynamic_mem, ds_id);
+		run4(doc, dynamic_mem, ds_id, user);
 	else if (command == 5)
-		run5(doc, dynamic_mem, ds_id);
+		run5(doc, dynamic_mem, ds_id, user);
 	else if (command == 6)
-		run6(doc, dynamic_mem, ds_id);
+		run6(doc, dynamic_mem, ds_id, user);
 	else if (command == 7)
-		run7(doc, dynamic_mem, ds_id);
+		run7(doc, dynamic_mem, ds_id, user);
 	else if (command == 8)
 		run8(doc, dynamic_mem, ds_id, user);
 	else if (command == 9)

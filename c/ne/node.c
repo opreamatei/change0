@@ -8,59 +8,69 @@
 #include "node.h"
 #include "../lib/util/util.h"
 
-_Bool FreeNodes(){
-	if (Nodes.items != NULL){
-		free(Nodes.items);
-		Nodes.items = NULL;
+const char context_labels[CONTEXT_COUNT][NODE_LABEL_CAP] = {
+	"profesie",
+	"emotie",
+	"pasiuni",
+	"generalitati",
+	"subiectiv",
+};
+
+_Bool FreeNodes(NodeContainer *nc){
+	if (nc->items != NULL){
+		free(nc->items);
+		nc->items = NULL;
 	}
-	Nodes.capacity = 0;
-	Nodes.count = 0;
-	Nodes.init = 0;
+	nc->capacity = 0;
+	nc->count = 0;
+	nc->init = 0;
 
 	return 1;
 }
 
-_Bool InitNodes(){
-	if (Nodes.init) FreeNodes();
+_Bool InitNodes(NodeContainer *nc){
+	if (nc->init) FreeNodes(nc);
 
-	Nodes.capacity = INIT_NODE_CAP;
-	Nodes.count = 0;
-	Nodes.items = (Node*)malloc(sizeof(Node) * INIT_NODE_CAP);
-	Nodes.needsRefresh = 0;
+	nc->capacity = INIT_NODE_CAP;
+	nc->count = 0;
+	nc->items = (Node*)malloc(sizeof(Node) * INIT_NODE_CAP);
+	nc->needsRefresh = 0;
+	nc->connection_count = 0;
+	for (int i = 0; i < CONTEXT_COUNT; i++) nc->contexts[i] = 0;
 
-	if (Nodes.items == NULL) {
-		Nodes.capacity = 0;
-		Nodes.init = 0;
+	if (nc->items == NULL) {
+		nc->capacity = 0;
+		nc->init = 0;
 		return 0;
 	}
 
-	Nodes.init = 1;
+	nc->init = 1;
 	return 1;
 }
 
 // Parent can be Nullable
-Node* AddNodeEx(char* label, size_t label_len, double activation, double weight, _Bool hasParent, size_t parent, _Bool fertile, time_t now){
-	if (!label || !Nodes.init || !Nodes.items) return NULL;
+Node* AddNodeEx(NodeContainer *nc, char* label, size_t label_len, double activation, double weight, _Bool hasParent, size_t parent, _Bool fertile, time_t now){
+	if (!label || !nc->init || !nc->items) return NULL;
 	if (label_len > NODE_LABEL_CAP - 2) label[NODE_LABEL_CAP-1] = '\0';
 
-	if (Nodes.count >= Nodes.capacity) {
-		size_t new_capacity = MAX(INIT_NODE_CAP,Nodes.capacity) * 2;
-		Node* tmp = realloc( Nodes.items, sizeof(Node) * new_capacity);
+	if (nc->count >= nc->capacity) {
+		size_t new_capacity = MAX(INIT_NODE_CAP, nc->capacity) * 2;
+		Node* tmp = realloc(nc->items, sizeof(Node) * new_capacity);
 		if (tmp == NULL){
 			fprintf(stderr, "Error: Couldn't allocate more memory to add nodes");
 			return NULL;
 		};
-		Nodes.items = tmp;
-		Nodes.capacity = new_capacity;
+		nc->items = tmp;
+		nc->capacity = new_capacity;
 	}
-	
+
 	lowerAll(&label, label_len);
 
-	Node* node = NodeAt(Nodes.count);
+	Node* node = NodeAt(nc, nc->count);
 	node->labelLength = label_len;
 	node->nsize = NODE_NBRS_CAP;
 	node->ncount = 0;
-	node->globalIndex = Nodes.count;
+	node->globalIndex = nc->count;
 	node->neighbours = malloc(node->nsize * sizeof(Connection));
 	node->_activation = activation;
 	node->_weight = weight;
@@ -70,13 +80,13 @@ Node* AddNodeEx(char* label, size_t label_len, double activation, double weight,
 
 	node->lastTouched = now;
 	node->pendingTouches = 0;
-	
+
 	memcpy(node->label, label, node->labelLength);
 	node->label[node->labelLength] = '\0';
 
-	if (hasParent && NodeExists(parent)){
-		dic_add(NodeAt(parent)->childrenIndex, node->label, node->labelLength);
-		*(NodeAt(parent)->childrenIndex->value) = node->globalIndex;
+	if (hasParent && NodeExists(nc, parent)){
+		dic_add(NodeAt(nc, parent)->childrenIndex, node->label, node->labelLength);
+		*(NodeAt(nc, parent)->childrenIndex->value) = node->globalIndex;
 		node->parent = parent;
 		node->hasParent = 1;
 	}
@@ -86,27 +96,20 @@ Node* AddNodeEx(char* label, size_t label_len, double activation, double weight,
 	else
 		node->childrenIndex = NULL;
 
-	Nodes.count ++;
+	nc->count++;
 
 	return node;
 }
 
 Connection* LinkExists(Node* A, Node* B){
-	// scan if A already contains B
-	// TODO make this faster than O(A neighbours)
-	
 	for (size_t i = 0; i < A->ncount; i++){
 		if (A->neighbours[i].target == B->globalIndex){
-			// HIT
-			// TODO when adding a new connection, increase activation based on its initial activation
 			return &(A->neighbours[i]);
 		};
 	}
 
 	for (size_t i = 0; i < B->ncount; i++){
 		if (B->neighbours[i].target == A->globalIndex){
-			// HIT
-			// TODO when adding a new connection, increase activation based on its initial activation
 			return &(B->neighbours[i]);
 		};
 	}
@@ -116,7 +119,7 @@ Connection* LinkExists(Node* A, Node* B){
 
 // Unidirectional Linkage
 // Danger: Always check the Link doesn't exist to avoid overriding
-_Bool UniLinkEx(Node* A, Node* B, double activation, double weight){
+_Bool UniLinkEx(NodeContainer *nc, Node* A, Node* B, double activation, double weight){
 	if (!A || !B) return 0;
 
 	long a = A->ncount;
@@ -142,85 +145,85 @@ _Bool UniLinkEx(Node* A, Node* B, double activation, double weight){
 	c->lastTouched = change_time_now();
 	c->pendingTouches = 0;
 
-	A->ncount ++;
+	A->ncount++;
 
-	ConnectionCount ++;
+	nc->connection_count++;
 
 	return 1;
 }
 
-_Bool UniLink(Node* A, Node* B){
-	return UniLinkEx(A, B, NODE_INIT_ACT, NODE_INIT_WGHT);
+_Bool UniLink(NodeContainer *nc, Node* A, Node* B){
+	return UniLinkEx(nc, A, B, NODE_INIT_ACT, NODE_INIT_WGHT);
 }
 
 // Bidirectional Linkage
-_Bool BiLink(Node* A, Node* B){
-	return UniLink(A, B) && UniLink(B, A);
+_Bool BiLink(NodeContainer *nc, Node* A, Node* B){
+	return UniLink(nc, A, B) && UniLink(nc, B, A);
 }
 
-_Bool BiLinkEx(Node* A, Node* B, double activation, double weight){
-	return UniLinkEx(A, B, activation, weight) && UniLinkEx(B, A, activation, weight);
+_Bool BiLinkEx(NodeContainer *nc, Node* A, Node* B, double activation, double weight){
+	return UniLinkEx(nc, A, B, activation, weight) && UniLinkEx(nc, B, A, activation, weight);
 }
 
 // TODO : Remove lowerAll by assuring it's imposibile for uppercase characters to appear in the first place.
-Node* FindNode(char* target, uint_fast8_t length, Node* parent){
+Node* FindNode(NodeContainer *nc, char* target, uint_fast8_t length, Node* parent){
 	if (parent == NULL || target == NULL || length == 0) return NULL;
 	lowerAll(&target, (size_t) length);
 
 	if (dic_find(parent->childrenIndex, (void*)target, length)){
 		long index = *parent->childrenIndex->value;
-		if (index < 0 || index >= Nodes.count) return NULL;
-		return NodeAt(index);
+		if (index < 0 || (size_t)index >= nc->count) return NULL;
+		return NodeAt(nc, index);
 	}
 	return NULL;
 }
 
-Node* FindNodeGlobal(char* target, uint_fast8_t length, size_t stop){
-	if(stop == 0) stop = Nodes.count;
+Node* FindNodeGlobal(NodeContainer *nc, char* target, uint_fast8_t length, size_t stop){
+	if(stop == 0) stop = nc->count;
 
 	for (size_t i = 0; i < stop; i++)
-		if (strcmp(NodeAt(i)->label, target) == 0)
-			return NodeAt(i);
+		if (strcmp(NodeAt(nc, i)->label, target) == 0)
+			return NodeAt(nc, i);
 
 	return 0;
 }
 
-double read_node_activation(Node* n){
+double read_node_activation(NodeContainer *nc, Node* n){
     double o = n->_activation;
     while (n->hasParent){
-        n = NodeAt(n->parent);
+        n = NodeAt(nc, n->parent);
         if (!n) break;
         o *= n->_activation;
     }
     return o;
 }
 
-double read_node_weight(Node* n){
+double read_node_weight(NodeContainer *nc, Node* n){
     double o = n->_weight;
     while (n->hasParent){
-        n = NodeAt(n->parent);
+        n = NodeAt(nc, n->parent);
         if (!n) break;
         o *= n->_weight;
     }
     return o;
 }
 
-double read_connection_activation(Connection* c){
-    double o = c->_activation;  
-    Node *n = NodeAt(c->target);
+double read_connection_activation(NodeContainer *nc, Connection* c){
+    double o = c->_activation;
+    Node *n = NodeAt(nc, c->target);
     while (n && n->hasParent){
-        n = NodeAt(n->parent);
+        n = NodeAt(nc, n->parent);
         if (!n) break;
-        o *= n->_activation; 
+        o *= n->_activation;
     }
     return o;
 }
 
-double read_connection_weight(Connection* c){
+double read_connection_weight(NodeContainer *nc, Connection* c){
     double o = c->_weight;
-    Node *n = NodeAt(c->target);
+    Node *n = NodeAt(nc, c->target);
     while (n && n->hasParent){
-        n = NodeAt(n->parent);
+        n = NodeAt(nc, n->parent);
         if (!n) break;
         o *= n->_weight;
     }

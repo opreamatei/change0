@@ -51,8 +51,7 @@ int client_server_port(void)
 
 /* ========================= EXTERNAL GRAPH API ========================= */
 
-extern _Bool ExportGraphTo(char* path);
-extern void LoadGraphFromFile(char* path);
+extern void LoadGraphFromFile(char *path, NodeContainer *nc);
 
 /* ========================= HTTP REQUEST ========================= */
 
@@ -84,8 +83,8 @@ static pthread_mutex_t sse_clients_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* ========================= INTERNAL HELPERS ========================= */
 
-static char* get_graph_data(void) {
-	return SeriliazeGraph();
+static char* get_graph_data(User *user) {
+	return SeriliazeGraph(&user->nodes);
 }
 
 int server_is_running(void) {
@@ -620,12 +619,12 @@ static void goal_id_to_cstr(const Goal* g, char out[GOAL_ID_LEN + 1]) {
 	out[GOAL_ID_LEN] = '\0';
 }
 
-static Goal* find_goal_by_id_string(const char* goal_id) {
+static Goal* find_goal_by_id_string(const char* goal_id, const char *journey_id) {
 	if (!goal_id)
 		return NULL;
 
 	size_t goals_len = 0;
-	Goal** goals = GetGoalsSorted(&goals_len);
+	Goal** goals = GetGoalsSorted(&goals_len, journey_id);
 
 	Goal *found = NULL;
 	for (size_t i = 0; i < goals_len; i++) {
@@ -647,7 +646,7 @@ static Goal* find_goal_by_id_string(const char* goal_id) {
 	return found;
 }
 
-static Goal* find_goal_from_request_body(const HttpRequest* req, char out_goal_id[GOAL_ID_LEN + 1]) {
+static Goal* find_goal_from_request_body(const HttpRequest* req, char out_goal_id[GOAL_ID_LEN + 1], const char *journey_id) {
 	int goal_index_int = 0;
 	char goal_id[256];
 	Goal* goal = NULL;
@@ -669,7 +668,7 @@ static Goal* find_goal_from_request_body(const HttpRequest* req, char out_goal_i
 			return NULL;
 		}
 
-		goal = FindGoalGlobal((size_t)goal_index_int);
+		goal = FindGoalFromIndex(journey_id, (size_t)goal_index_int);
 	} else if (
 		json_get_string_field(req->body, "goal-id", goal_id, sizeof(goal_id)) ||
 		json_get_string_field(req->body, "goalId", goal_id, sizeof(goal_id)) ||
@@ -679,7 +678,7 @@ static Goal* find_goal_from_request_body(const HttpRequest* req, char out_goal_i
 			return NULL;
 		}
 
-		goal = find_goal_by_id_string(goal_id);
+		goal = find_goal_by_id_string(goal_id, journey_id);
 	}
 
 	if (!goal) {
@@ -693,7 +692,7 @@ static Goal* find_goal_from_request_body(const HttpRequest* req, char out_goal_i
 	return goal;
 }
 
-static Goal* find_goal_from_request_body_by_id(const HttpRequest* req, char out_goal_id[GOAL_ID_LEN + 1]) {
+static Goal* find_goal_from_request_body_by_id(const HttpRequest* req, char out_goal_id[GOAL_ID_LEN + 1], const char *journey_id) {
 	char goal_id[256];
 	Goal* goal = NULL;
 
@@ -717,7 +716,7 @@ static Goal* find_goal_from_request_body_by_id(const HttpRequest* req, char out_
 		return NULL;
 	}
 
-	goal = find_goal_by_id_string(goal_id);
+	goal = find_goal_by_id_string(goal_id, journey_id);
 	if (!goal) {
 		return NULL;
 	}
@@ -810,11 +809,11 @@ static void append_goal_json(String* out, Goal* g) {
 	free(esc_id);
 }
 
-static char* serialize_goals_container_json(void) {
+static char* serialize_goals_container_json(const char *journey_id) {
 	size_t goals_len = 0;
 	size_t active_count = 0;
 
-	Goal** goals = GetGoalsSorted(&goals_len);
+	Goal** goals = GetGoalsSorted(&goals_len, journey_id);
 
 	String out;
 
@@ -896,7 +895,7 @@ static char* serialize_goal_children_json(Goal* g, User *user) {
 	_Bool first_child = 1;
 
 	for (size_t i = 0; i < g->subgoals_len; i++) {
-		Goal* child = FindGoalGlobal(g->subgoals[i]);
+		Goal* child = FindGoalFromIndex(g->journey_id, g->subgoals[i]);
 
 		if (!child)
 			continue;
@@ -1090,8 +1089,8 @@ static _Bool middleware_emit_event(const char* id, const char* type, const char*
 
 /* ========================= ROUTE HANDLERS ========================= */
 
-static void handle_get_graph(int client_fd) {
-	char* graph_json = get_graph_data();
+static void handle_get_graph(int client_fd, User *user) {
+	char* graph_json = get_graph_data(user);
 
 	if (!graph_json) {
 		send_json_response(
@@ -1127,7 +1126,7 @@ static void handle_post_graph_export(int client_fd, User *user) {
 
 	GetUserGraphExportPath(user, path);
 
-	if (!ExportGraphTo(path)) {
+	if (!ExportGraphTo(path, &user->nodes)) {
 		send_json_response(
 			client_fd,
 			500,
@@ -1173,14 +1172,14 @@ static void handle_get_graph_load(int client_fd, User *user) {
 		return;
 	}
 
-	LoadGraphFromFile(path);
+	LoadGraphFromFile(path, &user->nodes);
 
 	snprintf(body, sizeof(body), "{\"ok\":true,\"path\":\"%s\"}", path);
 	send_json_response(client_fd, 200, "OK", body);
 }
 
-static void handle_get_goal_list(int client_fd) {
-	char* goals_json = serialize_goals_container_json();
+static void handle_get_goal_list(int client_fd, User *user) {
+	char* goals_json = serialize_goals_container_json(user->journeys[0]);
 
 	if (!goals_json) {
 		send_json_response(
@@ -1266,13 +1265,13 @@ static void handle_post_goal_decompose(int client_fd, const HttpRequest* req, Us
 			return;
 		}
 
-		goal = FindGoalGlobal((size_t)goal_index_int);
+		goal = FindGoalFromIndex(user->journeys[0], (size_t)goal_index_int);
 	} else if (
 		json_get_string_field(req->body, "goal-id", goal_id, sizeof(goal_id)) ||
 		json_get_string_field(req->body, "goalId", goal_id, sizeof(goal_id)) ||
 		json_get_string_field(req->body, "id", goal_id, sizeof(goal_id))
 	) {
-		goal = find_goal_by_id_string(goal_id);
+		goal = find_goal_by_id_string(goal_id, user->journeys[0]);
 	} else {
 		send_json_response(
 			client_fd,
@@ -1354,7 +1353,7 @@ static void handle_post_goal_status_action(
 		return;
 	}
 
-	goal = find_goal_from_request_body(req, goal_id);
+	goal = find_goal_from_request_body(req, goal_id, user->journeys[0]);
 	if (!goal) {
 		send_json_response(
 			client_fd,
@@ -1749,7 +1748,7 @@ static void handle_post_goal_repair(int client_fd, const HttpRequest* req, User 
 		return;
 	}
 
-	target = find_goal_from_request_body_by_id(req, goal_id);
+	target = find_goal_from_request_body_by_id(req, goal_id, user->journeys[0]);
 	if (!target) {
 		send_json_response(
 			client_fd,
@@ -2188,16 +2187,16 @@ static void handle_get_session_goals(int client_fd, User *user) {
 	free(out.p);
 }
 
-static void handle_get_schedule(int client_fd) {
+static void handle_get_schedule(int client_fd, User *user) {
 	size_t len = 0;
-	const struct ScheduleEntry* entries = GetSchedule(&len);
+	const struct ScheduleEntry* entries = GetSchedule(&len, user->journeys[0]);
 	String out;
 
 	InitString(&out, 1024 + len * 256);
 	CatTemplateString(&out, "{\"ok\":true,\"count\":%zu,\"entries\":[", len);
 
 	for (size_t i = 0; i < len; i++) {
-		Goal* g = FindGoalGlobal(entries[i].goalIndex);
+		Goal* g = FindGoalFromIndex(entries[i].journey_id, entries[i].goalIndex);
 		char* esc_title = json_escape_dup(g ? c_str(&g->title) : "");
 
 		if (i > 0) CatString(&out, FSTRING_SIZE_PARAMS(","));
@@ -2280,7 +2279,7 @@ static int handle_request(int client_fd, const HttpRequest* req, User *user) {
 	}
 
 	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/graph") == 0) {
-		handle_get_graph(client_fd);
+		handle_get_graph(client_fd, user);
 		return 0;
 	}
 
@@ -2340,7 +2339,7 @@ static int handle_request(int client_fd, const HttpRequest* req, User *user) {
 	}
 
 	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/goal/list") == 0) {
-		handle_get_goal_list(client_fd);
+		handle_get_goal_list(client_fd, user);
 		return 0;
 	}
 
@@ -2387,7 +2386,7 @@ static int handle_request(int client_fd, const HttpRequest* req, User *user) {
 			return 0;
 		}
 
-		Goal* orig = find_goal_from_request_body(req, orig_goal_id);
+		Goal* orig = find_goal_from_request_body(req, orig_goal_id, user->journeys[0]);
 		if (!orig) {
 			send_json_response(client_fd, 404, "Not Found", "{\"ok\":false,\"error\":\"goal_not_found\"}");
 			return 0;
@@ -2438,7 +2437,7 @@ static int handle_request(int client_fd, const HttpRequest* req, User *user) {
 	}
 
 	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/schedule") == 0) {
-		handle_get_schedule(client_fd);
+		handle_get_schedule(client_fd, user);
 		return 0;
 	}
 

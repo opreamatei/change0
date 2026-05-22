@@ -55,10 +55,6 @@ void JourneySystemLazyLoad(journey_str_func *title, journey_str_func *info){
 		*info = (journey_str_func)ReadGlobalPointer(FSTRING_SIZE_PARAMS("journey_info"));
 }
 
-Goal *FindGoalGlobal(size_t index){
-	return FindGoalFromIndex(NULL, index);
-}
-
 void CreateGoalDSId(char* name, char* deep_search_id){
 	size_t index_end = MIN(strlen(name), 200);
 	memcpy(deep_search_id, name, index_end);
@@ -136,9 +132,9 @@ void PersonalizeGoal(String* input1, String *input2, String* out, char* goalId, 
 	start_ds_session(&task, search_id, out, user);
 }
 
-Goal *FindGoalByID(goalIDType id){
+Goal *FindGoalByID(goalIDType id, const char *journey_id){
 	size_t len = 0;
-	Goal **goals = GetGoalsSorted(&len);
+	Goal **goals = GetGoalsSorted(&len, journey_id);
 
 	Goal *found = NULL;
 	for (size_t i = 0; i < len; i++){
@@ -249,20 +245,20 @@ void SerializeGoalList(Goal **goals, size_t count, String *buffer) {
 	CatFixed(buffer, "]");
 }
 
-void SerializeAllGoals(String *buffer){
+void SerializeAllGoals(String *buffer, const char *journey_id){
 	size_t count = 0;
-	Goal **goals = GetGoalsSorted(&count);
+	Goal **goals = GetGoalsSorted(&count, journey_id);
 
 	SerializeGoalList(goals, count, buffer);
 
 	free(goals);
 }
 
-Goal** GetLeafDueGoals(size_t *size){
+Goal** GetLeafDueGoals(size_t *size, const char *journey_id){
 
 	*size = 0;
 	size_t goals_len = 0;
-	Goal **goals = GetGoalsSorted(&goals_len);
+	Goal **goals = GetGoalsSorted(&goals_len, journey_id);
 
 	for (size_t i = 0; i < goals_len; i++){
 		Goal *g = goals[i];

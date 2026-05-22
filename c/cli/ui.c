@@ -41,15 +41,15 @@ static inline void clear(){
 	printf("\033[H\033[J");
 }
 
-static void SetUpContexts(){
+static void SetUpContexts(NodeContainer *nc){
 	time_t now = change_time_now();
 	for (int i = 0; i < CONTEXT_COUNT; i++){
-		Node *n = AddNodeEx(context_labels[i], strlen(context_labels[i]), NODE_INIT_ACT, NODE_INIT_WGHT, PARENTLESS, -1, FERTILE, now);
+		Node *n = AddNodeEx(nc, (char *)context_labels[i], strlen(context_labels[i]), NODE_INIT_ACT, NODE_INIT_WGHT, PARENTLESS, -1, FERTILE, now);
 		if(!n){
 			fprintf(stderr, "Critical Error: Couldn't initialize contexts for neuro engine\n");
 			exit(EXIT_FAILURE);
 		}
-		Contexts[i] = n->globalIndex;
+		nc->contexts[i] = n->globalIndex;
 	}
 }
 
@@ -60,8 +60,7 @@ void UIStart(){
 
 	cli_user = USER_COUNT > 0 ? &USER_TABLE[0] : NULL;
 
-	InitNodes();
-	SetUpContexts();
+	SetUpContexts(&cli_user->nodes);
 	InitGlobalPointerMap();
 
 	// Setup Global Pointers
@@ -152,7 +151,7 @@ static void Run(int i){
 	if (options[i].type == SAVEGRAPH){
 		char directory[USER_DIRECTORY_SIZE];
 		GetUserGraphExportPath(cli_user, directory);
-		ExportGraphTo(directory);
+		ExportGraphTo(directory, &cli_user->nodes);
 	}
 
 	if (options[i].type == SAVEGOALS){
@@ -256,7 +255,7 @@ static void Run(int i){
 				}
 			}
 
-			AddContextNodesFromJSON(context, strlen(context), doc);
+			AddContextNodesFromJSON(context, strlen(context), doc, &cli_user->nodes);
 
 			json_value_free(doc);
 		}
@@ -297,7 +296,6 @@ void UILoop(){
 void UIKill(){
 	stop_server();
 	stop_central_server();
-	FreeNodes();
 	FreeGlobalPointerMap();
 	FreeGoals();
 	FreeUserSystem();
