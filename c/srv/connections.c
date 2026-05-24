@@ -26,59 +26,53 @@ static pthread_mutex_t  conn_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* -------- AI-based pair matching -------- */
 
-#define MATCH_SCHEMA \
-	"{\"type\":\"object\"," \
-	"\"properties\":{" \
-	  "\"match\":{\"type\":\"boolean\"}," \
-	  "\"reason\":{\"type\":\"string\"}" \
-	"}," \
-	"\"required\":[\"match\",\"reason\"]," \
-	"\"additionalProperties\":false}"
-
-/* Returns 1 if AI decides a and b are a good match, writes reason into reason_out.
-   Retries up to 3 times on parse failure, feeding the error back to the model. */
-static _Bool ai_should_match(const User *a, const User *b,
-                              char *reason_out, size_t reason_size)
+/*
+ * One AI call that sees all candidates at once.
+ * Returns the number of matches written into out[].
+ * Retries up to 3 times on parse failure.
+ */
+static size_t ai_find_matches(
+	const User *a,
+	User **candidates, size_t candidate_count,
+	MatchResult *out, size_t out_max)
 {
+	if (candidate_count == 0) return 0;
+
 	String feedback;
 	InitString(&feedback, 128);
-
-	_Bool matched = 0;
+	size_t found = 0;
 
 	for (int attempt = 0; attempt < 3; attempt++) {
+		/* Build numbered candidate list */
+		String clist;
+		InitString(&clist, 256 * candidate_count);
+		for (size_t i = 0; i < candidate_count; i++) {
+			CatTemplateString(&clist, "Candidate %zu: %s\n",
+				i + 1,
+				candidates[i]->description.p ? candidates[i]->description.p : "(no description)");
+		}
+
 		String prompt;
-		InitString(&prompt, 1024);
+		InitString(&prompt, 512 + clist.len);
 		CatTemplateString(&prompt,
-			"You are a connection system for a productivity and goal app. "
-			"Decide whether two people are worth introducing to each other — not romantically, "
-			"but because they might find each other intellectually interesting, share a way of thinking, "
-			"or have genuine common ground worth a conversation. "
-			"This is not dating. Do not factor in romantic compatibility. Reply using the required JSON schema.\n\n"
-			"Person A: %s\n"
-			"Person B: %s\n\n"
-			"Set match=true only if there is a real, specific reason they would enjoy meeting — "
-			"shared curiosity, complementary perspectives, or overlapping depth in something. "
-			"Do not match people just because their descriptions are non-empty. "
-			"IMPORTANT: If either description ends with 'Does not want to be matched with: <X>', treat that as a hard exclusion — set match=false if the other person fits X. "
-			"reason must be one sentence shown to both people simultaneously — write it so it reads naturally for either of them. "
-			"Use only 'you both', 'you seem', 'you share', or similar second-person plural phrasing. "
-			"Never use 'A', 'B', 'person A', 'person B', 'one of you', 'the other' — both people read the exact same sentence. "
-			"If match=false, reason can be an empty string.%s",
+			CONN_MATCH_PROMPT,
 			a->description.p ? a->description.p : "(no description)",
-			b->description.p ? b->description.p : "(no description)",
+			clist.p,
 			feedback.len > 0 ? feedback.p : "");
+
+		FreeString(&clist);
 		FreeString(&feedback);
 		InitString(&feedback, 128);
 
 		ai_gpt_request req = {0};
-		req.prompt     = prompt;
-		req.model      = AI_OPENAI_MODEL_GPT_5_4_MINI;
+		req.prompt      = prompt;
+		req.model       = AI_OPENAI_MODEL_GPT_5_4_MINI;
 		req.schema_name = "connection_match";
 		InitString(&req.schema, sizeof(MATCH_SCHEMA) + 1);
 		CatFixed(&req.schema, MATCH_SCHEMA);
 
 		String *raw = ai_openai_call_gpt_request(&req);
-		change_assert(raw, "ai_should_match: OpenAI call failed");
+		change_assert(raw, "ai_find_matches: OpenAI call failed");
 
 		FreeString(&prompt);
 		FreeString(&req.schema);
@@ -93,36 +87,49 @@ static _Bool ai_should_match(const User *a, const User *b,
 			continue;
 		}
 
-		json_value *jmatch  = NULL;
-		json_value *jreason = NULL;
-		for (size_t k = 0; k < doc->u.object.length; k++) {
-			json_object_entry *e = &doc->u.object.values[k];
-			if (strcmp(e->name, "match")  == 0) jmatch  = e->value;
-			if (strcmp(e->name, "reason") == 0) jreason = e->value;
-		}
-
-		if (!jmatch || jmatch->type != json_boolean) {
-			CatFixed(&feedback, "\n[\"match\" field missing or not boolean. Fix it.]");
+		json_value *jmatches = json_object_get(doc, "matches");
+		if (!jmatches || jmatches->type != json_array) {
+			CatFixed(&feedback, "\n[\"matches\" field missing or not an array. Fix it.]");
 			json_value_free(doc);
 			continue;
 		}
 
-		matched = jmatch->u.boolean;
-		if (matched && jreason && jreason->type == json_string) {
-			size_t rlen = jreason->u.string.length;
-			if (rlen >= reason_size) rlen = reason_size - 1;
-			memcpy(reason_out, jreason->u.string.ptr, rlen);
-			reason_out[rlen] = '\0';
-		} else if (matched) {
-			snprintf(reason_out, reason_size, "You seem like compatible people.");
+		_Bool valid = 1;
+		for (unsigned m = 0; m < jmatches->u.array.length && found < out_max; m++) {
+			json_value *item = jmatches->u.array.values[m];
+			if (!item || item->type != json_object) { valid = 0; break; }
+
+			json_value *jidx    = json_object_get(item, "index");
+			json_value *jreason = json_object_get(item, "reason");
+
+			if (!jidx || jidx->type != json_integer) { valid = 0; break; }
+
+			long long idx = jidx->u.integer;
+			if (idx < 0 || (size_t)idx >= candidate_count) continue;
+
+			out[found].index = (size_t)idx;
+			if (jreason && jreason->type == json_string && jreason->u.string.length > 0) {
+				size_t rlen = jreason->u.string.length;
+				if (rlen >= MATCH_REASON_SIZE) rlen = MATCH_REASON_SIZE - 1;
+				memcpy(out[found].reason, jreason->u.string.ptr, rlen);
+				out[found].reason[rlen] = '\0';
+			} else {
+				snprintf(out[found].reason, MATCH_REASON_SIZE, "You seem like compatible people.");
+			}
+			found++;
 		}
 
 		json_value_free(doc);
+		if (!valid) {
+			found = 0;
+			CatFixed(&feedback, "\n[Some match items had invalid fields. Return index (integer) and reason (string) for each.]");
+			continue;
+		}
 		break;
 	}
 
 	FreeString(&feedback);
-	return matched;
+	return found;
 }
 
 /* -------- persistence -------- */
@@ -183,6 +190,13 @@ static void append_message_to_file(const UserConnMessage *m)
 	free(esc_text);
 }
 
+static void copy_str(char *dst, size_t cap, const char *src, size_t len)
+{
+	if (len >= cap) len = cap - 1;
+	memcpy(dst, src, len);
+	dst[len] = '\0';
+}
+
 static void load_connection_from_file(const char *path)
 {
 	change_assert(ConnectionCount < MAX_CONNECTIONS, "connections: table full while loading");
@@ -191,20 +205,44 @@ static void load_connection_from_file(const char *path)
 	if (!data) return;
 
 	json_value *doc = json_parse(data, flen);
-	if (!doc || doc->type != json_object) { free(data); if (doc) json_value_free(doc); return; }
+	if (!doc || doc->type != json_object) {
+		free(data);
+		if (doc) json_value_free(doc);
+		return;
+	}
 
 	UserConn *c = &ConnectionTable[ConnectionCount];
 	memset(c, 0, sizeof(*c));
 
 	json_value *v;
-	v = json_object_get(doc, "id");           if (v && v->type == json_string) { strncpy(c->id, v->u.string.ptr, CONNECTION_ID_SIZE - 1); c->id[CONNECTION_ID_SIZE - 1] = 0; }
-	v = json_object_get(doc, "a");            if (v && v->type == json_string) { strncpy(c->a,  v->u.string.ptr, USER_ID_SIZE - 1);       c->a[USER_ID_SIZE - 1]       = 0; }
-	v = json_object_get(doc, "b");            if (v && v->type == json_string) { strncpy(c->b,  v->u.string.ptr, USER_ID_SIZE - 1);       c->b[USER_ID_SIZE - 1]       = 0; }
-	v = json_object_get(doc, "a_approved");   if (v && v->type == json_boolean) c->a_approved = v->u.boolean ? 1 : 0;
-	v = json_object_get(doc, "b_approved");   if (v && v->type == json_boolean) c->b_approved = v->u.boolean ? 1 : 0;
-	v = json_object_get(doc, "state");        if (v && v->type == json_integer) c->state = (ConnState)v->u.integer;
-	v = json_object_get(doc, "proposed_at");  if (v && v->type == json_integer) c->proposed_at = (time_t)v->u.integer;
-	v = json_object_get(doc, "reason");       if (v && v->type == json_string) { size_t n = v->u.string.length; if (n >= MATCH_REASON_SIZE) n = MATCH_REASON_SIZE - 1; memcpy(c->reason, v->u.string.ptr, n); c->reason[n] = 0; }
+
+	v = json_object_get(doc, "id");
+	if (v && v->type == json_string)
+		copy_str(c->id, CONNECTION_ID_SIZE, v->u.string.ptr, v->u.string.length);
+
+	v = json_object_get(doc, "a");
+	if (v && v->type == json_string)
+		copy_str(c->a, USER_ID_SIZE, v->u.string.ptr, v->u.string.length);
+
+	v = json_object_get(doc, "b");
+	if (v && v->type == json_string)
+		copy_str(c->b, USER_ID_SIZE, v->u.string.ptr, v->u.string.length);
+
+	v = json_object_get(doc, "a_approved");
+	if (v && v->type == json_boolean) c->a_approved = v->u.boolean ? 1 : 0;
+
+	v = json_object_get(doc, "b_approved");
+	if (v && v->type == json_boolean) c->b_approved = v->u.boolean ? 1 : 0;
+
+	v = json_object_get(doc, "state");
+	if (v && v->type == json_integer) c->state = (ConnState)v->u.integer;
+
+	v = json_object_get(doc, "proposed_at");
+	if (v && v->type == json_integer) c->proposed_at = (time_t)v->u.integer;
+
+	v = json_object_get(doc, "reason");
+	if (v && v->type == json_string)
+		copy_str(c->reason, MATCH_REASON_SIZE, v->u.string.ptr, v->u.string.length);
 
 	json_value_free(doc);
 	free(data);
@@ -236,9 +274,17 @@ static void load_messages_for(const char *connection_id)
 		strncpy(m->connection_id, connection_id, CONNECTION_ID_SIZE - 1);
 
 		json_value *v;
-		v = json_object_get(doc, "sender"); if (v && v->type == json_string) { strncpy(m->sender, v->u.string.ptr, USER_ID_SIZE - 1); m->sender[USER_ID_SIZE - 1] = 0; }
-		v = json_object_get(doc, "at");     if (v && v->type == json_integer) m->at = (time_t)v->u.integer;
-		v = json_object_get(doc, "text");   if (v && v->type == json_string) { size_t n = v->u.string.length; if (n >= MESSAGE_TEXT_SIZE) n = MESSAGE_TEXT_SIZE - 1; memcpy(m->text, v->u.string.ptr, n); m->text[n] = 0; }
+
+		v = json_object_get(doc, "sender");
+		if (v && v->type == json_string)
+			copy_str(m->sender, USER_ID_SIZE, v->u.string.ptr, v->u.string.length);
+
+		v = json_object_get(doc, "at");
+		if (v && v->type == json_integer) m->at = (time_t)v->u.integer;
+
+		v = json_object_get(doc, "text");
+		if (v && v->type == json_string)
+			copy_str(m->text, MESSAGE_TEXT_SIZE, v->u.string.ptr, v->u.string.length);
 
 		json_value_free(doc);
 		if (m->sender[0] && m->text[0]) MessageCount++;
@@ -428,40 +474,55 @@ void UpdateUserDescription(User *u, const char *description)
 }
 
 /* Find and propose matches for a single user against all discoverable others.
+   The AI sees all candidates at once — one call, unbiased.
    Creates connections with a_approved=false — the initiator must approve first
    before the other party sees the proposal.
-   Returns the number of new proposals created. */
+   Returns total proposals pending (new + already waiting). */
 size_t FindMatchForUser(User *a)
 {
-	size_t found = 0;
 	change_assert(a, "FindMatchForUser: NULL user");
 	if (!a->discoverable || !a->description.p || a->description.len == 0) return 0;
 
-	/* count already-pending proposals so the caller knows there's something to review */
+	/* Count already-pending proposals first */
+	size_t already_pending = 0;
 	pthread_mutex_lock(&conn_lock);
 	for (size_t i = 0; i < ConnectionCount; i++) {
 		UserConn *c = &ConnectionTable[i];
 		if (c->state == CONN_PROPOSED && strcmp(c->a, a->id) == 0 && !c->a_approved)
-			found++;
+			already_pending++;
 	}
 	pthread_mutex_unlock(&conn_lock);
+
+	/* Collect all viable candidates (outside lock — USER_TABLE is stable) */
+	User *candidates[MAX_USERS];
+	size_t candidate_count = 0;
 
 	for (size_t j = 0; j < USER_COUNT; j++) {
 		User *b = &USER_TABLE[j];
 		if (strcmp(a->id, b->id) == 0) continue;
 		if (!b->discoverable || !b->description.p || b->description.len == 0) continue;
 
-		/* quick pre-check under lock */
 		pthread_mutex_lock(&conn_lock);
-		int already = (ConnectionCount >= MAX_CONNECTIONS) || (find_pair(a->id, b->id) != NULL);
+		int skip = (ConnectionCount >= MAX_CONNECTIONS) || (find_pair(a->id, b->id) != NULL);
 		pthread_mutex_unlock(&conn_lock);
-		if (already) continue;
+		if (skip) continue;
 
-		/* AI call outside the lock — slow */
-		char reason[512] = {0};
-		if (!ai_should_match(a, b, reason, sizeof(reason))) continue;
+		candidates[candidate_count++] = b;
+	}
 
-		/* re-check and insert under lock (double-check after AI call) */
+	if (candidate_count == 0)
+		return already_pending;
+
+	/* One AI call — sees the full candidate pool, not just one at a time */
+	MatchResult results[MAX_USERS];
+	size_t match_count = ai_find_matches(a, candidates, candidate_count,
+	                                     results, MAX_USERS);
+
+	size_t new_proposals = 0;
+	for (size_t m = 0; m < match_count; m++) {
+		User *b = candidates[results[m].index];
+
+		/* double-check under lock before inserting */
 		pthread_mutex_lock(&conn_lock);
 		if (!find_pair(a->id, b->id) && ConnectionCount < MAX_CONNECTIONS) {
 			UserConn *c = &ConnectionTable[ConnectionCount++];
@@ -470,15 +531,16 @@ size_t FindMatchForUser(User *a)
 			c->id[CONNECTION_ID_SIZE - 1] = 0;
 			strncpy(c->a, a->id, USER_ID_SIZE - 1);
 			strncpy(c->b, b->id, USER_ID_SIZE - 1);
-			c->state = CONN_PROPOSED;
+			c->state      = CONN_PROPOSED;
 			c->proposed_at = change_time_now();
-			strncpy(c->reason, reason, sizeof(c->reason) - 1);
+			strncpy(c->reason, results[m].reason, sizeof(c->reason) - 1);
 			persist_connection(c);
-			found++;
+			new_proposals++;
 		}
 		pthread_mutex_unlock(&conn_lock);
 	}
-	return found;
+
+	return already_pending + new_proposals;
 }
 
 void RunMatchingPass(void)

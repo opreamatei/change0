@@ -2,6 +2,7 @@
 // mostly AI GENERATED CODE
 
 #include "http-server.h"
+#include "http-util.h"
 #include "graph-export.h"
 #include "input/input-processor.h"
 #include "util.h"
@@ -10,7 +11,7 @@
 
 #include "search/deep-search-session.h"
 #include "goal/goal.h"
-#include "goal/user-schedule.h"
+#include "goal/schedule-system.h"
 #include "middleware/middleware.h"
 
 #include <arpa/inet.h>
@@ -26,13 +27,8 @@
 #include <string.h>
 #include <time.h>
 
-#define SERVER_BACKLOG      10
-#define READ_CHUNK_SIZE     4096
-#define INITIAL_BUFFER_CAP  8192
-#define MAX_REQUEST_SIZE    (16 * 1024 * 1024)
-#define MAX_HEADER_SIZE     (256 * 1024)
-
-#define MAX_SSE_CLIENTS     64
+#define SERVER_BACKLOG  10
+#define MAX_SSE_CLIENTS 64
 #define MAX_STREAM_ID_LEN   63
 #define GOAL_ID_LEN         32
 
@@ -55,15 +51,6 @@ int client_server_port(void)
 
 extern void LoadGraphFromFile(char *path, NodeContainer *nc);
 
-/* ========================= HTTP REQUEST ========================= */
-
-typedef struct {
-	char method[16];
-	char path[256];
-	char* body;
-	size_t body_len;
-} HttpRequest;
-
 /* ========================= SSE CLIENTS ========================= */
 
 typedef struct {
@@ -85,7 +72,7 @@ static pthread_mutex_t sse_clients_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* ========================= INTERNAL HELPERS ========================= */
 
-static char* get_graph_data(User *user) {
+static char *get_graph_data(User *user) {
 	return SeriliazeGraph(&user->nodes);
 }
 
@@ -97,370 +84,6 @@ int server_is_running(void) {
 	pthread_mutex_unlock(&server_lock);
 
 	return running;
-}
-
-static int ascii_ncasecmp_n(const char* a, const char* b, size_t n) {
-	size_t i;
-
-	for (i = 0; i < n; i++) {
-		unsigned char ca = (unsigned char)a[i];
-		unsigned char cb = (unsigned char)b[i];
-
-		ca = (unsigned char)tolower(ca);
-		cb = (unsigned char)tolower(cb);
-
-		if (ca != cb) return (int)ca - (int)cb;
-		if (ca == '\0') return 0;
-	}
-
-	return 0;
-}
-
-static int send_all(int fd, const void* data, size_t len) {
-	const char* p = (const char*)data;
-	size_t sent_total = 0;
-
-	while (sent_total < len) {
-#ifdef MSG_NOSIGNAL
-		ssize_t sent_now = send(fd, p + sent_total, len - sent_total, MSG_NOSIGNAL);
-#else
-		ssize_t sent_now = send(fd, p + sent_total, len - sent_total, 0);
-#endif
-
-		if (sent_now < 0) {
-			if (errno == EINTR) continue;
-			if (errno == EPIPE || errno == ECONNRESET) return -1;
-			return -1;
-		}
-
-		if (sent_now == 0) {
-			return -1;
-		}
-
-		sent_total += (size_t)sent_now;
-	}
-
-	return 0;
-}
-
-static void send_response(
-	int client_fd,
-	int status_code,
-	const char* status_text,
-	const char* content_type,
-	const char* body,
-	size_t body_len
-) {
-	char header[1024];
-	int header_len;
-
-	header_len = snprintf(
-		header,
-		sizeof(header),
-		"HTTP/1.1 %d %s\r\n"
-		"Content-Type: %s\r\n"
-		"Content-Length: %zu\r\n"
-		"Access-Control-Allow-Origin: *\r\n"
-		"Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
-		"Access-Control-Allow-Headers: Content-Type\r\n"
-		"Connection: close\r\n"
-		"\r\n",
-		status_code,
-		status_text,
-		content_type,
-		body_len
-	);
-
-	if (header_len < 0 || (size_t)header_len >= sizeof(header)) return;
-
-	send_all(client_fd, header, (size_t)header_len);
-
-	if (body && body_len > 0) {
-		send_all(client_fd, body, body_len);
-	}
-}
-
-static void send_json_response(
-	int client_fd,
-	int status_code,
-	const char* status_text,
-	const char* json_body
-) {
-	send_response(
-		client_fd,
-		status_code,
-		status_text,
-		"application/json",
-		json_body,
-		strlen(json_body)
-	);
-}
-
-static void handle_options(int client_fd) {
-	static const char* response =
-		"HTTP/1.1 204 No Content\r\n"
-		"Access-Control-Allow-Origin: *\r\n"
-		"Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
-		"Access-Control-Allow-Headers: Content-Type\r\n"
-		"Content-Length: 0\r\n"
-		"Connection: close\r\n"
-		"\r\n";
-
-	send_all(client_fd, response, strlen(response));
-}
-
-static const char* find_header_value(const char* headers, const char* name) {
-	size_t name_len = strlen(name);
-	const char* p = headers;
-
-	while (*p) {
-		const char* line_end = strstr(p, "\r\n");
-		if (!line_end) return NULL;
-
-		if ((size_t)(line_end - p) > name_len &&
-		    ascii_ncasecmp_n(p, name, name_len) == 0 &&
-		    p[name_len] == ':') {
-
-			const char* value = p + name_len + 1;
-			while (*value == ' ' || *value == '\t') value++;
-			return value;
-		}
-
-		p = line_end + 2;
-		if (*p == '\r' && *(p + 1) == '\n') break;
-	}
-
-	return NULL;
-}
-
-static int parse_content_length(const char* headers, size_t* out_len) {
-	const char* value = find_header_value(headers, "Content-Length");
-	char* endptr = NULL;
-	unsigned long long n;
-
-	if (!value) {
-		*out_len = 0;
-		return 0;
-	}
-
-	n = strtoull(value, &endptr, 10);
-	if (endptr == value) return -1;
-
-	*out_len = (size_t)n;
-	return 0;
-}
-
-static int read_into_string(int fd, String* s, size_t max_total) {
-	char chunk[READ_CHUNK_SIZE];
-
-	for (;;) {
-		ssize_t n = recv(fd, chunk, sizeof(chunk), 0);
-
-		if (n < 0) {
-			if (errno == EINTR) continue;
-			return -1;
-		}
-
-		if (n == 0) {
-			return 0;
-		}
-
-		if (s->len + (size_t)n > max_total) {
-			return -1;
-		}
-
-		CatString(s, chunk, (size_t)n);
-		return 1;
-	}
-}
-
-static int read_http_request(int client_fd, HttpRequest* req) {
-	String raw;
-	size_t header_end_offset = 0;
-	size_t content_length = 0;
-	char* header_end = NULL;
-	char* line_end = NULL;
-
-	memset(req, 0, sizeof(*req));
-	InitString(&raw, INITIAL_BUFFER_CAP);
-
-	while (!header_end) {
-		int rc;
-
-		if (raw.len > MAX_HEADER_SIZE) {
-			FreeString(&raw);
-			return -1;
-		}
-
-		rc = read_into_string(client_fd, &raw, MAX_REQUEST_SIZE);
-		if (rc <= 0) {
-			FreeString(&raw);
-			return -1;
-		}
-
-		header_end = strstr(c_str(&raw), "\r\n\r\n");
-	}
-
-	header_end_offset = (size_t)(header_end - c_str(&raw)) + 4;
-
-	line_end = strstr(c_str(&raw), "\r\n");
-	if (!line_end) {
-		FreeString(&raw);
-		return -1;
-	}
-
-	*line_end = '\0';
-
-	if (sscanf(c_str(&raw), "%15s %255s", req->method, req->path) != 2) {
-		FreeString(&raw);
-		return -1;
-	}
-
-	*line_end = '\r';
-
-	if (parse_content_length(c_str(&raw), &content_length) != 0) {
-		FreeString(&raw);
-		return -1;
-	}
-
-	if (content_length > MAX_REQUEST_SIZE) {
-		FreeString(&raw);
-		return -1;
-	}
-
-	while (raw.len < header_end_offset + content_length) {
-		int rc = read_into_string(client_fd, &raw, MAX_REQUEST_SIZE);
-		if (rc <= 0) {
-			FreeString(&raw);
-			return -1;
-		}
-	}
-
-	req->body_len = content_length;
-	req->body = malloc(content_length + 1);
-	cassert(req->body != NULL, "Failed to allocate request body\n");
-
-	if (content_length > 0) {
-		memcpy(req->body, c_str(&raw) + header_end_offset, content_length);
-	}
-
-	req->body[content_length] = '\0';
-
-	FreeString(&raw);
-	return 0;
-}
-
-static void free_http_request(HttpRequest* req) {
-	if (req->body) {
-		free(req->body);
-		req->body = NULL;
-	}
-	req->body_len = 0;
-}
-
-/* ========================= PATH / QUERY HELPERS ========================= */
-
-static void split_path_and_query(const char* full_path, char* path_only, size_t path_cap, const char** query_out) {
-	const char* q = strchr(full_path, '?');
-	size_t path_len;
-
-	if (!q) {
-		snprintf(path_only, path_cap, "%s", full_path);
-		*query_out = NULL;
-		return;
-	}
-
-	path_len = (size_t)(q - full_path);
-	if (path_len >= path_cap) path_len = path_cap - 1;
-
-	memcpy(path_only, full_path, path_len);
-	path_only[path_len] = '\0';
-	*query_out = q + 1;
-}
-
-static int query_get_param(const char* query, const char* key, char* out, size_t out_cap) {
-	size_t key_len;
-	const char* p;
-
-	if (!query || !key || !out || out_cap == 0) return 0;
-
-	key_len = strlen(key);
-	p = query;
-
-	while (*p) {
-		const char* amp = strchr(p, '&');
-		const char* end = amp ? amp : p + strlen(p);
-		const char* eq = memchr(p, '=', (size_t)(end - p));
-
-		if (eq) {
-			size_t cur_key_len = (size_t)(eq - p);
-			size_t val_len = (size_t)(end - eq - 1);
-
-			if (cur_key_len == key_len && memcmp(p, key, key_len) == 0) {
-				if (val_len >= out_cap) val_len = out_cap - 1;
-				memcpy(out, eq + 1, val_len);
-				out[val_len] = '\0';
-				return 1;
-			}
-		}
-
-		if (!amp) break;
-		p = amp + 1;
-	}
-
-	return 0;
-}
-
-/* ========================= JSON ESCAPE FOR SSE ========================= */
-
-/*
- * Kept because SSE emits buffers with explicit lengths.
- * For normal goal JSON serialization below, use global json_escape_dup(...).
- */
-static char* json_escape_dup_n(const char* src, size_t len) {
-	size_t i;
-	size_t cap = len * 6 + 1;
-	char* out = malloc(cap);
-	size_t w = 0;
-
-	cassert(out != NULL, "Failed to allocate escaped json buffer\n");
-
-	for (i = 0; i < len; i++) {
-		unsigned char c = (unsigned char)src[i];
-
-		switch (c) {
-			case '\"':
-				out[w++] = '\\';
-				out[w++] = '\"';
-				break;
-			case '\\':
-				out[w++] = '\\';
-				out[w++] = '\\';
-				break;
-			case '\n':
-				out[w++] = '\\';
-				out[w++] = 'n';
-				break;
-			case '\r':
-				out[w++] = '\\';
-				out[w++] = 'r';
-				break;
-			case '\t':
-				out[w++] = '\\';
-				out[w++] = 't';
-				break;
-			default:
-				if (c < 0x20) {
-					w += (size_t)sprintf(out + w, "\\u%04x", (unsigned)c);
-				} else {
-					out[w++] = (char)c;
-				}
-				break;
-		}
-	}
-
-	out[w] = '\0';
-	return out;
 }
 
 /* ========================= VALIDATION ========================= */
@@ -479,134 +102,6 @@ static int validate_goal_id_32(const char* goal_id) {
 	}
 
 	return 1;
-}
-
-/* ========================= JSON PARSE HELPERS ========================= */
-
-static const char* json_skip_ws(const char* p) {
-	while (*p && isspace((unsigned char)*p)) p++;
-	return p;
-}
-
-static int json_get_string_field(const char* json, const char* key, char* out, size_t out_cap) {
-	char pattern[128];
-	const char* p;
-	const char* start;
-	size_t w = 0;
-
-	if (!json || !key || !out || out_cap == 0) return 0;
-
-	snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-	p = strstr(json, pattern);
-	if (!p) return 0;
-
-	p += strlen(pattern);
-	p = json_skip_ws(p);
-	if (*p != ':') return 0;
-
-	p++;
-	p = json_skip_ws(p);
-	if (*p != '\"') return 0;
-
-	p++;
-	start = p;
-
-	while (*p) {
-		if (*p == '\\') {
-			p++;
-			if (*p) p++;
-			continue;
-		}
-		if (*p == '\"') break;
-		p++;
-	}
-
-	if (*p != '\"') return 0;
-
-	while (start < p && w + 1 < out_cap) {
-		if (*start == '\\') {
-			start++;
-			if (!*start) break;
-
-			switch (*start) {
-				case '\"':  out[w++] = '\"'; break;
-				case '\\': out[w++] = '\\'; break;
-				case '/':  out[w++] = '/'; break;
-				case 'b':  out[w++] = '\b'; break;
-				case 'f':  out[w++] = '\f'; break;
-				case 'n':  out[w++] = '\n'; break;
-				case 'r':  out[w++] = '\r'; break;
-				case 't':  out[w++] = '\t'; break;
-				default:   out[w++] = *start; break;
-			}
-			start++;
-		} else {
-			out[w++] = *start++;
-		}
-	}
-
-	out[w] = '\0';
-	return 1;
-}
-
-static int json_get_int_field(const char* json, const char* key, int* out_value) {
-	char pattern[128];
-	const char* p;
-	char* endptr = NULL;
-	long value;
-
-	if (!json || !key || !out_value) return 0;
-
-	snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-	p = strstr(json, pattern);
-	if (!p) return 0;
-
-	p += strlen(pattern);
-	p = json_skip_ws(p);
-	if (*p != ':') return 0;
-
-	p++;
-	p = json_skip_ws(p);
-
-	errno = 0;
-	value = strtol(p, &endptr, 10);
-	if (endptr == p || errno != 0) return 0;
-
-	*out_value = (int)value;
-	return 1;
-}
-
-static int json_get_bool_or_int_field(const char* json, const char* key, int* out_value) {
-	char pattern[128];
-	const char* p;
-
-	if (json_get_int_field(json, key, out_value))
-		return 1;
-
-	if (!json || !key || !out_value) return 0;
-
-	snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-	p = strstr(json, pattern);
-	if (!p) return 0;
-
-	p += strlen(pattern);
-	p = json_skip_ws(p);
-	if (*p != ':') return 0;
-
-	p++;
-	p = json_skip_ws(p);
-
-	if (strncmp(p, "true", 4) == 0) {
-		*out_value = 1;
-		return 1;
-	}
-
-	if (strncmp(p, "false", 5) == 0) {
-		*out_value = 0;
-		return 1;
-	}
-
-	return 0;
 }
 
 /* ========================= GOAL JSON SERIALIZATION ========================= */
@@ -976,7 +471,7 @@ static void prune_dead_sse_clients(void) {
 		if (sse_clients[i].alive) {
 			char ping[] = ": ping\n\n";
 			pthread_mutex_lock(&sse_clients[i].write_lock);
-			if (send_all(sse_clients[i].fd, ping, strlen(ping)) != 0) {
+			if (http_send_all(sse_clients[i].fd, ping, strlen(ping)) != 0) {
 				pthread_mutex_unlock(&sse_clients[i].write_lock);
 				remove_sse_client_locked(i);
 				continue;
@@ -1055,9 +550,9 @@ void server_emit_event(const char* stream_id, const char* type, const char* buff
 
 				pthread_mutex_lock(&sse_clients[i].write_lock);
 
-				if (send_all(sse_clients[i].fd, "data: ", 6) != 0) send_failed = 1;
-				if (!send_failed && send_all(sse_clients[i].fd, payload, (size_t)payload_len) != 0) send_failed = 1;
-				if (!send_failed && send_all(sse_clients[i].fd, "\n\n", 2) != 0) send_failed = 1;
+				if (http_send_all(sse_clients[i].fd, "data: ", 6) != 0) send_failed = 1;
+				if (!send_failed && http_send_all(sse_clients[i].fd, payload, (size_t)payload_len) != 0) send_failed = 1;
+				if (!send_failed && http_send_all(sse_clients[i].fd, "\n\n", 2) != 0) send_failed = 1;
 
 				pthread_mutex_unlock(&sse_clients[i].write_lock);
 
@@ -1095,7 +590,7 @@ static void handle_get_graph(int client_fd, User *user) {
 	char* graph_json = get_graph_data(user);
 
 	if (!graph_json) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			500,
 			"Internal Server Error",
@@ -1104,14 +599,7 @@ static void handle_get_graph(int client_fd, User *user) {
 		return;
 	}
 
-	send_response(
-		client_fd,
-		200,
-		"OK",
-		"application/json",
-		graph_json,
-		strlen(graph_json)
-	);
+	http_send_json(client_fd, 200, "OK", graph_json);
 
 	free(graph_json);
 }
@@ -1121,7 +609,7 @@ static void handle_post_graph_export(int client_fd, User *user) {
 	char body[USER_DIRECTORY_SIZE + 32];
 
 	if (!user) {
-		send_json_response(client_fd, 409, "Conflict",
+		http_send_json(client_fd, 409, "Conflict",
 			"{\"ok\":false,\"error\":\"no_active_user\"}");
 		return;
 	}
@@ -1129,7 +617,7 @@ static void handle_post_graph_export(int client_fd, User *user) {
 	GetUserGraphExportPath(user, path);
 
 	if (!ExportGraphTo(path, &user->nodes)) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			500,
 			"Internal Server Error",
@@ -1139,7 +627,7 @@ static void handle_post_graph_export(int client_fd, User *user) {
 	}
 
 	snprintf(body, sizeof(body), "{\"ok\":true,\"path\":\"%s\"}", path);
-	send_json_response(client_fd, 200, "OK", body);
+	http_send_json(client_fd, 200, "OK", body);
 }
 
 static void handle_get_graph_load(int client_fd, User *user) {
@@ -1147,7 +635,7 @@ static void handle_get_graph_load(int client_fd, User *user) {
 	char body[USER_DIRECTORY_SIZE + 32];
 
 	if (!user) {
-		send_json_response(client_fd, 409, "Conflict",
+		http_send_json(client_fd, 409, "Conflict",
 			"{\"ok\":false,\"error\":\"no_active_user\"}");
 		return;
 	}
@@ -1156,7 +644,7 @@ static void handle_get_graph_load(int client_fd, User *user) {
 
 	if (access(path, R_OK) != 0) {
 		if (errno == ENOENT) {
-			send_json_response(
+			http_send_json(
 				client_fd,
 				404,
 				"Not Found",
@@ -1165,7 +653,7 @@ static void handle_get_graph_load(int client_fd, User *user) {
 			return;
 		}
 
-		send_json_response(
+		http_send_json(
 			client_fd,
 			500,
 			"Internal Server Error",
@@ -1177,14 +665,14 @@ static void handle_get_graph_load(int client_fd, User *user) {
 	LoadGraphFromFile(path, &user->nodes);
 
 	snprintf(body, sizeof(body), "{\"ok\":true,\"path\":\"%s\"}", path);
-	send_json_response(client_fd, 200, "OK", body);
+	http_send_json(client_fd, 200, "OK", body);
 }
 
 static void handle_get_goal_list(int client_fd, User *user) {
 	char* goals_json = serialize_goals_container_json(user->journeys[0]);
 
 	if (!goals_json) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			500,
 			"Internal Server Error",
@@ -1193,32 +681,25 @@ static void handle_get_goal_list(int client_fd, User *user) {
 		return;
 	}
 
-	send_response(
-		client_fd,
-		200,
-		"OK",
-		"application/json",
-		goals_json,
-		strlen(goals_json)
-	);
+	http_send_json(client_fd, 200, "OK", goals_json);
 
 	free(goals_json);
 }
 
 static void handle_post_goal_export(int client_fd, User *user) {
 	if (!user) {
-		send_json_response(client_fd, 409, "Conflict",
+		http_send_json(client_fd, 409, "Conflict",
 			"{\"ok\":false,\"error\":\"no_active_user\"}");
 		return;
 	}
 
 	SaveUser(user);
-	send_json_response(client_fd, 200, "OK", "{\"ok\":true}");
+	http_send_json(client_fd, 200, "OK", "{\"ok\":true}");
 }
 
 static void handle_get_goal_load(int client_fd, User *user) {
 	if (!user) {
-		send_json_response(client_fd, 409, "Conflict",
+		http_send_json(client_fd, 409, "Conflict",
 			"{\"ok\":false,\"error\":\"no_active_user\"}");
 		return;
 	}
@@ -1232,7 +713,7 @@ static void handle_get_goal_load(int client_fd, User *user) {
 			LoadJourneyFromFile(j, path);
 	}
 
-	send_json_response(client_fd, 200, "OK", "{\"ok\":true}");
+	http_send_json(client_fd, 200, "OK", "{\"ok\":true}");
 }
 
 static void handle_post_goal_decompose(int client_fd, const HttpRequest* req, User *user) {
@@ -1244,7 +725,7 @@ static void handle_post_goal_decompose(int client_fd, const HttpRequest* req, Us
 	goal_id[0] = '\0';
 
 	if (!req->body) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -1258,7 +739,7 @@ static void handle_post_goal_decompose(int client_fd, const HttpRequest* req, Us
 	    json_get_int_field(req->body, "goal-index", &goal_index_int)) {
 
 		if (goal_index_int <= 0) {
-			send_json_response(
+			http_send_json(
 				client_fd,
 				400,
 				"Bad Request",
@@ -1275,7 +756,7 @@ static void handle_post_goal_decompose(int client_fd, const HttpRequest* req, Us
 	) {
 		goal = find_goal_by_id_string(goal_id, user->journeys[0]);
 	} else {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -1285,7 +766,7 @@ static void handle_post_goal_decompose(int client_fd, const HttpRequest* req, Us
 	}
 
 	if (!goal) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			404,
 			"Not Found",
@@ -1295,7 +776,7 @@ static void handle_post_goal_decompose(int client_fd, const HttpRequest* req, Us
 	}
 
 	if (goal->end_date) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			409,
 			"Conflict",
@@ -1307,7 +788,7 @@ static void handle_post_goal_decompose(int client_fd, const HttpRequest* req, Us
 	result_json = serialize_goal_children_json(goal, user);
 
 	if (!result_json) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			500,
 			"Internal Server Error",
@@ -1316,14 +797,7 @@ static void handle_post_goal_decompose(int client_fd, const HttpRequest* req, Us
 		return;
 	}
 
-	send_response(
-		client_fd,
-		200,
-		"OK",
-		"application/json",
-		result_json,
-		strlen(result_json)
-	);
+	http_send_json(client_fd, 200, "OK", result_json);
 
 	free(result_json);
 }
@@ -1346,7 +820,7 @@ static void handle_post_goal_status_action(
 	Goal* goal = NULL;
 
 	if (!req->body) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -1357,7 +831,7 @@ static void handle_post_goal_status_action(
 
 	goal = find_goal_from_request_body(req, goal_id, user->journeys[0]);
 	if (!goal) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			404,
 			"Not Found",
@@ -1368,7 +842,7 @@ static void handle_post_goal_status_action(
 
 	if (strcmp(event_type, "goal_ended") == 0) {
 		if (!goal->start_date) {
-			send_json_response(
+			http_send_json(
 				client_fd,
 				409,
 				"Conflict",
@@ -1378,7 +852,7 @@ static void handle_post_goal_status_action(
 		}
 
 		if (goal->end_date) {
-			send_json_response(
+			http_send_json(
 				client_fd,
 				409,
 				"Conflict",
@@ -1436,7 +910,7 @@ static void handle_post_goal_status_action(
 	free(esc_goal_id);
 
 	if (response_len < 0 || (size_t)response_len >= sizeof(response_body)) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			500,
 			"Internal Server Error",
@@ -1445,14 +919,7 @@ static void handle_post_goal_status_action(
 		return;
 	}
 
-	send_response(
-		client_fd,
-		200,
-		"OK",
-		"application/json",
-		response_body,
-		(size_t)response_len
-	);
+	http_send_json(client_fd, 200, "OK", response_body);
 }
 
 static void handle_get_goal_events(int client_fd, const char* full_path) {
@@ -1476,7 +943,7 @@ static void handle_get_goal_events(int client_fd, const char* full_path) {
 	}
 
 	if (goal_id[0] != '\0' && !validate_goal_id_32(goal_id)) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -1485,7 +952,7 @@ static void handle_get_goal_events(int client_fd, const char* full_path) {
 		return;
 	}
 
-	if (send_all(client_fd, header, strlen(header)) != 0) {
+	if (http_send_all(client_fd, header, strlen(header)) != 0) {
 		close(client_fd);
 		return;
 	}
@@ -1511,7 +978,7 @@ static void handle_get_dev_time(int client_fd) {
 	);
 
 	if (response_len < 0 || (size_t)response_len >= sizeof(response_body)) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			500,
 			"Internal Server Error",
@@ -1520,14 +987,7 @@ static void handle_get_dev_time(int client_fd) {
 		return;
 	}
 
-	send_response(
-		client_fd,
-		200,
-		"OK",
-		"application/json",
-		response_body,
-		(size_t)response_len
-	);
+	http_send_json(client_fd, 200, "OK", response_body);
 }
 
 static void handle_post_dev_time_advance(int client_fd, const HttpRequest* req) {
@@ -1536,7 +996,7 @@ static void handle_post_dev_time_advance(int client_fd, const HttpRequest* req) 
 	int response_len;
 
 	if (!req->body) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -1546,7 +1006,7 @@ static void handle_post_dev_time_advance(int client_fd, const HttpRequest* req) 
 	}
 
 	if (!json_get_int_field(req->body, "seconds", &delta_seconds)) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -1564,7 +1024,7 @@ static void handle_post_dev_time_advance(int client_fd, const HttpRequest* req) 
 	);
 
 	if (response_len < 0 || (size_t)response_len >= sizeof(response_body)) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			500,
 			"Internal Server Error",
@@ -1573,14 +1033,7 @@ static void handle_post_dev_time_advance(int client_fd, const HttpRequest* req) 
 		return;
 	}
 
-	send_response(
-		client_fd,
-		200,
-		"OK",
-		"application/json",
-		response_body,
-		(size_t)response_len
-	);
+	http_send_json(client_fd, 200, "OK", response_body);
 }
 
 static void handle_post_dev_time_reset(int client_fd) {
@@ -1598,7 +1051,7 @@ static void handle_post_dev_time_reset(int client_fd) {
 	);
 
 	if (response_len < 0 || (size_t)response_len >= sizeof(response_body)) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			500,
 			"Internal Server Error",
@@ -1607,14 +1060,7 @@ static void handle_post_dev_time_reset(int client_fd) {
 		return;
 	}
 
-	send_response(
-		client_fd,
-		200,
-		"OK",
-		"application/json",
-		response_body,
-		(size_t)response_len
-	);
+	http_send_json(client_fd, 200, "OK", response_body);
 }
 
 static void handle_post_goal_create(int client_fd, const HttpRequest* req, User *user) {
@@ -1635,7 +1081,7 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req, User 
 	journey_id[0] = '\0';
 
 	if (!req->body) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -1645,7 +1091,7 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req, User 
 	}
 
 	if (!json_get_string_field(req->body, "title", title, sizeof(title))) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -1656,7 +1102,7 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req, User 
 
 	if (!json_get_string_field(req->body, "extraInfo", extra_info, sizeof(extra_info)) &&
 	    !json_get_string_field(req->body, "extrainfo", extra_info, sizeof(extra_info))) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -1694,7 +1140,7 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req, User 
 			strlen("goal create failed")
 		);
 
-		send_json_response(
+		http_send_json(
 			client_fd,
 			500,
 			"Internal Server Error",
@@ -1729,7 +1175,7 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req, User 
 	free(esc_goal_id);
 
 	if (response_len < 0 || (size_t)response_len >= sizeof(response_body)) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			500,
 			"Internal Server Error",
@@ -1738,14 +1184,7 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req, User 
 		return;
 	}
 
-	send_response(
-		client_fd,
-		200,
-		"OK",
-		"application/json",
-		response_body,
-		(size_t)response_len
-	);
+	http_send_json(client_fd, 200, "OK", response_body);
 }
 
 static void handle_get_profile(int client_fd, User *user)
@@ -1776,7 +1215,7 @@ static void handle_get_profile(int client_fd, User *user)
 	free(esc_derived);
 	free(esc_desc);
 
-	send_response(client_fd, 200, "OK", "application/json", response.p, response.len);
+	http_send_json(client_fd, 200, "OK", response.p);
 
 	FreeString(&response);
 	FreeString(&derived);
@@ -1797,7 +1236,7 @@ static _Bool is_user_editable_key(const char *key)
 static void handle_post_profile_update(int client_fd, const HttpRequest *req, User *user)
 {
 	if (!req->body) {
-		send_json_response(client_fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_body\"}");
+		http_send_json(client_fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_body\"}");
 		return;
 	}
 
@@ -1805,7 +1244,7 @@ static void handle_post_profile_update(int client_fd, const HttpRequest *req, Us
 	char value[1024] = {0};
 
 	if (!json_get_string_field(req->body, "key", key, sizeof(key)) || !key[0]) {
-		send_json_response(client_fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_key\"}");
+		http_send_json(client_fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_key\"}");
 		return;
 	}
 
@@ -1813,13 +1252,13 @@ static void handle_post_profile_update(int client_fd, const HttpRequest *req, Us
 	if (strcmp(key, "name") == 0) {
 		json_get_string_field(req->body, "value", value, sizeof(value));
 		if (!value[0]) {
-			send_json_response(client_fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"empty_name\"}");
+			http_send_json(client_fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"empty_name\"}");
 			return;
 		}
 		EmptyString(&user->name);
 		CatString(&user->name, value, strlen(value));
 		SaveUser(user);
-		send_json_response(client_fd, 200, "OK", "{\"ok\":true}");
+		http_send_json(client_fd, 200, "OK", "{\"ok\":true}");
 		return;
 	}
 
@@ -1834,7 +1273,7 @@ static void handle_post_profile_update(int client_fd, const HttpRequest *req, Us
 		} else {
 			SetUserPrivate(user);
 		}
-		send_json_response(client_fd, 200, "OK", "{\"ok\":true}");
+		http_send_json(client_fd, 200, "OK", "{\"ok\":true}");
 		return;
 	}
 
@@ -1842,19 +1281,19 @@ static void handle_post_profile_update(int client_fd, const HttpRequest *req, Us
 	if (strcmp(key, "description") == 0) {
 		json_get_string_field(req->body, "value", value, sizeof(value));
 		UpdateUserDescription(user, value);
-		send_json_response(client_fd, 200, "OK", "{\"ok\":true}");
+		http_send_json(client_fd, 200, "OK", "{\"ok\":true}");
 		return;
 	}
 
 	/* schedule / identity derived fields */
 	if (!is_user_editable_key(key)) {
-		send_json_response(client_fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"key_not_editable\"}");
+		http_send_json(client_fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"key_not_editable\"}");
 		return;
 	}
 
 	json_get_string_field(req->body, "value", value, sizeof(value));
 	UserProfileSetDerivedField(user, key, value);
-	send_json_response(client_fd, 200, "OK", "{\"ok\":true}");
+	http_send_json(client_fd, 200, "OK", "{\"ok\":true}");
 }
 
 static void handle_post_goal_drop(int client_fd, const HttpRequest *req, User *user)
@@ -1863,13 +1302,13 @@ static void handle_post_goal_drop(int client_fd, const HttpRequest *req, User *u
 	char event_body[512];
 
 	if (!req->body) {
-		send_json_response(client_fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_body\"}");
+		http_send_json(client_fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_body\"}");
 		return;
 	}
 
 	Goal *goal = find_goal_from_request_body_by_id(req, goal_id, user->journeys[0]);
 	if (!goal) {
-		send_json_response(client_fd, 404, "Not Found", "{\"ok\":false,\"error\":\"goal_not_found\"}");
+		http_send_json(client_fd, 404, "Not Found", "{\"ok\":false,\"error\":\"goal_not_found\"}");
 		return;
 	}
 
@@ -1885,7 +1324,7 @@ static void handle_post_goal_drop(int client_fd, const HttpRequest *req, User *u
 	if (event_len > 0 && (size_t)event_len < sizeof(event_body))
 		goal_emit_event(root->id, "goal_dropped", event_body, (size_t)event_len);
 
-	send_json_response(client_fd, 200, "OK", "{\"ok\":true}");
+	http_send_json(client_fd, 200, "OK", "{\"ok\":true}");
 }
 
 static void handle_post_goal_repair(int client_fd, const HttpRequest* req, User *user) {
@@ -1901,7 +1340,7 @@ static void handle_post_goal_repair(int client_fd, const HttpRequest* req, User 
 	repair_reason[0] = '\0';
 
 	if (!req->body) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -1912,7 +1351,7 @@ static void handle_post_goal_repair(int client_fd, const HttpRequest* req, User 
 
 	target = find_goal_from_request_body_by_id(req, goal_id, user->journeys[0]);
 	if (!target) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			404,
 			"Not Found",
@@ -1924,7 +1363,7 @@ static void handle_post_goal_repair(int client_fd, const HttpRequest* req, User 
 	if (!json_get_string_field(req->body, "reason", repair_reason, sizeof(repair_reason)) &&
 	    !json_get_string_field(req->body, "repairReason", repair_reason, sizeof(repair_reason)) &&
 	    !json_get_string_field(req->body, "request", repair_reason, sizeof(repair_reason))) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -1934,7 +1373,7 @@ static void handle_post_goal_repair(int client_fd, const HttpRequest* req, User 
 	}
 
 	if (repair_reason[0] == '\0') {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -1956,7 +1395,7 @@ static void handle_post_goal_repair(int client_fd, const HttpRequest* req, User 
 		SaveUser(user);
 
 	if (!repaired) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			500,
 			"Internal Server Error",
@@ -1987,14 +1426,7 @@ static void handle_post_goal_repair(int client_fd, const HttpRequest* req, User 
 	append_goal_json(&out, repaired);
 	CatFixed(&out, "}");
 
-	send_response(
-		client_fd,
-		200,
-		"OK",
-		"application/json",
-		out.p,
-		out.len
-	);
+	http_send_json(client_fd, 200, "OK", out.p);
 
 	FreeString(&out);
 }
@@ -2010,7 +1442,7 @@ static void handle_post_research_start(int client_fd, const HttpRequest* req, Us
 	task_name[0] = '\0';
 
 	if (!req->body) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -2020,7 +1452,7 @@ static void handle_post_research_start(int client_fd, const HttpRequest* req, Us
 	}
 
 	if (!json_get_string_field(req->body, "id", research_id, sizeof(research_id))) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -2030,7 +1462,7 @@ static void handle_post_research_start(int client_fd, const HttpRequest* req, Us
 	}
 
 	if (!json_get_string_field(req->body, "taskName", task_name, sizeof(task_name))) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -2040,7 +1472,7 @@ static void handle_post_research_start(int client_fd, const HttpRequest* req, Us
 	}
 
 	if (!json_get_int_field(req->body, "minRounds", &min_rounds)) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -2050,7 +1482,7 @@ static void handle_post_research_start(int client_fd, const HttpRequest* req, Us
 	}
 
 	if (min_rounds < 1) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -2076,14 +1508,7 @@ static void handle_post_research_start(int client_fd, const HttpRequest* req, Us
 
 	start_ds_session(&task, research_id, &out, user);
 
-	send_response(
-		client_fd,
-		200,
-		"OK",
-		"application/json",
-		c_str(&out),
-		out.len
-	);
+	http_send_json(client_fd, 200, "OK", c_str(&out));
 
 	FreeString(&out);
 	FreeString(&task.name);
@@ -2097,7 +1522,7 @@ static void handle_post_message(int client_fd, const HttpRequest* req, User *use
 	input[0] = '\0';
 
 	if (!req->body) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -2107,7 +1532,7 @@ static void handle_post_message(int client_fd, const HttpRequest* req, User *use
 	}
 
 	if (!json_get_string_field(req->body, "input", input, sizeof(input))) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -2129,7 +1554,7 @@ static void handle_post_message(int client_fd, const HttpRequest* req, User *use
 
 	SaveUser(user);
 
-	send_json_response(
+	http_send_json(
 		client_fd,
 		200,
 		"OK",
@@ -2149,7 +1574,7 @@ static void handle_get_chat_sessions(int client_fd, User *user)
 	InitString(&out, 256);
 	CatTemplateString(&out, "{\"ok\":true,\"sessions\":%s}", json ? json : "[]");
 	free(json);
-	send_response(client_fd, 200, "OK", "application/json", out.p, out.len);
+	http_send_json(client_fd, 200, "OK", out.p);
 	FreeString(&out);
 }
 
@@ -2166,7 +1591,7 @@ static void handle_post_middleware_message(int client_fd, const HttpRequest* req
 	input[0] = '\0';
 
 	if (!req->body) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -2187,7 +1612,7 @@ static void handle_post_middleware_message(int client_fd, const HttpRequest* req
 
 	if (!json_get_string_field(req->body, "input", input, sizeof(input)) &&
 	    !json_get_string_field(req->body, "message", input, sizeof(input))) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -2197,7 +1622,7 @@ static void handle_post_middleware_message(int client_fd, const HttpRequest* req
 	}
 
 	if (input[0] == '\0') {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -2226,7 +1651,7 @@ static void handle_post_middleware_message(int client_fd, const HttpRequest* req
 		esc_permission_id
 	);
 
-	send_response(client_fd, 200, "OK", "application/json", out.p, out.len);
+	http_send_json(client_fd, 200, "OK", out.p);
 
 	free(esc_permission_id);
 	free(esc_type);
@@ -2243,7 +1668,7 @@ static void handle_post_middleware_permission(int client_fd, const HttpRequest* 
 	permission_id[0] = '\0';
 
 	if (!req->body) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -2255,7 +1680,7 @@ static void handle_post_middleware_permission(int client_fd, const HttpRequest* 
 	if (!json_get_string_field(req->body, "permissionId", permission_id, sizeof(permission_id)) &&
 	    !json_get_string_field(req->body, "permission_id", permission_id, sizeof(permission_id)) &&
 	    !json_get_string_field(req->body, "id", permission_id, sizeof(permission_id))) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -2265,7 +1690,7 @@ static void handle_post_middleware_permission(int client_fd, const HttpRequest* 
 	}
 
 	if (!json_get_bool_or_int_field(req->body, "approved", &approved_int)) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			400,
 			"Bad Request",
@@ -2276,7 +1701,7 @@ static void handle_post_middleware_permission(int client_fd, const HttpRequest* 
 
 	ok = ResolveMiddlewarePermission(permission_id, approved_int != 0, middleware_emit_event, user);
 	if (!ok) {
-		send_json_response(
+		http_send_json(
 			client_fd,
 			404,
 			"Not Found",
@@ -2285,7 +1710,7 @@ static void handle_post_middleware_permission(int client_fd, const HttpRequest* 
 		return;
 	}
 
-	send_json_response(client_fd, 200, "OK", "{\"ok\":true}");
+	http_send_json(client_fd, 200, "OK", "{\"ok\":true}");
 }
 
 static void handle_get_research_events(int client_fd, const char* full_path) {
@@ -2305,7 +1730,7 @@ static void handle_get_research_events(int client_fd, const char* full_path) {
 
 	query_get_param(query, "id", research_id, sizeof(research_id));
 
-	if (send_all(client_fd, header, strlen(header)) != 0) {
+	if (http_send_all(client_fd, header, strlen(header)) != 0) {
 		close(client_fd);
 		return;
 	}
@@ -2343,7 +1768,7 @@ static void handle_get_middleware_events(int client_fd, const char* full_path, U
 
 	scope_session(user, raw_sid, session_id, sizeof(session_id));
 
-	if (send_all(client_fd, header, strlen(header)) != 0) {
+	if (http_send_all(client_fd, header, strlen(header)) != 0) {
 		close(client_fd);
 		return;
 	}
@@ -2373,7 +1798,7 @@ static void handle_get_session_goals(int client_fd, User *user) {
 
 	if (session) free(session);
 
-	send_response(client_fd, 200, "OK", "application/json", c_str(&out), out.len);
+	http_send_json(client_fd, 200, "OK", c_str(&out));
 	free(out.p);
 }
 
@@ -2404,7 +1829,7 @@ static void handle_get_schedule(int client_fd, User *user) {
 
 	CatString(&out, FSTRING_SIZE_PARAMS("]}"));
 
-	send_response(client_fd, 200, "OK", "application/json", c_str(&out), out.len);
+	http_send_json(client_fd, 200, "OK", c_str(&out));
 	free(out.p);
 }
 
@@ -2427,17 +1852,17 @@ static void handle_get_middleware_session(int client_fd, const char* full_path, 
 
 	result_json = ExportMiddlewareSessionJSON(session_id);
 	if (!result_json) {
-		send_json_response(client_fd, 500, "Internal Server Error",
+		http_send_json(client_fd, 500, "Internal Server Error",
 			"{\"ok\":false,\"error\":\"session_export_failed\"}");
 		return;
 	}
 
-	send_response(client_fd, 200, "OK", "application/json", result_json, strlen(result_json));
+	http_send_json(client_fd, 200, "OK", result_json);
 	free(result_json);
 }
 
 static void handle_not_found(int client_fd) {
-	send_json_response(
+	http_send_json(
 		client_fd,
 		404,
 		"Not Found",
@@ -2446,7 +1871,7 @@ static void handle_not_found(int client_fd) {
 }
 
 static void handle_bad_request(int client_fd) {
-	send_json_response(
+	http_send_json(
 		client_fd,
 		400,
 		"Bad Request",
@@ -2590,19 +2015,19 @@ static int handle_request(int client_fd, const HttpRequest* req, User *user) {
 		int event_len, response_len;
 
 		if (!req->body) {
-			send_json_response(client_fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_body\"}");
+			http_send_json(client_fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_body\"}");
 			return 0;
 		}
 
 		Goal* orig = find_goal_from_request_body(req, orig_goal_id, user->journeys[0]);
 		if (!orig) {
-			send_json_response(client_fd, 404, "Not Found", "{\"ok\":false,\"error\":\"goal_not_found\"}");
+			http_send_json(client_fd, 404, "Not Found", "{\"ok\":false,\"error\":\"goal_not_found\"}");
 			return 0;
 		}
 
 		Goal* leaf = StartGoalDeepFromGoal(orig, user);
 		if (!leaf) {
-			send_json_response(client_fd, 409, "Conflict", "{\"ok\":false,\"error\":\"goal_not_startable\"}");
+			http_send_json(client_fd, 409, "Conflict", "{\"ok\":false,\"error\":\"goal_not_startable\"}");
 			return 0;
 		}
 
@@ -2621,12 +2046,12 @@ static int handle_request(int client_fd, const HttpRequest* req, User *user) {
 		free(esc_leaf_id);
 
 		if (response_len < 0 || (size_t)response_len >= sizeof(response_body)) {
-			send_json_response(client_fd, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"response_too_large\"}");
+			http_send_json(client_fd, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"response_too_large\"}");
 			return 0;
 		}
 
 		SaveUser(user);
-		send_response(client_fd, 200, "OK", "application/json", response_body, (size_t)response_len);
+		http_send_json(client_fd, 200, "OK", response_body);
 		return 0;
 	}
 

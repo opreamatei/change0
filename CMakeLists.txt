@@ -82,8 +82,8 @@ target_link_libraries(graphexport PUBLIC
     node
 )
 
-add_library(user-schedule SHARED ${CMAKE_SOURCE_DIR}/c/ne/goal/user-schedule.c)
-target_include_directories(user-schedule PUBLIC
+add_library(schedule-system SHARED ${CMAKE_SOURCE_DIR}/c/ne/goal/schedule-system.c)
+target_include_directories(schedule-system PUBLIC
     ${CMAKE_SOURCE_DIR}/c/ne/goal
     ${CMAKE_SOURCE_DIR}/c/ne
     ${CMAKE_SOURCE_DIR}/c/lib/hd
@@ -93,7 +93,7 @@ target_include_directories(user-schedule PUBLIC
     ${CMAKE_SOURCE_DIR}/c/srv
     ${CMAKE_SOURCE_DIR}/c
 )
-target_link_libraries(user-schedule PUBLIC goal-health)
+target_link_libraries(schedule-system PUBLIC goal-health)
 
 add_library(goal-health SHARED ${CMAKE_SOURCE_DIR}/c/ne/goal/goal-health.c)
 target_include_directories(goal-health PUBLIC
@@ -205,7 +205,7 @@ target_link_libraries(aiaction PUBLIC
     util
     search
     goal-info
-    user-schedule
+    schedule-system
     comparsing
     globals
 )
@@ -281,6 +281,14 @@ target_link_libraries(userprofile PUBLIC
 
 add_dependencies(userprofile user-management)
 
+add_library(http-util SHARED ${CMAKE_SOURCE_DIR}/c/srv/http-util.c)
+target_include_directories(http-util PUBLIC
+	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c
+	${CMAKE_SOURCE_DIR}/c/lib/util
+)
+target_link_libraries(http-util PUBLIC util change-errors)
+
 add_library(http-server SHARED ${CMAKE_SOURCE_DIR}/c/srv/http-server.c)
 target_include_directories(http-server PUBLIC
 	${CMAKE_SOURCE_DIR}/c
@@ -298,22 +306,32 @@ target_link_libraries(http-server PUBLIC
 	middleware
 	user-management
 	connections
+	http-util
 	pthread
 )
 
-add_library(central-server SHARED ${CMAKE_SOURCE_DIR}/c/srv/central-server.c)
+add_library(central-server SHARED
+	${CMAKE_SOURCE_DIR}/c/srv/central-server.c
+	${CMAKE_SOURCE_DIR}/c/srv/central-journey.c
+	${CMAKE_SOURCE_DIR}/c/srv/central-users.c
+	${CMAKE_SOURCE_DIR}/c/srv/central-conn.c
+)
 target_include_directories(central-server PUBLIC
 	${CMAKE_SOURCE_DIR}/c
 	${CMAKE_SOURCE_DIR}/c/srv
 	${CMAKE_SOURCE_DIR}/c/lib/util
 	${CMAKE_SOURCE_DIR}/c/lib/jsonp
+	${CMAKE_SOURCE_DIR}/c/ne
+	${CMAKE_SOURCE_DIR}/c/ne/goal
 )
 target_link_libraries(central-server PUBLIC
 	util
 	jsonp
 	user-management
 	connections
+	journey
 	http-server
+	http-util
 	pthread
 )
 
@@ -333,7 +351,7 @@ target_include_directories(goal PUBLIC
 	${CMAKE_SOURCE_DIR}/c/ne/search
 	${CMAKE_SOURCE_DIR}/c/ne/profile
 )
-target_link_libraries(goal PUBLIC user-schedule goal-ai goal-info goal-util userprofile util openai jsonp node)
+target_link_libraries(goal PUBLIC schedule-system goal-ai goal-info goal-util userprofile util openai jsonp node)
 
 add_library(goal-util SHARED ${CMAKE_SOURCE_DIR}/c/ne/goal/goal-util.c)
 target_include_directories(goal-util 
@@ -356,7 +374,7 @@ target_include_directories(journey PUBLIC
 	${CMAKE_SOURCE_DIR}/c/lib/hd
 	${CMAKE_SOURCE_DIR}/c
 )
-target_link_libraries(journey PUBLIC util)
+target_link_libraries(journey PUBLIC util http-util)
 
 add_library(goal-info SHARED ${CMAKE_SOURCE_DIR}/c/ne/goal/goal-info.c)
 target_include_directories(goal-info 
@@ -377,7 +395,10 @@ target_include_directories(goal-ai
 )
 target_link_libraries(goal-ai PUBLIC util goal-info openai deepsearchsession)
 
-add_library(user-management SHARED ${CMAKE_SOURCE_DIR}/c/srv/user-management.c)
+add_library(user-management SHARED
+	${CMAKE_SOURCE_DIR}/c/srv/user-management.c
+	${CMAKE_SOURCE_DIR}/c/srv/user-io.c
+)
 target_include_directories(user-management PUBLIC
 	${CMAKE_SOURCE_DIR}/c/srv
 	${CMAKE_SOURCE_DIR}/c
@@ -385,7 +406,7 @@ target_include_directories(user-management PUBLIC
 	${CMAKE_SOURCE_DIR}/c/lib/jsonp
 	${CMAKE_SOURCE_DIR}/c/ne/goal
 	${CMAKE_SOURCE_DIR}/c/ne
-	)
+)
 target_link_libraries(user-management PUBLIC util journey node graphexport)
 
 add_library(connections SHARED ${CMAKE_SOURCE_DIR}/c/srv/connections.c)

@@ -39,6 +39,56 @@ typedef struct {
 	char text[MESSAGE_TEXT_SIZE];
 } UserConnMessage;
 
+/* -------- AI matching internals -------- */
+
+#define MATCH_SCHEMA \
+	"{\"type\":\"object\"," \
+	"\"properties\":{" \
+	  "\"matches\":{\"type\":\"array\",\"items\":{" \
+	    "\"type\":\"object\"," \
+	    "\"properties\":{" \
+	      "\"index\":{\"type\":\"integer\"}," \
+	      "\"reason\":{\"type\":\"string\"}" \
+	    "}," \
+	    "\"required\":[\"index\",\"reason\"]," \
+	    "\"additionalProperties\":false" \
+	  "}}" \
+	"}," \
+	"\"required\":[\"matches\"]," \
+	"\"additionalProperties\":false}"
+
+/*
+ * System prompt for the connection matcher.
+ * %s substitutions in order:
+ *   1. subject description
+ *   2. candidate list (pre-formatted, numbered)
+ *   3. retry feedback (empty string if first attempt)
+ */
+#define CONN_MATCH_PROMPT \
+	"You are a connection system for a productivity and goal app. " \
+	"Your job is to decide which of the listed candidates are worth introducing to the subject — " \
+	"not romantically, but because they might find each other intellectually interesting, " \
+	"share a way of thinking, or have genuine common ground worth a conversation. " \
+	"This is not dating. Do not factor in romantic compatibility.\n\n" \
+	"Subject: %s\n\n" \
+	"Candidates:\n%s\n" \
+	"Select only candidates with a real, specific reason to meet the subject — " \
+	"shared curiosity, complementary perspectives, or overlapping depth in something. " \
+	"Do not select candidates just because their description is non-empty. " \
+	"IMPORTANT: If the subject's description ends with 'Does not want to be matched with: <X>', " \
+	"treat that as a hard exclusion for any candidate fitting X. Apply the same rule in reverse. " \
+	"For each selected match, provide a reason as one sentence shown to both people simultaneously — " \
+	"write it so it reads naturally for either of them. " \
+	"Use only 'you both', 'you seem', 'you share', or similar second-person plural phrasing. " \
+	"Never use 'A', 'B', 'the subject', 'candidate N', 'one of you', 'the other'. " \
+	"Return 0-based indices (candidate 1 = index 0). " \
+	"If no candidates are a good fit, return an empty matches array.%s"
+
+typedef struct {
+	size_t index;
+	char   reason[MATCH_REASON_SIZE];
+} MatchResult;
+
 /* lifecycle */
 void InitConnectionSystem(void);
 void FreeConnectionSystem(void);

@@ -12,7 +12,7 @@
 #include "openai.h"
 #include "goal-ai.h"
 #include "goal-info.h"
-#include "user-schedule.h"
+#include "schedule-system.h"
 #include "profile/user-profile.h"
 #include "journey.h"
 

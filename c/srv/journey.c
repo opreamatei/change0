@@ -1,13 +1,11 @@
 #include "journey.h"
+#include "http-util.h"
 #include "goal-util.h"
 #include "globals.h"
 #include "config.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <unistd.h>
 
 Journey UserCachedJourneys[MAX_JOURNEYS] = {0};
@@ -339,47 +337,6 @@ void LoadJourneyFromFile(Journey *j, const char *path) {
 	free(buff);
 }
 
-static int central_connect(void) {
-	int fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (fd < 0) return -1;
-
-	struct sockaddr_in addr;
-	memset(&addr, 0, sizeof(addr));
-	addr.sin_family      = AF_INET;
-	addr.sin_port        = htons(CENTRAL_SERVER_PORT);
-	addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-
-	if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-		close(fd);
-		return -1;
-	}
-	return fd;
-}
-
-static char *central_recv_body(int fd, size_t *out_len) {
-	char buf[65536];
-	size_t total = 0;
-	ssize_t r;
-
-	while (total < sizeof(buf) - 1) {
-		r = recv(fd, buf + total, sizeof(buf) - 1 - total, 0);
-		if (r <= 0) break;
-		total += (size_t)r;
-	}
-	buf[total] = '\0';
-
-	char *body = strstr(buf, "\r\n\r\n");
-	if (!body) return NULL;
-	body += 4;
-
-	size_t body_len = total - (size_t)(body - buf);
-	char *result = malloc(body_len + 1);
-	if (!result) return NULL;
-	memcpy(result, body, body_len);
-	result[body_len] = '\0';
-	*out_len = body_len;
-	return result;
-}
 
 Journey *FetchSharedJourney(const char *journey_id) {
 	int fd = central_connect();
@@ -390,7 +347,7 @@ Journey *FetchSharedJourney(const char *journey_id) {
 	int req_len = snprintf(req, sizeof(req),
 		"GET /journey/%s HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
 		journey_id);
-	send(fd, req, (size_t)req_len, 0);
+	http_send_all(fd, req, (size_t)req_len);
 
 	size_t body_len = 0;
 	char *body = central_recv_body(fd, &body_len);
@@ -431,8 +388,8 @@ void PushJourneyToCentral(const Journey *j) {
 		"Connection: close\r\n\r\n",
 		j->id, body.len);
 
-	send(fd, header, (size_t)header_len, 0);
-	send(fd, body.p, body.len, 0);
+	http_send_all(fd, header, (size_t)header_len);
+	http_send_all(fd, body.p, body.len);
 	close(fd);
 
 	FreeString(&body);

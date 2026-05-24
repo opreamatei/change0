@@ -4,7 +4,7 @@
 #include "util.h"
 #include "ne/node.h"
 #include "journey.h"
-#include "ne/goal/user-schedule.h"
+#include "ne/goal/schedule-system.h"
 
 #define MAX_USERS 8
 #define USER_ID_SIZE 32

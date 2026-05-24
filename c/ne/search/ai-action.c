@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include "goal/goal-util.h"
 #include "util.h"
-#include "user-schedule.h"
+#include "schedule-system.h"
 #include <string.h>
 #include "search.h"
 #include "command-parsing.h"
