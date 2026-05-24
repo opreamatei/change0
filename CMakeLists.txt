@@ -267,6 +267,7 @@ target_include_directories(userprofile PUBLIC
 	${CMAKE_SOURCE_DIR}/c/ne/profile
 	${CMAKE_SOURCE_DIR}/c/ne
 	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/srv/user
 	${CMAKE_SOURCE_DIR}/c/ne/goal
 	${CMAKE_SOURCE_DIR}/c/lib/util
 	${CMAKE_SOURCE_DIR}/c/lib/jsonp
@@ -289,13 +290,24 @@ target_include_directories(http-util PUBLIC
 )
 target_link_libraries(http-util PUBLIC util change-errors)
 
-add_library(http-server SHARED ${CMAKE_SOURCE_DIR}/c/srv/http-server.c)
+add_library(http-server SHARED
+	${CMAKE_SOURCE_DIR}/c/srv/http-server/server.c
+	${CMAKE_SOURCE_DIR}/c/srv/http-server/sse.c
+	${CMAKE_SOURCE_DIR}/c/srv/http-server/routes.c
+	${CMAKE_SOURCE_DIR}/c/srv/http-server/goal-handlers.c
+	${CMAKE_SOURCE_DIR}/c/srv/http-server/graph-handlers.c
+	${CMAKE_SOURCE_DIR}/c/srv/http-server/middleware-handlers.c
+	${CMAKE_SOURCE_DIR}/c/srv/http-server/profile-handlers.c
+	${CMAKE_SOURCE_DIR}/c/srv/http-server/dev-handlers.c
+)
 target_include_directories(http-server PUBLIC
 	${CMAKE_SOURCE_DIR}/c
 	${CMAKE_SOURCE_DIR}/c/ne
 	${CMAKE_SOURCE_DIR}/c/lib/util
 	${CMAKE_SOURCE_DIR}/c/lib/jsonp
 	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/srv/http-server
+	${CMAKE_SOURCE_DIR}/c/srv/user
 )
 target_link_libraries(http-server PUBLIC
 	node
@@ -311,14 +323,18 @@ target_link_libraries(http-server PUBLIC
 )
 
 add_library(central-server SHARED
-	${CMAKE_SOURCE_DIR}/c/srv/central-server.c
-	${CMAKE_SOURCE_DIR}/c/srv/central-journey.c
-	${CMAKE_SOURCE_DIR}/c/srv/central-users.c
-	${CMAKE_SOURCE_DIR}/c/srv/central-conn.c
+	${CMAKE_SOURCE_DIR}/c/srv/central-server/central-server.c
+	${CMAKE_SOURCE_DIR}/c/srv/match-system/shared-journey.c
+	${CMAKE_SOURCE_DIR}/c/srv/central-server/central-users.c
+	${CMAKE_SOURCE_DIR}/c/srv/central-server/central-conn.c
 )
 target_include_directories(central-server PUBLIC
 	${CMAKE_SOURCE_DIR}/c
 	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/srv/central-server
+	${CMAKE_SOURCE_DIR}/c/srv/http-server
+	${CMAKE_SOURCE_DIR}/c/srv/match-system
+	${CMAKE_SOURCE_DIR}/c/srv/user
 	${CMAKE_SOURCE_DIR}/c/lib/util
 	${CMAKE_SOURCE_DIR}/c/lib/jsonp
 	${CMAKE_SOURCE_DIR}/c/ne
@@ -350,6 +366,7 @@ target_include_directories(goal PUBLIC
 	${CMAKE_SOURCE_DIR}/c/ne/goal
 	${CMAKE_SOURCE_DIR}/c/ne/search
 	${CMAKE_SOURCE_DIR}/c/ne/profile
+	${CMAKE_SOURCE_DIR}/c/srv/user
 )
 target_link_libraries(goal PUBLIC schedule-system goal-ai goal-info goal-util userprofile util openai jsonp node)
 
@@ -364,9 +381,10 @@ target_include_directories(goal-util
 )
 target_link_libraries(goal-util PUBLIC util globals jsonp)
 
-add_library(journey SHARED ${CMAKE_SOURCE_DIR}/c/srv/journey.c)
+add_library(journey SHARED ${CMAKE_SOURCE_DIR}/c/srv/user/journey.c)
 target_include_directories(journey PUBLIC
 	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/srv/user
 	${CMAKE_SOURCE_DIR}/c/ne
 	${CMAKE_SOURCE_DIR}/c/ne/goal
 	${CMAKE_SOURCE_DIR}/c/lib/util
@@ -396,11 +414,12 @@ target_include_directories(goal-ai
 target_link_libraries(goal-ai PUBLIC util goal-info openai deepsearchsession)
 
 add_library(user-management SHARED
-	${CMAKE_SOURCE_DIR}/c/srv/user-management.c
-	${CMAKE_SOURCE_DIR}/c/srv/user-io.c
+	${CMAKE_SOURCE_DIR}/c/srv/user/user-management.c
+	${CMAKE_SOURCE_DIR}/c/srv/user/user-io.c
 )
 target_include_directories(user-management PUBLIC
 	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/srv/user
 	${CMAKE_SOURCE_DIR}/c
 	${CMAKE_SOURCE_DIR}/c/lib/util
 	${CMAKE_SOURCE_DIR}/c/lib/jsonp
@@ -409,10 +428,16 @@ target_include_directories(user-management PUBLIC
 )
 target_link_libraries(user-management PUBLIC util journey node graphexport)
 
-add_library(connections SHARED ${CMAKE_SOURCE_DIR}/c/srv/connections.c)
+add_library(connections SHARED
+	${CMAKE_SOURCE_DIR}/c/srv/match-system/connections.c
+	${CMAKE_SOURCE_DIR}/c/srv/match-system/ai-matching.c
+	${CMAKE_SOURCE_DIR}/c/srv/match-system/disk-storage.c
+)
 target_include_directories(connections PUBLIC
 	${CMAKE_SOURCE_DIR}/c
 	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/srv/match-system
+	${CMAKE_SOURCE_DIR}/c/srv/user
 	${CMAKE_SOURCE_DIR}/c/lib/util
 	${CMAKE_SOURCE_DIR}/c/lib/jsonp
 	${CMAKE_SOURCE_DIR}/c/lib/openai

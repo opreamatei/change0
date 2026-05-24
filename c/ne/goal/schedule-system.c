@@ -2,7 +2,7 @@
 #include "goal-health.h"
 #include "goal-info.h"
 #include "goal-util.h"
-#include "srv/user-management.h"
+#include "srv/user/user-management.h"
 #include "lib/util/time-util.h"
 
 #include <stdlib.h>

@@ -18,8 +18,8 @@ typedef struct JourneyType {
 	_Bool is_shared;
 } Journey;
 
-extern Journey UserCachedJourneys[MAX_JOURNEYS];
-extern size_t UserCachedJourneysCount;
+extern Journey JourneyTable[MAX_JOURNEYS];
+extern size_t JourneyTableCount;
 
 _Bool MatchesJourneyID(Journey *j, const char *id);
 Journey *FindJourneyByID(const char *id);

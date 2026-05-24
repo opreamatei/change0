@@ -127,36 +127,24 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
 function ProposalCard({
   conn,
   userId,
-  onAction,
+  onApprove,
+  onDecline,
 }: {
   conn: Connection
   userId: string
-  onAction: () => void
+  onApprove: () => Promise<void>
+  onDecline: () => Promise<void>
 }) {
   const [busy, setBusy] = useState(false)
 
   async function approve() {
     setBusy(true)
-    try {
-      await fetch(CENTRAL_ENDPOINTS.connectionsApprove, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connection_id: conn.id, user_id: userId }),
-      })
-      onAction()
-    } finally { setBusy(false) }
+    try { await onApprove() } finally { setBusy(false) }
   }
 
   async function decline() {
     setBusy(true)
-    try {
-      await fetch(CENTRAL_ENDPOINTS.connectionsDecline, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connection_id: conn.id, user_id: userId }),
-      })
-      onAction()
-    } finally { setBusy(false) }
+    try { await onDecline() } finally { setBusy(false) }
   }
 
   const waitingForThem = conn.my_approved && conn.state === STATE_PROPOSED
@@ -190,7 +178,7 @@ function ProposalCard({
           ) : (
             <div className="flex gap-3">
               <button
-                onClick={() => void decline()}
+                onClick={() => { void decline() }}
                 disabled={busy}
                 className="flex-1 rounded-2xl border-2 border-neutral-200 text-sm font-semibold py-3.5 text-neutral-500
                   hover:border-red-300 hover:text-red-500 transition-colors disabled:opacity-40"
@@ -198,7 +186,7 @@ function ProposalCard({
                 Pass
               </button>
               <button
-                onClick={() => void approve()}
+                onClick={() => { void approve() }}
                 disabled={busy}
                 className="flex-1 rounded-2xl bg-black text-white text-sm font-semibold py-3.5
                   hover:bg-neutral-800 transition-colors disabled:opacity-40"
@@ -298,17 +286,51 @@ export default function ConnectionsView({ userId }: { userId: string }) {
         </div>
       )}
 
-      {/* pending proposals */}
-      {proposals.length > 0 && (
-        <section className="space-y-4">
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-neutral-400 px-1">
-            {proposals.length === 1 ? '1 proposal' : `${proposals.length} proposals`}
-          </p>
-          {proposals.map((c) => (
-            <ProposalCard key={c.id} conn={c} userId={userId} onAction={load} />
-          ))}
-        </section>
-      )}
+      {/* pending proposals — one at a time */}
+      {proposals.length > 0 && (() => {
+        const current = proposals[0]
+        const rest = proposals.slice(1)
+
+        async function handleApprove() {
+          await fetch(CENTRAL_ENDPOINTS.connectionsApprove, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ connection_id: current.id, user_id: userId }),
+          })
+          await Promise.all(rest.map((p) =>
+            fetch(CENTRAL_ENDPOINTS.connectionsDecline, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ connection_id: p.id, user_id: userId }),
+            })
+          ))
+          await load()
+        }
+
+        async function handleDecline() {
+          await fetch(CENTRAL_ENDPOINTS.connectionsDecline, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ connection_id: current.id, user_id: userId }),
+          })
+          await load()
+        }
+
+        return (
+          <section className="space-y-4">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-neutral-400 px-1">
+              {proposals.length === 1 ? '1 proposal' : `1 of ${proposals.length} proposals`}
+            </p>
+            <ProposalCard
+              key={current.id}
+              conn={current}
+              userId={userId}
+              onApprove={handleApprove}
+              onDecline={handleDecline}
+            />
+          </section>
+        )
+      })()}
 
       {/* confirmed */}
       {confirmed.length > 0 && (

@@ -1,7 +1,7 @@
 #include "goal-health.h"
 #include "goal-util.h"
 #include "profile/user-profile.h"
-#include "srv/user-management.h"
+#include "srv/user/user-management.h"
 #include "lib/util/time-util.h"
 
 #include <stdlib.h>

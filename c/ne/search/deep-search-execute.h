@@ -4,7 +4,7 @@
 #include "deep-search-session.h"
 #include "json.h"
 #include "util.h"
-#include "srv/user-management.h"
+#include "srv/user/user-management.h"
 
 #define OPENAI_DEEP_SEARCH_JUDGE_SCHEMA_JSON \
 "{" \

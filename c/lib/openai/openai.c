@@ -2,6 +2,7 @@
 
 #include "openai.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,7 +32,10 @@ static void ai_tls_close(ai_tls_conn *c) {
     if (!c) return;
 
     if (c->ssl) {
-        SSL_shutdown(c->ssl);
+        /* Skip SSL_shutdown: we use Connection: close so the server has
+         * already closed the session.  Calling SSL_shutdown after an abrupt
+         * close (RST / no TLS close_notify) writes to a dead socket and can
+         * fault inside OpenSSL's BIO layer even with SIGPIPE ignored. */
         SSL_free(c->ssl);
         c->ssl = NULL;
     }
@@ -167,10 +171,24 @@ static ai_openai_status ai_read_all(SSL *ssl, String *out) {
             continue;
         }
 
-        break;
-    }
+        /* SSL_ERROR_ZERO_RETURN  = clean TLS close_notify.
+         * SSL_ERROR_SYSCALL/errno=0 = server closed TCP without close_notify
+         *   (common with Connection: close).
+         * Both mean "no more data" — treat as success.
+         * Any other error means something actually went wrong. */
+        int ssl_err = SSL_get_error(ssl, n);
+        if (ssl_err == SSL_ERROR_ZERO_RETURN)
+            return AI_OPENAI_OK;
+        if (ssl_err == SSL_ERROR_SYSCALL && errno == 0)
+            return AI_OPENAI_OK;
 
-    return AI_OPENAI_OK;
+        FreeString(out);
+        out->p = NULL;
+        out->len = 0;
+        out->cap = 0;
+        out->used = 0;
+        return AI_OPENAI_ERR_READ;
+    }
 }
 
 static char *ai_find_body(char *http_response) {

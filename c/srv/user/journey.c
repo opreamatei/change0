@@ -8,8 +8,8 @@
 #include <stdio.h>
 #include <unistd.h>
 
-Journey UserCachedJourneys[MAX_JOURNEYS] = {0};
-size_t UserCachedJourneysCount = 0;
+Journey JourneyTable[MAX_JOURNEYS] = {0};
+size_t JourneyTableCount = 0;
 
 _Bool MatchesJourneyID(Journey *j, const char *id) {
 	change_assert(j && id, "MatchesJourneyID: NULL argument\n");
@@ -17,8 +17,8 @@ _Bool MatchesJourneyID(Journey *j, const char *id) {
 }
 
 Journey *FindJourneyByID(const char *id) {
-	for (size_t i = 0; i < UserCachedJourneysCount; i++) {
-		Journey *j = &UserCachedJourneys[i];
+	for (size_t i = 0; i < JourneyTableCount; i++) {
+		Journey *j = &JourneyTable[i];
 		if (MatchesJourneyID(j, id))
 			return j;
 	}
@@ -26,8 +26,8 @@ Journey *FindJourneyByID(const char *id) {
 }
 
 static Journey *alloc_journey_slot(void) {
-	change_assert(UserCachedJourneysCount < MAX_JOURNEYS, "Max journeys limit reached");
-	Journey *j = &UserCachedJourneys[UserCachedJourneysCount++];
+	change_assert(JourneyTableCount < MAX_JOURNEYS, "Max journeys limit reached");
+	Journey *j = &JourneyTable[JourneyTableCount++];
 	memset(j, 0, sizeof(*j));
 	InitString(&j->title, 64);
 	InitString(&j->extra_info, 256);
@@ -70,10 +70,10 @@ Goal *FindGoalFromIndex(const char *journey_id, size_t index) {
 
 Goal **GetGoalsSorted(size_t *out_count, const char *journey_id) {
 	size_t total = 0;
-	for (size_t i = 0; i < UserCachedJourneysCount; i++) {
-		if (strcmp(UserCachedJourneys[i].id, journey_id) != 0) continue;
-		for (size_t k = 0; k < UserCachedJourneys[i].goals_count; k++)
-			if (UserCachedJourneys[i].goals[k]) total++;
+	for (size_t i = 0; i < JourneyTableCount; i++) {
+		if (strcmp(JourneyTable[i].id, journey_id) != 0) continue;
+		for (size_t k = 0; k < JourneyTable[i].goals_count; k++)
+			if (JourneyTable[i].goals[k]) total++;
 	}
 
 	*out_count = total;
@@ -84,8 +84,8 @@ Goal **GetGoalsSorted(size_t *out_count, const char *journey_id) {
 	change_assert(arr, "GetGoalsSorted: malloc failed.\n");
 
 	size_t w = 0;
-	for (size_t i = 0; i < UserCachedJourneysCount; i++) {
-		Journey *j = &UserCachedJourneys[i];
+	for (size_t i = 0; i < JourneyTableCount; i++) {
+		Journey *j = &JourneyTable[i];
 		if (strcmp(j->id, journey_id) != 0) continue;
 		for (size_t k = 0; k < j->goals_count; k++)
 			if (j->goals[k]) arr[w++] = j->goals[k];
@@ -105,8 +105,8 @@ Goal **GetGoalsSorted(size_t *out_count, const char *journey_id) {
 }
 
 void ClearAllJourneyGoals(void) {
-	for (size_t i = 0; i < UserCachedJourneysCount; i++) {
-		Journey *j = &UserCachedJourneys[i];
+	for (size_t i = 0; i < JourneyTableCount; i++) {
+		Journey *j = &JourneyTable[i];
 		for (size_t k = 0; k < j->goals_count; k++) {
 			Goal *g = j->goals[k];
 			if (!g) continue;
@@ -145,15 +145,15 @@ static void FreeJourneyEntry(Journey *j) {
 }
 
 void InitJourneySystem(void) {
-	UserCachedJourneysCount = 0;
+	JourneyTableCount = 0;
 	SetGlobalPointerF("journey_title", GetJourneyTitleByID);
 	SetGlobalPointerF("journey_info",  GetJourneyExtraInfoByID);
 }
 
 void FreeJourneySystem(void) {
-	for (size_t i = 0; i < UserCachedJourneysCount; i++)
-		FreeJourneyEntry(&UserCachedJourneys[i]);
-	UserCachedJourneysCount = 0;
+	for (size_t i = 0; i < JourneyTableCount; i++)
+		FreeJourneyEntry(&JourneyTable[i]);
+	JourneyTableCount = 0;
 }
 
 void SerializeJourney(const Journey *j, String *out) {
@@ -358,8 +358,8 @@ Journey *FetchSharedJourney(const char *journey_id) {
 	/* Check for existing slot first */
 	Journey *j = FindJourneyByID(journey_id);
 	if (!j) {
-		change_assert(UserCachedJourneysCount < MAX_JOURNEYS, "UserCachedJourneys full.\n");
-		j = &UserCachedJourneys[UserCachedJourneysCount++];
+		change_assert(JourneyTableCount < MAX_JOURNEYS, "JourneyTable full.\n");
+		j = &JourneyTable[JourneyTableCount++];
 		memset(j, 0, sizeof(*j));
 		InitString(&j->title, 64);
 		InitString(&j->extra_info, 256);

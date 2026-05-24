@@ -1,6 +1,6 @@
 #include "goal-util.h"
 #include "globals.h"
-#include "srv/journey.h"
+#include "srv/user/journey.h"
 #include <string.h>
 #include <stdlib.h>
 

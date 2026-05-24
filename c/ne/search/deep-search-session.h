@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include "node.h"
 #include "util.h"
-#include "srv/user-management.h"
+#include "srv/user/user-management.h"
 
 #define OPENAI_DEEP_SEARCH_SCHEMA_JSON \
 "{" \

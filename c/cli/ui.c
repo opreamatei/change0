@@ -16,8 +16,8 @@
 #include <unistd.h>
 #include <termios.h>
 #include <string.h>
-#include "srv/http-server.h"
-#include "srv/central-server.h"
+#include "srv/http-server/http-server.h"
+#include "srv/central-server/central-server.h"
 #include "globals.h"
 #include "goal/goal.h"
 

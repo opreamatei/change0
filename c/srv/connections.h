@@ -9,6 +9,7 @@
 #define MAX_CONNECTIONS    256
 #define MAX_MESSAGES       1024
 #define CONNECTION_ID_SIZE 33
+#define CONNECTION_FINAL_MATCH_LIMIT 3
 #define MATCH_REASON_SIZE  512
 #define MESSAGE_TEXT_SIZE  2048
 
@@ -83,6 +84,22 @@ typedef struct {
 	"Never use 'A', 'B', 'the subject', 'candidate N', 'one of you', 'the other'. " \
 	"Return 0-based indices (candidate 1 = index 0). " \
 	"If no candidates are a good fit, return an empty matches array.%s"
+
+#define CONN_FINAL_MATCH_PROMPT \
+	"You are the final judge for a connection system in a productivity and goal app. " \
+	"You are reviewing a shortlist of already-plausible introductions and must pick the final set. " \
+	"Choose at most %zu matches, ordered from strongest to weakest. " \
+	"This is not dating. Do not factor in romantic compatibility.\n\n" \
+	"Subject: %s\n\n" \
+	"Shortlist:\n%s\n" \
+	"Each shortlist item already includes a candidate description and a preliminary reason. " \
+	"Prefer the candidates with the clearest mutual substance, complementary perspective, " \
+	"and strongest reason for a useful conversation. " \
+	"For each selected match, provide one sentence shown to both people. " \
+	"Use only 'you both', 'you seem', 'you share', or similar second-person plural phrasing. " \
+	"Never use 'the subject', 'candidate', 'shortlist item', 'one of you', or 'the other'. " \
+	"Return 0-based shortlist indices (shortlist item 1 = index 0). " \
+	"If fewer than %zu are strong enough, return fewer. If none are strong enough, return an empty matches array.%s"
 
 typedef struct {
 	size_t index;

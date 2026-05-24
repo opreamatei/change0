@@ -1,173 +1,308 @@
-# CHANGE Project Infrastructure Docs
+# CHANGE Technical Documentation
 
-This document describes the current codebase as it exists in this repository: a C11 backend that owns the data model, persistence, AI orchestration, and HTTP services, plus a React/TypeScript frontend and a legacy browser graph viewer.
+This document describes the current C backend as implemented under `c/`.
+It is written from the code, not from the intended product story, so it includes
+the actual runtime boundaries, persistence model, and known rough edges.
 
-The project is not a thin CRUD app. It is a local AI system with three main state machines:
+## System Overview
 
-1. A semantic identity graph built from user input.
-2. A goal tree system with scheduling, repair, and deep-search-based decomposition.
-3. A middleware/chat layer that can mutate profile state, create goals, and trigger investigations.
+The application is a local, single-user-at-a-time CLI that can start two HTTP
+servers:
 
-The system is intentionally stateful. Most files under `user-data/` are the source of truth, and a large part of startup is rebuilding in-memory containers from those files.
+- a per-user client server that exposes graph, goal, profile, middleware, and
+  debug routes
+- a central server that manages users, shared journeys, and the connection
+  matching system
 
-## Repository Shape
+The entry point is `c/main.c`, which delegates immediately to the CLI in
+`c/cli/ui.c`. The CLI is the operator shell for starting servers, pushing text
+into the graph, running deep search, creating goals, exporting state, and
+regenerating mock data.
 
-The important top-level areas are:
+## Architecture Diagram
 
-- `c/` - the main backend and domain logic.
-- `react/` - the current TypeScript frontend.
-- `js/` - the older browser graph viewer and lightweight app shell.
-- `build.sh` - release-style build and run script.
-- `debug.sh` - debug build helper.
-- `config.h` - the central runtime and filesystem configuration.
-- `docs/user-connections-arch.md` - a separate architecture note for user matching and connections.
+```mermaid
+flowchart TD
+    MAIN[c/main.c<br/>entry point]
+    CLI[c/cli/ui.c<br/>interactive CLI]
+    USERSYS[c/srv/user/<br/>user lifecycle + persistence]
+    GRAPH[c/ne/<br/>graph + input decomposition]
+    GOALS[c/ne/goal/<br/>goal tree + scheduling]
+    PROFILE[c/ne/profile/<br/>profile memory]
+    SEARCH[c/ne/search/<br/>deep search]
+    HTTPU[c/srv/http-util.c<br/>HTTP helpers]
+    USERHTTP[c/srv/http-server/<br/>per-user server]
+    CENTRAL[c/srv/central-server/<br/>central server]
+    MATCH[c/srv/match-system/<br/>matching + chat]
+    OPENAI[c/lib/openai/<br/>Responses API client]
+    JSON[c/lib/jsonp/<br/>JSON parser]
+    UTIL[c/lib/util/<br/>strings, time, errors]
+    GLOBALS[c/globals.c<br/>function pointer registry]
 
-## Execution Model
+    MAIN --> CLI
+    CLI --> USERSYS
+    CLI --> GRAPH
+    CLI --> GOALS
+    CLI --> SEARCH
+    CLI --> USERHTTP
+    CLI --> CENTRAL
 
-The compiled `change` executable starts a terminal UI in `c/cli/ui.c`. From there you can:
+    USERHTTP --> HTTPU
+    CENTRAL --> HTTPU
+    USERHTTP --> GRAPH
+    USERHTTP --> GOALS
+    USERHTTP --> PROFILE
+    USERHTTP --> SEARCH
+    USERHTTP --> JSON
+    USERHTTP --> UTIL
 
-- initialize the user system,
-- start the central meta server,
-- start the per-user client server,
-- create or repair goals,
-- decompose user text into graph nodes,
-- run deep search sessions,
-- export graph and goal state to disk.
+    CENTRAL --> USERSYS
+    CENTRAL --> MATCH
+    CENTRAL --> GOALS
+    CENTRAL --> GLOBALS
+    CENTRAL --> JSON
+    CENTRAL --> UTIL
 
-There are two HTTP servers, and they are not interchangeable:
+    USERSYS --> GRAPH
+    USERSYS --> GOALS
+    USERSYS --> PROFILE
+    USERSYS --> JSON
+    USERSYS --> UTIL
 
-- Central server on fixed port `8085`.
-- Per-user client server on a user-specific port, initially `9000 + user_index` for new users and then persisted in `.meta`.
+    GRAPH --> JSON
+    GRAPH --> OPENAI
+    GRAPH --> UTIL
 
-The browser/React frontend first talks to the central server to pick or create a user. After login it switches its base URL to the selected user server.
+    GOALS --> SEARCH
+    GOALS --> PROFILE
+    GOALS --> GLOBALS
+    GOALS --> OPENAI
+    GOALS --> JSON
+    GOALS --> UTIL
 
-## Build and Link Structure
+    PROFILE --> JSON
+    PROFILE --> UTIL
 
-`CMakeLists.txt` builds the code as many shared libraries plus one executable.
+    SEARCH --> GRAPH
+    SEARCH --> OPENAI
+    SEARCH --> JSON
+    SEARCH --> UTIL
 
-The main layers are:
+    MATCH --> OPENAI
+    MATCH --> JSON
+    MATCH --> UTIL
 
-- low-level utility libraries: `util`, `change-errors`, `timeutil`, `jsonp`, `hd`
-- AI transport: `openai`, `mockopenai`
-- graph core: `node`, `graphengine`, `graphexport`, `json2graph`, `search`
-- goal system: `goal-util`, `goal-info`, `goal-ai`, `goal-health`, `user-schedule`, `goal`
-- persistence and storage: `journey`, `user-management`, `userprofile`
-- connection subsystem source: `c/srv/connections.c` and `c/srv/connections.h`
-- runtime services: `http-server`, `central-server`, `middleware`
-- orchestration: `deepsearchsession`, `deepsearchexecute`, `aiaction`, `inputprocessor`
-- CLI: `ui`
+    HTTPU --> JSON
+    HTTPU --> UTIL
+```
 
-The executable links these together and enters `main()` in `c/main.c`, which just calls `UIStart()`, `UILoop()`, and `UIKill()`.
+```mermaid
+flowchart LR
+    subgraph ROOT["Repository Root"]
+        MAINFILE["c/main.c<br/>CLI entry"]
+        DOCS["docs.md<br/>technical docs"]
+        README["README.md<br/>project overview"]
+    end
 
-## Filesystem Layout
+    subgraph CLI_DIR["c/cli"]
+        UI["ui.c / ui.h<br/>interactive operator shell"]
+    end
 
-`config.h` defines the durable storage layout.
+    subgraph CORE_DIR["c/ne"]
+        NODE["node.c / node.h<br/>graph primitives"]
+        GRAPH_ENGINE["graph/graph-engine.c<br/>activation + weight refresh"]
+        GRAPH_EXPORT["graph/graph-export.c<br/>graph JSON export"]
+        INPUT["input/input-processor.c<br/>text -> graph decomposition"]
+        JSON_TO_GRAPH["input/json-to-graph.c<br/>graph ingestion"]
+        SEARCH_DIR["search/*.c<br/>deep search + node family filters"]
+        GOAL_DIR["goal/*.c<br/>goal trees, AI decomposition, schedule"]
+        PROFILE_DIR["profile/user-profile.c<br/>profile history + derived state"]
+    end
 
-- `user-data/` - per-user persisted state.
-- `user-data/<user_id>/.meta` - user metadata.
-- `user-data/<user_id>/graph-copy.json` - serialized graph snapshot.
-- `user-data/<user_id>/goals-copy.json` - goal snapshot, when exported.
-- `user-data/<user_id>/user-profile.log` - profile history and derived state.
-- `user-data/<user_id>/journey-<journey_id>.json` - journey file.
-- `user-data/connections/` - user-to-user connection records and message logs.
-- `dumps/` - error logs and debug dumps.
-- `mocks/` - AI-generated mock graph and action data.
-- `shared-journeys/` - central-server shared journey storage.
+    subgraph SRV_DIR["c/srv"]
+        HTTP_UTIL["http-util.c<br/>HTTP parsing, JSON helpers, sockets"]
+        USER_HTTP["http-server/*.c<br/>per-user HTTP server + SSE"]
+        CENTRAL_HTTP["central-server/*.c<br/>central server and shared journeys"]
+        MATCH_DIR["match-system/*.c<br/>connection matching + chat"]
+        USER_DIR["user/*.c<br/>user lifecycle, journeys, on-disk storage"]
+    end
 
-The code assumes `PROJECT_ROOT` is set correctly in `config.h`. Most hard-coded paths are derived from it.
+    subgraph LIB_DIR["c/lib"]
+        JSONP["jsonp/json.c<br/>JSON parser"]
+        OPENAI["openai/openai.c<br/>Responses API client"]
+        MOCKOPENAI["openai/mockopenai.c<br/>fixture generator"]
+        UTIL_LIB["util/util.c<br/>strings, files, helpers"]
+        TIME_UTIL["util/time-util.c<br/>time offset helpers"]
+        HASHDICT["hd/hashdict.c<br/>small dictionary"]
+    end
 
-## Core Utility Layer
+    subgraph API_USER["Per-user server endpoints"]
+        U1["GET /graph<br/>serialize current graph"]
+        U2["POST /graph/export<br/>write graph-copy.json"]
+        U3["GET /graph/load<br/>reload graph-copy.json"]
+        U4["POST /message<br/>ingest text into graph"]
+        U5["POST /research/start<br/>start deep search"]
+        U6["GET /research/events<br/>SSE stream"]
+        U7["POST /middleware/message<br/>LLM orchestration"]
+        U8["POST /middleware/permission<br/>approve pending write"]
+        U9["GET /middleware/events<br/>SSE stream"]
+        U10["GET /middleware/session<br/>session snapshot"]
+        U11["GET /chat/sessions<br/>session list"]
+        U12["GET /profile<br/>profile summary"]
+        U13["POST /profile/update<br/>edit profile fields"]
+        U14["GET /schedule<br/>derived schedule report"]
+        U15["Goal routes<br/>create/start/end/drop/repair/list/export"]
+        U16["Dev routes<br/>time advance/reset"]
+    end
 
-The utility layer lives in `c/lib/util/`.
+    subgraph API_CENTRAL["Central server endpoints"]
+        C1["GET /users<br/>list users"]
+        C2["POST /users/create<br/>create user"]
+        C3["POST /users/select<br/>select user + start client server"]
+        C4["POST /journey/create<br/>create shared journey"]
+        C5["GET /journey/:id<br/>fetch shared journey"]
+        C6["POST /journey/:id<br/>update shared journey"]
+        C7["POST /connections/discoverable<br/>opt in to matching"]
+        C8["POST /connections/private<br/>opt out of matching"]
+        C9["POST /connections/description<br/>update match description"]
+        C10["GET /connections?user_id=...<br/>list connections"]
+        C11["POST /connections/approve<br/>approve proposal"]
+        C12["POST /connections/decline<br/>decline proposal"]
+        C13["POST /messages/send<br/>send connection message"]
+        C14["GET /messages?connection_id=...<br/>list messages"]
+    end
 
-### String type
+    MAINFILE --> CLI_DIR
+    MAINFILE --> SRV_DIR
+    MAINFILE --> CORE_DIR
 
-`util.h` defines a small heap-backed `String` structure:
+    UI --> USER_DIR
+    UI --> USER_HTTP
+    UI --> CENTRAL_HTTP
+    UI --> GRAPH_ENGINE
+    UI --> INPUT
+    UI --> SEARCH_DIR
+    UI --> GOAL_DIR
+    UI --> OPENAI
 
-- `p` - character buffer.
-- `len` - used length.
-- `cap` - allocated capacity.
-- `used` / `init` - internal flags.
+    USER_HTTP --> U1
+    USER_HTTP --> U2
+    USER_HTTP --> U3
+    USER_HTTP --> U4
+    USER_HTTP --> U5
+    USER_HTTP --> U6
+    USER_HTTP --> U7
+    USER_HTTP --> U8
+    USER_HTTP --> U9
+    USER_HTTP --> U10
+    USER_HTTP --> U11
+    USER_HTTP --> U12
+    USER_HTTP --> U13
+    USER_HTTP --> U14
+    USER_HTTP --> U15
+    USER_HTTP --> U16
 
-The main helpers are:
+    CENTRAL_HTTP --> C1
+    CENTRAL_HTTP --> C2
+    CENTRAL_HTTP --> C3
+    CENTRAL_HTTP --> C4
+    CENTRAL_HTTP --> C5
+    CENTRAL_HTTP --> C6
+    CENTRAL_HTTP --> C7
+    CENTRAL_HTTP --> C8
+    CENTRAL_HTTP --> C9
+    CENTRAL_HTTP --> C10
+    CENTRAL_HTTP --> C11
+    CENTRAL_HTTP --> C12
+    CENTRAL_HTTP --> C13
+    CENTRAL_HTTP --> C14
 
-- `InitString`
-- `FreeString`
-- `CatString`
-- `CatTemplateString`
-- `CopyString`
-- `EmptyString`
-- `ResizeString`
+    USER_DIR --> USER_HTTP
+    USER_DIR --> GRAPH_EXPORT
+    USER_DIR --> JSON_TO_GRAPH
+    USER_DIR --> GOAL_DIR
+    USER_DIR --> PROFILE_DIR
+    USER_DIR --> JSONP
+    USER_DIR --> UTIL_LIB
 
-This is the primary string type used throughout the project.
+    MATCH_DIR --> OPENAI
+    MATCH_DIR --> JSONP
+    MATCH_DIR --> UTIL_LIB
 
-### Generic helpers
+    GRAPH_ENGINE --> JSONP
+    GRAPH_ENGINE --> UTIL_LIB
+    INPUT --> OPENAI
+    INPUT --> JSONP
+    INPUT --> PROFILE_DIR
+    SEARCH_DIR --> OPENAI
+    SEARCH_DIR --> GRAPH
+    SEARCH_DIR --> JSONP
+    GOAL_DIR --> OPENAI
+    GOAL_DIR --> SEARCH_DIR
+    GOAL_DIR --> PROFILE_DIR
+    PROFILE_DIR --> JSONP
+    PROFILE_DIR --> UTIL_LIB
 
-Also in `util.c`:
+    HTTP_UTIL --> JSONP
+    HTTP_UTIL --> UTIL_LIB
+    CENTRAL_HTTP --> MATCH_DIR
+    CENTRAL_HTTP --> USER_DIR
+    CENTRAL_HTTP --> GOAL_DIR
+    CENTRAL_HTTP --> JSONP
+    CENTRAL_HTTP --> UTIL_LIB
 
-- `random_id()` generates IDs with a fixed leading `g`.
-- `readFile()` loads a file into memory.
-- `dump_to_file()` writes raw content to disk.
-- `lowerAll()` lowercases a buffer in place.
-- `trim_newline_inplace()` strips trailing newlines.
-- `mygetline()` and `WaitForInput()` support terminal interaction.
+    JSONP --> UTIL_LIB
+    OPENAI --> UTIL_LIB
+    MOCKOPENAI --> OPENAI
+    TIME_UTIL --> UTIL_LIB
+    HASHDICT --> UTIL_LIB
+```
 
-### Error handling
+## Boot Sequence
 
-`change-errors.c` defines the project-wide assertion style:
+Startup is layered and stateful:
 
-- `massert()` - soft failure, returns boolean.
-- `cassert()` - fatal failure.
-- `change_assert()` - file/line/function aware fatal assertion that also writes a log to `dumps/`.
+1. `main()` calls `UIStart()`, `UILoop()`, and `UIKill()`.
+2. `UIStart()` initializes users, creates the five context root nodes, registers
+   global function pointers, and initializes the goal system.
+3. `InitUserSystem()` scans `user-data/`, loads user meta files, graphs, and
+   journeys, and creates a default user if none exist.
+4. `InitJourneySystem()` and `SetupContextNodes()` prepare the in-memory graph
+   roots used by the neuroengine.
+5. `InitGlobalPointerMap()` registers cross-module callbacks such as
+   `ds_emit_event` and `goal_emit_event`.
 
-The system prefers fail-fast behavior over recovery in many internal paths.
+The central server and the per-user server both run on top of the same
+in-memory user and journey tables. The central server also initializes the
+connection system and shared journey store.
 
-### Global pointer registry
+## Core Data Model
 
-`c/globals.c` provides a tiny registry for runtime callbacks or shared function pointers.
+### String
 
-This is used to avoid circular dependencies in the AI and journey subsystems:
+The project uses a custom `String` type from `c/lib/util/util.h`:
 
-- `ds_emit` is registered here.
-- `goal_emit` is registered here.
-- journey title/info lookup functions are also registered here.
+- `p` is heap storage
+- `len` is the used byte count
+- `cap` is the allocated capacity
+- `used` and `init` are lifecycle flags
 
-The pattern is simple and fragile by design: initialize the map early, store a small number of named pointers, and read them lazily where needed.
+All string concatenation, resizing, escaping, and copying is done through this
+utility layer. The code assumes these strings are mutable and often writes into
+them directly.
 
-## Identity Graph Subsystem
+### Graph Nodes
 
-The identity graph is the project’s core data structure. It lives under `c/ne/`.
+The neuroengine graph lives in `c/ne/node.h` and `c/ne/node.c`.
 
-### Data model
+- `Node` stores a label, activation, weight, parent pointer, children index,
+  and a dynamic neighbor array
+- `Connection` stores activation, weight, last touch time, pending touches, and
+  the target node index
+- `NodeContainer` owns the flat node array and tracks counts, capacities,
+  connection totals, and the five context root indices
 
-`node.h` defines:
-
-- `Node`
-- `Connection`
-- `NodeContainer`
-- `Task`
-
-Important fields:
-
-- `Node.label` - concept name.
-- `Node._activation` - current salience.
-- `Node._weight` - long-term importance.
-- `Node.neighbours` - adjacency list.
-- `Node.parent` / `Node.hasParent` - context tree relationship.
-- `Node.childrenIndex` - fast lookup for nested nodes.
-- `times_seen` / `times_used` - usage counters used by graph refresh logic.
-
-`NodeContainer` stores:
-
-- the node array,
-- total count and capacity,
-- a `needsRefresh` flag,
-- total connection count,
-- the five built-in context roots.
-
-### Context roots
-
-The graph always begins with five built-in context nodes:
+The five built-in contexts are:
 
 - `profesie`
 - `emotie`
@@ -175,30 +310,117 @@ The graph always begins with five built-in context nodes:
 - `generalitati`
 - `subiectiv`
 
-These are created by `SetupContextNodes()` in `node.c`. Many lookups are scoped under one of these roots.
+Each context is a root node. All user identity content is inserted beneath one
+of these roots.
 
-### Node semantics
+### Users
 
-The project distinguishes two signals:
+`User` in `c/srv/user/user-management.h` is the main tenant object.
 
-- activation = current salience or runtime relevance.
-- weight = structural importance or long-term relevance.
+- `id` is the stable storage key and directory name
+- `name` is the display name
+- `port` is the per-user server port
+- `journeys[]` stores journey IDs
+- `nodes` is the user identity graph
+- `schedule_table` caches derived schedule entries
+- `discoverable` and `description` are the connection-matching fields
 
-The exported graph format and the frontend both render those two values separately.
+The user table is a fixed-size global array with `MAX_USERS = 8`.
 
-### Graph refresh
+### Journeys
 
-`graph-engine.c` recalculates graph state.
+`Journey` in `c/srv/user/journey.h` is a named ordered collection of root
+goals.
 
-The refresh pass:
+- `id` is a random ID
+- `title` and `extra_info` are stored as strings
+- `goals[]` holds pointers to all goals in the journey
+- `is_shared` marks shared journeys
 
-1. Applies time decay to node and connection activation.
-2. Accumulates pending touches.
-3. Computes support from neighbors.
-4. Normalizes usage counters.
-5. Updates node weight using configurable multipliers from `config.h`.
+The first journey is created automatically for every new user and is the
+default destination for goal creation.
 
-The main tuning constants are:
+### Goals
+
+`Goal` in `c/ne/goal/goal-util.h` is a tree node with scheduling state.
+
+- `title` and `extra_info` define the task
+- `start_date` and `end_date` track progress
+- `required_time` is the estimated elapsed time, not focused time
+- `subgoals[]` stores ordered child indices
+- `parent`, `prev`, and `next` encode the tree and sibling sequence
+- `minPauseToNext` and `pauseToNext` drive schedule spacing
+- `priority` is meaningful on root goals and affects scheduling order
+- `journey_id` ties the goal to its journey
+
+Goals are always stored inside a journey and referenced by local indices. The
+tree is sequential, not arbitrary: children represent ordered steps.
+
+### Schedules and Profile Memory
+
+The schedule system stores derived timeline entries in `struct ScheduleEntry`
+with:
+
+- `time`
+- `goalIndex`
+- `journey_id`
+
+The profile system stores history and derived operational memory in the
+`user-profile.log` file. It is not a generic database; it is a structured text
+file with three sections:
+
+- input history
+- goal activity history
+- derived summary
+
+## Persistence Layout
+
+All persistent state lives under `user-data/` using the user ID as the storage
+directory.
+
+For each user:
+
+- `.meta` stores user name, port, discoverability, description, and journey IDs
+- `graph-copy.json` stores the serialized graph
+- `goals-copy.json` stores the journey tree data
+- `user-profile.log` stores the profile memory sections
+- `journey-<id>.json` stores each journey
+
+The connection system stores its own data under:
+
+- `user-data/connections/<connection-id>.conn`
+- `user-data/connections/<connection-id>.msgs`
+
+Shared journeys are stored under:
+
+- `shared-journeys/<journey-id>.json`
+
+The persistence model is simple: most mutations call `SaveUser()` or a module
+specific persist function immediately after state changes.
+
+## Graph Engine
+
+The graph engine in `c/ne/graph/graph-engine.c` is the user identity memory
+mechanism.
+
+### Node and Connection Dynamics
+
+Every node and connection has:
+
+- activation
+- weight
+- last touched time
+- pending touch count
+
+Touching a node or connection increments pending touches. `RefreshGraph()` then
+applies:
+
+- exponential decay over time
+- a logarithmic boost from pending touches
+- a weight recomputation based on support, seen counts, used counts, and the
+  decay/merit constants in `c/config.h`
+
+The implementation uses the constants defined in `config.h`:
 
 - `ACTIVATION_IMPORTANCE_TO_NODE_WEIGHT`
 - `NCOUNT_PENALTY_TO_NODE_WEIGHT`
@@ -206,487 +428,275 @@ The main tuning constants are:
 - `NODE_OLD_WEIGHT_RELEVANCE`
 - `ACT_HALFTIME`
 
-The refresh happens before deep search sessions, so graph state is not static across interactions.
+This means graph importance is not static. It is re-normalized whenever the
+graph is refreshed, especially during deep search.
 
-### Graph export
+### Context Roots
 
-`graph-export.c` serializes the container as JSON with two top-level arrays:
+`SetupContextNodes()` creates the five root nodes once per user graph. All
+contextual nodes are attached beneath one of these roots. A lookup for a node
+within a context starts from the context root, which is why context scoping is
+important throughout the loader and exporter.
 
-- `nodes`
-- `connections`
+### Export and Import
 
-Each node entry includes:
+`c/ne/graph/graph-export.c` serializes the graph into a flat JSON structure:
 
-- `name`
-- `activation`
-- `weight`
-- `id`
-- `parent` when applicable
+- `nodes[]` contains node labels, ids, activation, weight, and parent
+- `connections[]` contains source/target node IDs and edge metrics
 
-Each connection entry includes:
+`c/ne/input/json-to-graph.c` performs the inverse operation when loading a graph
+or ingesting new AI-generated graph content.
 
-- `nodes` as `[source_id, target_id]`
-- `weight`
-- `activation`
+## Input Decomposition Pipeline
 
-This format is used by the browser graph viewer and by disk persistence.
+User text is transformed into graph updates by `DecomposeInputIntoGraph()` in
+`c/ne/input/input-processor.c`.
 
-### Input to graph
+The flow is:
 
-`input/json-to-graph.c` converts AI JSON into graph mutations.
+1. Record the input in the user profile history.
+2. Build a prompt that instructs OpenAI to return a structured JSON object for
+   the five contexts.
+3. Send the prompt to the OpenAI Responses API using `gpt-5.4-mini`.
+4. Parse the returned JSON content from the model response envelope.
+5. Feed each context object into `AddContextNodesFromJSON()`.
 
-The process is:
+The JSON schema expects, for each context:
 
-1. Parse the JSON object for a context.
-2. Create or touch nodes from `nodes`.
-3. Create or touch bidirectional connections from `connections`.
-4. Respect the target context node as the parent container.
+- a `nodes` array of `{name, weight, activation}`
+- a `connections` array of `{nodes, weight, activation}`
 
-When a node or connection already exists, the code touches it rather than duplicating it.
+When a node already exists in that context, the loader touches it rather than
+duplicating it. When a connection already exists, it touches the connection
+instead of creating a duplicate edge.
 
-### User text decomposition
+The loader intentionally biases new node and connection weights toward the
+existing defaults using the `NODE_GUESS_WEIGHT_RELEVANCE` and
+`CONNECTION_GUESS_WEIGHT_RELEVANCE` constants.
 
-`input/input-processor.c` sends the user’s raw text to OpenAI using a strict JSON schema.
+## Goal System
 
-The response is expected to contain one object per context, each with:
+The goal system is spread across `c/ne/goal/goal.c`, `goal-util.c`,
+`goal-info.c`, `goal-ai.c`, `goal-health.c`, and `schedule-system.c`.
 
-- `nodes`
-- `connections`
+### Creation
 
-The resulting data is merged into the current user graph through `AddContextNodesFromJSON()`.
+`CreateUserGoal()` is the main entry point for goal creation.
 
-This is the main path for converting a thought into graph state.
+- the middleware or HTTP layer supplies `goal_input1` and `goal_input2`
+- the goal is personalized using deep search
+- the resulting root goal is added to a journey
+- the system then attempts partial decomposition into child goals
 
-## Goal and Journey Subsystem
+The design is intentionally AI-driven: `goal_input1` is the concise goal title
+and `goal_input2` is the rich practical context used to estimate required time
+and shape decomposition.
 
-The goal system lives under `c/ne/goal/` and `c/srv/journey.*`.
+### Decomposition
 
-### Journey model
+`DecomposeGoal()` and `ComputePartialDecomposition()` recursively break a goal
+into sequential child goals until leaf tasks are small enough to execute.
 
-`Journey` is the container for goals.
+The decomposition is not just splitting text. It uses AI-generated structure to
+determine:
 
-Fields:
+- child titles
+- child ordering
+- child timing
+- supporting extra info
 
-- `id`
-- `title`
-- `extra_info`
-- `goals[]`
-- `goals_count`
-- `is_shared`
+`RepairGoalBranch()` can rebuild a branch when the user context has changed.
+The repair code attempts to preserve valid progress state by matching old and
+new branches structurally.
 
-The journey is effectively a thematic goal tree container. Users can have multiple journeys, and the first one is treated as the default destination for most goal operations.
+### Progress and Lifecycle
 
-### Goal model
+The status actions in the HTTP layer call:
 
-`goal-util.h` defines `Goal`, which stores:
+- `StartGoalDeepFromGoal()`
+- `EndGoalFromGoal()`
+- `DropGoalTree()`
+- `RepairGoalBranch()`
 
-- `title`
-- `extra_info`
-- `start_date`
-- `end_date`
-- `required_time`
-- `subgoals[]`
-- `parent`, `prev`, `next`
-- `minPauseToNext`
-- `pauseToNext`
-- `localIndex`
-- `depth`
-- `retry_depth`
-- `priority`
-- `id`
-- `journey_id`
+Goals are considered active when `start_date` is set and `end_date` is not.
+Completion propagates upward when all children are finished.
 
-The important distinction is:
+### Serialization
 
-- root goals represent larger user objectives,
-- subgoals represent the decomposition tree,
-- leaf goals are the actual schedulable work units.
+`SerializeGoal()` and the related helpers in `goal-info.c` are used to build the
+descriptive payloads shown to the middleware and to the HTTP API.
 
-### Goal creation
+These serializers can emit:
 
-`CreateUserGoal()` in `goal/goal.c` creates a root goal, assigns it to a journey, and then relies on AI-driven personalization and decomposition.
+- parent chains
+- sibling chains
+- follow-up chains
+- stalled goals
+- due goals
+- leaf due goals
+- completed user goal history
 
-Goal creation is not just inserting a node. It triggers:
+The middleware uses these serialized views to provide the language model with a
+compact but rich snapshot of the user's current situation.
 
-- title and extra-info extraction,
-- estimated time inference,
-- priority assignment,
-- later decomposition into leaf tasks.
+## Goal Health and Schedule Derivation
 
-### Goal decomposition
+`RunGoalHealthCheck()` in `c/ne/goal/goal-health.c` recalculates the user's
+workload schedule whenever goal state changes.
 
-`goal-ai.c` builds prompts for OpenAI and extracts structured goal data.
+It reads work block preferences from the user profile:
 
-There are two major prompt paths:
+- `work_day_start`
+- `daily_work_hours`
 
-- extraction of a single goal from raw user text,
-- decomposition of a goal into 2-9 sequential subgoals.
+Then it:
 
-The decomposition schema requires each child goal to include:
+- scans all journeys
+- finds due leaf goals
+- orders them by root priority and age
+- packs them into work blocks
+- adjusts `pauseToNext` on predecessor goals when needed
 
-- `title`
-- `extrainfo`
-- `estimated_time`
-- `min_pause_to_next`
-- `pause_to_next`
+The schedule is stored in memory on the user object and regenerated when marked
+dirty. `SerializeScheduleData()` turns the schedule into a human-readable report
+for the middleware and for the `/schedule` endpoint.
 
-This makes the decomposition tree operational rather than purely descriptive.
+## User Profile Memory
 
-### Goal repair
+`c/ne/profile/user-profile.c` maintains a structured log file rather than a
+database table.
 
-The repair path exists because goals can drift or become invalid as the user progresses.
+The file is divided into sections:
 
-`RepairGoalBranch()` and related helpers can:
+- input history
+- goal activity
+- derived profile
 
-- extend a leaf goal if retry depth is still low,
-- shorten or reframe the goal after repeated failure,
-- preserve historical context in extra info.
+The derived section is especially important because it stores operational state
+used by other systems:
 
-The repair flow is intentionally recursive and history-aware.
+- latest input source
+- latest input text
+- last goal event
+- last goal id
+- last goal title
+- current focus goal id
+- current focus goal title
 
-### Goal validation and required time
-
-`CalcGoalRequiredTime()` computes total required time for a tree by summing child required times plus pauses.
-
-`ValidateGoal()` flags leaf goals that have been active too long without completion.
-
-This is the basis for the goal health and scheduling systems.
-
-### Goal health
-
-`goal-health.c` adjusts `pauseToNext` so pending leaves fit into the user’s work block.
-
-The logic:
-
-1. Reads derived profile fields such as `work_day_start` and `daily_work_hours`.
-2. Computes the current time offset inside the day.
-3. Collects pending leaf goals across all journeys.
-4. Sorts them by root priority and age.
-5. Assigns dense time slots.
-6. Writes the updated pauses back to the user if anything changed.
-
-The important design choice is that pause adjustments only increase spacing; they do not shorten already-required pauses.
-
-### Scheduling
-
-`user-schedule.c` flattens the goal tree into a runtime schedule.
-
-It combines:
-
-- due leaf goals,
-- their parent chain,
-- calculated pauses,
-- current dates.
-
-`SerializeScheduleData()` exports the schedule report, including:
-
-- a summary of near-term work,
-- day and week load totals,
-- a detailed event list.
-
-### Journey persistence
-
-`journey.c` manages in-memory journey allocation, serialization, and load/save.
-
-Important behavior:
-
-- `NewJourney()` creates a fresh journey with a random ID.
-- `AddGoalToJourney()` assigns `localIndex` and stores the goal in a stable slot.
-- `SerializeJourney()` writes a JSON representation.
-- `LoadJourneyFromBuffer()` reconstructs a journey and remaps cross references.
-
-This is the main durability layer for goal trees.
-
-## User Management and Persistent State
-
-`c/srv/user-management.c` is responsible for user discovery, creation, loading, and saving.
-
-### User model
-
-`User` contains:
-
-- `name`
-- `id`
-- `port`
-- `journeys[]`
-- `nodes`
-- schedule and health refresh flags
-- discoverability state
-- profile description
-
-The user object is the primary runtime root for almost everything else.
-
-### Startup sequence
-
-`InitUserSystem()`:
-
-1. Initializes the journey system.
-2. Ensures `user-data/` exists.
-3. Scans all subdirectories under `user-data/`.
-4. Loads each user from its `.meta` file.
-5. If no user exists, creates the default user.
-
-### User creation
-
-`NewUser()`:
-
-- allocates a slot in `USER_TABLE`,
-- generates a new user ID,
-- initializes name, description, graph container, and flags,
-- allocates a default journey named `Journey`,
-- assigns a port,
-- creates the user directory,
-- writes `.meta`.
-
-### User persistence
-
-`SaveUser()` writes:
-
-- `.meta`,
-- graph export,
-- all journey files.
-
-The `.meta` file contains:
-
-- `id`
-- `name`
-- `port`
-- `discoverable`
-- `description`
-- `journeys[]`
-
-### User discovery and matching
-
-`c/srv/connections.c` adds user-to-user matching on top of user management. In this checkout it exists as source in the tree, but it is not declared as a standalone CMake target.
-
-Users have:
-
-- `discoverable` - opt-in visibility flag,
-- `description` - free text used for matching.
-
-The matching pass compares token overlap in descriptions and proposes a connection when the overlap threshold is reached.
-
-## Connection and Matching Subsystem
-
-`c/srv/connections.c` manages user-to-user proposals, confirmations, declines, and messages.
-
-### Connection lifecycle
-
-Connection states:
-
-- `CONN_PROPOSED`
-- `CONN_CONFIRMED`
-- `CONN_DECLINED`
-
-The stored record includes:
-
-- connection ID,
-- both user IDs,
-- approvals,
-- state,
-- proposed timestamp,
-- a reason string.
-
-### Matching algorithm
-
-The matching pass is intentionally simple:
-
-1. Tokenize both user descriptions.
-2. Lowercase and deduplicate tokens.
-3. Compute shared words.
-4. If the overlap count is at least `MIN_OVERLAP`, create a proposed connection.
-
-This is not a semantic recommender. It is a coarse overlap matcher.
-
-### Persistence
-
-Connections are stored in `user-data/connections/`.
-
-- `<connection_id>.conn` stores the proposal state.
-- `<connection_id>.msgs` stores messages as newline-delimited JSON.
-
-### Approval and chat
-
-When both sides approve:
-
-- state becomes `CONN_CONFIRMED`.
-- messages are allowed.
-
-Declined connections remain declined.
-
-## Deep Search Subsystem
-
-Deep search is the project’s multi-round AI investigation engine.
-
-It lives in:
-
-- `c/ne/search/deep-search-session.c`
-- `c/ne/search/deep-search-execute.c`
-- `c/ne/search/command-parsing.c`
-- `c/ne/search/ai-action.c`
-- `c/ne/search/search.c`
-
-### Concept
-
-Deep search is not ordinary chat. It is a constrained loop:
-
-1. Build a persistent prompt from the task and current user state.
-2. Ask the model for one JSON action.
-3. Execute that action against the current graph or goal system.
-4. Append the result to dynamic memory.
-5. Repeat until the model returns `finished=true` and a conclusion.
-6. Run a judge pass to validate the result.
-
-### Session memory
-
-`DS_memory` has two parts:
-
-- `persistent` - the fixed task instruction and identity/system context.
-- `dynamic` - the evolving transcript of model outputs and tool results.
-
-The persistent prompt explains the environment and the allowed commands. The dynamic buffer accumulates each round’s evidence.
-
-### Command model
-
-The model is constrained to 9 commands.
-
-The implemented core commands are:
-
-- `1` - global graph filtering by activation or weight.
-- `2` - local neighborhood search inside one context.
-- `3` - recursive graph exploration.
-- `4` - goal evidence inspection.
-- `5` - goal family inspection by goal ID and depth.
-- `6` - goal structure traversal methods.
-- `7` - schedule inspection.
-- `8` - profile section inspection.
-- `9` - terminal completion object.
-
-`command-parsing.c` validates parameters for each command and produces error text when the JSON is incomplete or invalid.
-
-### Graph search implementation
-
-`search.c` provides the data selection functions used by commands 1 to 3:
-
-- top percentage by activation or weight,
-- neighbor filtering,
-- recursive family computation.
-
-The family computation traces the graph recursively to a bounded depth and returns a structured textual tree.
-
-### AI execution loop
-
-`deep-search-execute.c` parses the model response and dispatches to the appropriate `runN()` function.
-
-The response must fit a JSON schema. The executor then:
-
-- validates whether the model is finished,
-- checks whether it supplied a conclusion,
-- otherwise runs the selected command and appends the output.
-
-### Judge pass
-
-After a candidate answer is produced, a judge prompt validates it against the task.
-
-If the judge fails:
-
-- the failure reason is appended to persistent feedback,
-- the next round is allowed to correct itself.
-
-This makes the deep search loop a constrained self-correcting process rather than a one-shot LLM call.
+The middleware reads these summaries when constructing prompts. The profile
+module also preserves non-fixed custom fields so auxiliary systems can add their
+own derived keys without being erased.
 
 ## Middleware Layer
 
-`c/middleware/middleware.c` is the highest-level AI orchestration layer available in the client server.
+The middleware in `c/middleware/middleware.c` is the AI orchestrator that sits
+above the graph and goal systems.
 
-### Role
+### Responsibilities
 
-It is responsible for deciding what to do with a user message:
+The middleware is responsible for:
 
-- answer directly,
-- update profile memory,
-- ask permission,
-- create a goal,
-- change goal priority,
-- trigger deep search,
-- update graph memory,
-- delay a goal,
-- drop a goal,
-- repair a goal branch.
+- interpreting user chat input
+- deciding whether to update profile memory
+- deciding whether to create goals
+- deciding whether to call deep search
+- deciding whether to update the graph
+- deciding whether to trigger matching-related actions
+- asking for permission when the model wants to store sensitive profile data
 
-### Middleware state
+### Prompt Context
 
-The module keeps two bounded in-memory registries:
+The middleware prompt is assembled from:
 
-- pending profile permissions,
-- session histories.
+- raw user input
+- per-session chat history
+- user profile summary
+- input history
+- goal activity history
+- active goals
+- schedule snapshot
+- completed goals
+- stalled goals
+- retry feedback
+- deep-search feedback
 
-Session histories track:
+This means the middleware model does not operate on a bare prompt. It sees a
+compressed operational memory of the user.
 
-- chat history,
-- event JSON,
-- event count.
+### Action Model
 
-### Context building
+The middleware output schema contains:
 
-Before calling the model, `build_middleware_context()` gathers:
+- `assistant_message`
+- `actions[]`
+- `suggested_replies[]`
 
-- recent profile input history,
-- goal activity history,
-- derived profile summary,
-- active goals,
-- schedule snapshot,
-- completed goals,
-- stalled goals.
+The action executor supports:
 
-This becomes the prompt context for the middleware model.
+- `reply`
+- `set_profile`
+- `clear_profile`
+- `ask_permission`
+- `create_goal`
+- `set_goal_priority`
+- `call_deep_search`
+- `update_graph`
+- `delay_goal`
+- `drop_goal`
+- `repair_branch`
+- `set_discoverable`
+- `set_private`
+- `update_match_description`
+- `find_match`
 
-### Permissions
+Important implementation detail:
 
-Some profile keys are sensitive and require explicit approval:
+- `set_profile` can be silent or permission-gated depending on the key
+- `ask_permission` always pauses execution and creates a pending permission
+- `call_deep_search` short-circuits the turn and re-invokes the session after
+  the search completes
+- `create_goal`, `drop_goal`, and `repair_branch` require explicit user
+  confirmation in the current turn
 
-- `age`
-- `name`
-- `location`
-- `profession`
+### Session History
 
-The AI can ask for permission, and the server stores the pending decision until the user resolves it.
+The middleware keeps a per-session history buffer in memory. It also records
+events into a compact JSON array so the UI can replay the session state.
 
-### Why this matters
+## Deep Search
 
-The middleware is the top-level policy engine. It is where the project starts to behave like a managed assistant instead of just a graph editor or goal tracker.
+Deep search lives in `c/ne/search/deep-search-session.c`.
 
-## HTTP Server Layer
+It is a looped reasoning process that:
 
-There are two servers in `c/srv/`.
+- constructs a persistent prompt describing the investigation task
+- refreshes the user graph first
+- calls OpenAI for one action at a time
+- executes the action
+- judges the result
+- retries with feedback if the output fails validation
 
-### Central server
+The deep search prompt is built around the graph and goal system as evidence
+sources. The agent is instructed to investigate rather than directly solve the
+task. The judge enforces that the search does not terminate before the minimum
+round count.
 
-The central server is meta-only. It does not talk to graph or goal engines directly.
+The search engine also uses `c/ne/search/search.c` to:
 
-Endpoints:
+- filter nodes or connections by activation or weight
+- recursively compute a node family / neighborhood view
+- produce graph-focused text summaries for the AI
 
-- `GET /users`
-- `POST /users/create`
-- `POST /users/select`
-- `POST /journey/create`
-- `GET /journey/<id>`
-- `POST /journey/<id>`
+## HTTP Architecture
 
-Behavior:
+There are two HTTP servers:
 
-- list users,
-- create a user,
-- select a user and start that user’s client server,
-- create or update shared journeys.
+### Per-user server
 
-Selecting a user causes the current per-user server to restart on that user’s configured port.
+Implemented in `c/srv/http-server/`.
 
-### Client server
-
-The client server owns the actual per-user routes.
-
-Main endpoints:
+It listens on a user-specific port and serves:
 
 - `GET /graph`
 - `POST /graph/export`
@@ -698,148 +708,208 @@ Main endpoints:
 - `POST /middleware/permission`
 - `GET /middleware/events`
 - `GET /middleware/session`
-- `POST /goal/create`
-- `POST /goal/repair`
-- `POST /goal/drop`
-- `GET /profile`
-- `GET /goal/events`
-- `GET /goal/list`
-- `GET /goal/session`
-- `POST /goal/export`
-- `GET /goal/load`
-- `GET /dev/time`
-- `POST /dev/time/advance`
-- `POST /dev/time/reset`
-- `POST /goal/start`
-- `POST /goal/end`
-- `POST /goal/decompose`
+- `GET /chat/sessions`
+- goal routes
+- profile routes
+- dev/time routes
 - `GET /schedule`
+
+This server also hosts SSE streams for live goal, research, and middleware
+events.
+
+### Central server
+
+Implemented in `c/srv/central-server/`.
+
+It manages:
+
+- user listing and creation
+- user selection
+- shared journey storage
+- connection opt-in and matching
+- connection approval/decline
+- connection chat
+
+The central server and user server both use the common HTTP parsing utilities in
+`c/srv/http-util.c`.
 
 ### SSE
 
-The client server implements Server-Sent Events for:
+`c/srv/http-server/sse.c` implements a shared SSE client pool.
 
-- goal events,
-- research events,
-- middleware events.
+- clients are tracked by stream ID
+- dead clients are pruned by ping writes
+- events are emitted as JSON payloads
+- `ds_emit_event()` and `goal_emit_event()` are thin wrappers around the same
+  emitter
 
-`server_emit_event()` centralizes SSE formatting, escaping, filtering, and client cleanup.
+This is why `SIGPIPE` is ignored on server startup.
 
-The frontend uses those streams to update the UI live.
+## User and Central Server Startup
 
-## Frontend Layer
+`InitUserSystem()` loads all users from disk, initializes journeys, and creates
+a default user if none exist.
 
-The frontend exists in two forms:
+`start_central_server()` additionally:
 
-- `js/` - older browser-based graph explorer.
-- `react/` - current TypeScript app.
+- initializes the global pointer map
+- registers `ds_emit_event` and `goal_emit_event`
+- starts the goal and connection systems
+- loads shared journeys
+- starts a per-user server for the first loaded user if one exists
 
-### Legacy graph viewer
+The central server uses the same in-memory user objects as the per-user server.
+This is a local monolith with two sockets, not two independent applications.
 
-`js/graph.html` is a self-contained canvas app for visualizing and manipulating the graph.
+## Connection Matching System
 
-It provides:
+The matching system lives in `c/srv/match-system/` and is intentionally
+separate from the graph and goal systems.
 
-- endpoint selection,
-- graph refresh,
-- graph export/import,
-- SSE-backed timeline views,
-- graph and goal panels.
+### Data
 
-`js/app/shared.js` handles:
+`UserConn` stores:
 
-- endpoint base resolution,
-- central server login helpers,
-- canvas drawing helpers,
-- storage keys,
-- transport error normalization.
+- connection ID
+- user A and user B IDs
+- approval flags
+- state
+- proposal timestamp
+- match reason
 
-`js/app/graph-view.js` parses the graph JSON and renders nodes and edges on a canvas.
+`UserConnMessage` stores:
 
-### React app
+- connection ID
+- sender ID
+- timestamp
+- message text
 
-The React app is the current UI path.
+### Persistence
 
-Important pieces:
+Connections are persisted as single-line JSON in `.conn` files.
+Messages are appended line-by-line in `.msgs` files.
 
-- `react/src/config/server.ts` - endpoint management and central login helpers.
-- `react/src/config/utils.ts` - route helpers and goal URL helpers.
-- `react/src/App.tsx` - main application shell, route handling, SSE subscriptions, goal state refresh, and login/logout transitions.
-- `react/src/section/login-view.tsx` - central-server sign-in and user creation.
-- `react/src/section/goal-view.tsx` - goal tree display and actions.
-- `react/src/section/chat-view.tsx` - middleware conversation and event timeline.
-- `react/src/section/profile-view.tsx` - profile editing.
-- `react/src/section/daily-brief-view.tsx` - schedule and daily summary.
+On startup, the connection system:
 
-### Frontend/server contract
+- creates `user-data/connections/` if missing
+- loads all connection files into memory
+- loads the message logs for each connection
 
-The frontend does not own the domain model. It consumes server JSON and SSE events and turns them into UI state.
+### Matching Flow
 
-That means:
+`FindMatchForUser()` is the main matching pass for one user.
 
-- the backend defines the canonical shape,
-- the frontend only renders and triggers actions,
-- reloads are the expected way to re-synchronize state.
+1. Ignore users that are not discoverable or do not have a description.
+2. Skip any pair that already has a connection record.
+3. Build the candidate list from other discoverable users.
+4. Ask OpenAI to identify plausible matches and reasons.
+5. Run a second AI pass to rank the shortlist when necessary.
+6. Create a proposed connection with `state = CONN_PROPOSED`.
+7. Persist the connection immediately.
 
-## Configuration Knobs
+The model never sees raw server internals. It sees user descriptions and a
+formatted candidate list. The output is a schema-limited JSON object.
 
-The most important configuration file is `c/config.h`.
+### Connection States
 
-The critical knobs are:
+- `CONN_PROPOSED` means one user proposed a connection and approval is pending
+- `CONN_CONFIRMED` means both sides approved
+- `CONN_DECLINED` means at least one side declined
 
-- `PROJECT_ROOT`
-- `USER_DATA_DIRECTORY`
-- `DEFAULT_MOCK_DIRECTORY`
-- `DEFAULT_DUMP_DIRECTORY`
-- `CENTRAL_SERVER_PORT`
-- `MAX_INPUT_SIZE`
-- `NODE_GUESS_WEIGHT_RELEVANCE`
-- `CONNECTION_GUESS_WEIGHT_RELEVANCE`
-- `ACTIVATION_IMPORTANCE_TO_NODE_WEIGHT`
-- `NCOUNT_PENALTY_TO_NODE_WEIGHT`
-- `SUPPORT_MERIT_TO_NODE_WEIGHT`
-- `NODE_OLD_WEIGHT_RELEVANCE`
-- `ACT_HALFTIME`
+Users only see the other party's display name and the reason string. The raw
+description is private.
 
-Changing these requires a rebuild.
+### Matching API
 
-The configuration is not abstracted into environment variables. This project is deliberately code- and macro-driven.
+The central server exposes:
 
-## Mock and Test Support
+- `POST /connections/discoverable`
+- `POST /connections/private`
+- `POST /connections/description`
+- `GET /connections?user_id=...`
+- `POST /connections/approve`
+- `POST /connections/decline`
+- `POST /messages/send`
+- `GET /messages?connection_id=...`
 
-`c/lib/openai/mockopenai.c` can generate mock graph data and mock action data.
+## OpenAI Integration
 
-The mock generation schema matches the graph and deep-search command formats closely enough to test the runtime without hand-writing every fixture.
+The project uses the OpenAI Responses API through `c/lib/openai/openai.c`.
 
-The mock system is also used by the CLI option to regenerate stored mock files.
+Important traits:
 
-## Important Technical Constraints
+- requests are sent directly over TLS using OpenSSL
+- the API key is read from `OPENAI_API_KEY`
+- HTTP responses are buffered and parsed manually
+- non-2xx responses are captured for debugging
+- retries are attempted on transport failures
 
-These are worth calling out because they shape the codebase:
+The code currently uses:
 
-- The code assumes local disk persistence and mutable files.
-- The code assumes OpenAI connectivity for the real AI flows.
-- Many invariants are enforced by `change_assert()` and will terminate the process on violation.
-- There is a large amount of manual JSON building and parsing.
-- The deep search and middleware loops are schema-driven, not natural-language freeform.
-- The graph and goal systems are coupled through shared user state, but they are not the same model.
+- `gpt-5.4-mini` for graph decomposition and many orchestration tasks
+- `gpt-5.5` for the final connection-ranking pass
 
-## Practical Reading Order
+Mock generation in `c/lib/openai/mockopenai.c` also uses the Responses API to
+generate synthetic graph and action fixtures.
 
-If you want to understand the project in code order, read it in this sequence:
+## Time System
 
-1. `c/config.h`
-2. `c/lib/util/*`
-3. `c/ne/node.*`
-4. `c/ne/graph/*`
-5. `c/ne/input/*`
-6. `c/srv/journey.*`
-7. `c/ne/goal/*`
-8. `c/ne/search/*`
-9. `c/middleware/middleware.c`
-10. `c/srv/user-management.c`
-11. `c/srv/http-server.c`
-12. `c/srv/central-server.c`
-13. `react/src/*` and `js/app/*`
+`c/lib/util/time-util.c` provides a simple global time offset.
 
-That order follows the dependency graph rather than the directory tree.
+- `change_time_now()` returns `time(NULL) + offset`
+- `change_time_advance_seconds()` moves the offset forward
+- `change_time_reset()` clears the offset
+- `format_time_human()` converts timestamps into user-friendly labels
+
+This is used heavily by the dev/time routes and by goal/schedule logic.
+
+## Global Pointer Registry
+
+`c/globals.c` implements a small pointer registry around the hash dictionary in
+`c/lib/hd/`.
+
+It is used to expose function pointers across modules without creating hard
+link-time cycles. The main registered functions are:
+
+- `ds_emit`
+- `goal_emit`
+- journey title lookup
+- journey info lookup
+
+This registry is a convenience layer, not a general service locator.
+
+## Operational Notes
+
+- The project assumes a Unix-like environment.
+- The build and runtime configuration in `c/config.h` is currently tied to a
+  fixed `PROJECT_ROOT`.
+- The graph and goal systems are strongly coupled to the exact file formats
+  they write.
+- Several modules contain AI-generated code and commented TODOs that should be
+  treated as implementation notes, not design guarantees.
+
+## Known Rough Edges
+
+- Some documentation in `docs/` is older than the current code paths.
+- The system relies on immediate persistence after mutations, which keeps the
+  code simple but can be chatty on disk.
+- The matching system is intentionally conservative about data exposure, but
+  the privacy guarantees are still only as strong as the description the user
+  provides.
+- Several subsystems assume fixed-size arrays and small user counts; scaling
+  would require structural changes rather than parameter tuning.
+
+## File Map
+
+- `c/main.c` - process entry point
+- `c/cli/ui.c` - interactive CLI and server launcher
+- `c/srv/http-server/` - per-user HTTP server and SSE
+- `c/srv/central-server/` - central server and shared journeys
+- `c/srv/match-system/` - connection matching and chat persistence
+- `c/srv/user/` - user lifecycle, journeys, on-disk storage
+- `c/ne/` - neuroengine graph, goals, input processing, search, profile
+- `c/lib/` - JSON parser, OpenAI client, utilities, hash dictionary
+
+If you extend the system, update this document alongside the code. The
+architecture is compact enough that stale documentation becomes misleading
+quickly.
