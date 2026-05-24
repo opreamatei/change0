@@ -79,16 +79,28 @@ export const SERVER_ENDPOINTS = {
   get schedule() { return path('/schedule')() },
   get sessionGoals() { return path('/goal/session')() },
   get goalRepair() { return path('/goal/repair')() },
+  get goalDrop() { return path('/goal/drop')() },
+  get profile() { return path('/profile')() },
+  get profileUpdate() { return path('/profile/update')() },
   get middlewareMessage() { return path('/middleware/message')() },
   get middlewareSession() { return path('/middleware/session')() },
   get middlewareEvents() { return path('/middleware/events')() },
   get middlewarePermission() { return path('/middleware/permission')() },
+  get chatSessions() { return path('/chat/sessions')() },
 }
 
 export const CENTRAL_ENDPOINTS = {
   users: `${CENTRAL_BASE_URL}/users`,
   usersCreate: `${CENTRAL_BASE_URL}/users/create`,
   usersSelect: `${CENTRAL_BASE_URL}/users/select`,
+  connections: (userId: string) => `${CENTRAL_BASE_URL}/connections?user_id=${encodeURIComponent(userId)}`,
+  connectionsDiscoverable: `${CENTRAL_BASE_URL}/connections/discoverable`,
+  connectionsPrivate: `${CENTRAL_BASE_URL}/connections/private`,
+  connectionsDescription: `${CENTRAL_BASE_URL}/connections/description`,
+  connectionsApprove: `${CENTRAL_BASE_URL}/connections/approve`,
+  connectionsDecline: `${CENTRAL_BASE_URL}/connections/decline`,
+  messagesSend: `${CENTRAL_BASE_URL}/messages/send`,
+  messages: (connectionId: string) => `${CENTRAL_BASE_URL}/messages?connection_id=${encodeURIComponent(connectionId)}`,
 }
 
 export function buildGoalDecomposeUrl(baseUrl = clientBaseUrl ?? '') {

@@ -152,12 +152,12 @@ static void AddConnectionsFromEntry(NodeContainer *nc, json_object_entry* entry,
 }
 
 _Bool AddContextNodesFromJSON(char* context_name, size_t context_size, json_value* root, NodeContainer *nc){
-	cassert(root, "No context data provided. Json entry.\n");
+	change_assert(root, "No context data provided. Json entry.\n");
 
-	cassert(root->type == json_object, "Context provided, but is not an object \n");
+	change_assert(root->type == json_object, "Context provided, but is not an object \n");
 
-	Node* context = FindNodeGlobal(nc, context_name, context_size, CONTEXT_COUNT);
-	cassert(context, "Context not found. Be carefull, there is also an edge case where the context exists but is not withing the first CONTEXT_COUNT nodes.\n");
+	Node* context = FindNodeGlobal(nc, context_name, context_size, CONTEXT_COUNT + 1);
+	change_assert(context, "Context not found. Be carefull, there is also an edge case where the context exists but is not withing the first CONTEXT_COUNT nodes.\n");
 
 	size_t context_id = context->globalIndex;
 

@@ -89,8 +89,23 @@ target_include_directories(user-schedule PUBLIC
     ${CMAKE_SOURCE_DIR}/c/lib/hd
     ${CMAKE_SOURCE_DIR}/c/lib/util
     ${CMAKE_SOURCE_DIR}/c/lib/jsonp
+    ${CMAKE_SOURCE_DIR}/c/ne/profile
+    ${CMAKE_SOURCE_DIR}/c/srv
     ${CMAKE_SOURCE_DIR}/c
 )
+target_link_libraries(user-schedule PUBLIC goal-health)
+
+add_library(goal-health SHARED ${CMAKE_SOURCE_DIR}/c/ne/goal/goal-health.c)
+target_include_directories(goal-health PUBLIC
+    ${CMAKE_SOURCE_DIR}/c/ne/goal
+    ${CMAKE_SOURCE_DIR}/c/ne/profile
+    ${CMAKE_SOURCE_DIR}/c/ne
+    ${CMAKE_SOURCE_DIR}/c/srv
+    ${CMAKE_SOURCE_DIR}/c/lib/util
+    ${CMAKE_SOURCE_DIR}/c
+)
+target_link_libraries(goal-health PUBLIC goal-util userprofile user-management util)
+
 target_link_libraries(graphexport PUBLIC
 	goal-util
 )
@@ -234,6 +249,7 @@ target_include_directories(middleware PUBLIC
 	${CMAKE_SOURCE_DIR}/c/lib/openai
 	${CMAKE_SOURCE_DIR}/c/lib/util
 	${CMAKE_SOURCE_DIR}/c/lib/jsonp
+	${CMAKE_SOURCE_DIR}/c/srv
 )
 target_link_libraries(middleware PUBLIC
 	util
@@ -243,6 +259,7 @@ target_link_libraries(middleware PUBLIC
 	userprofile
 	goal
 	deepsearchsession
+	connections
 )
 
 add_library(userprofile SHARED ${CMAKE_SOURCE_DIR}/c/ne/profile/user-profile.c)
@@ -280,6 +297,7 @@ target_link_libraries(http-server PUBLIC
 	inputprocessor
 	middleware
 	user-management
+	connections
 	pthread
 )
 
@@ -294,6 +312,7 @@ target_link_libraries(central-server PUBLIC
 	util
 	jsonp
 	user-management
+	connections
 	http-server
 	pthread
 )
@@ -368,6 +387,16 @@ target_include_directories(user-management PUBLIC
 	${CMAKE_SOURCE_DIR}/c/ne
 	)
 target_link_libraries(user-management PUBLIC util journey node graphexport)
+
+add_library(connections SHARED ${CMAKE_SOURCE_DIR}/c/srv/connections.c)
+target_include_directories(connections PUBLIC
+	${CMAKE_SOURCE_DIR}/c
+	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/lib/util
+	${CMAKE_SOURCE_DIR}/c/lib/jsonp
+	${CMAKE_SOURCE_DIR}/c/lib/openai
+)
+target_link_libraries(connections PUBLIC util jsonp user-management openai)
 
 add_executable(change ${CMAKE_SOURCE_DIR}/c/main.c)
 target_include_directories(change PRIVATE

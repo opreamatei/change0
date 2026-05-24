@@ -41,17 +41,6 @@ static inline void clear(){
 	printf("\033[H\033[J");
 }
 
-static void SetUpContexts(NodeContainer *nc){
-	time_t now = change_time_now();
-	for (int i = 0; i < CONTEXT_COUNT; i++){
-		Node *n = AddNodeEx(nc, (char *)context_labels[i], strlen(context_labels[i]), NODE_INIT_ACT, NODE_INIT_WGHT, PARENTLESS, -1, FERTILE, now);
-		if(!n){
-			fprintf(stderr, "Critical Error: Couldn't initialize contexts for neuro engine\n");
-			exit(EXIT_FAILURE);
-		}
-		nc->contexts[i] = n->globalIndex;
-	}
-}
 
 static User *cli_user = NULL;
 
@@ -60,7 +49,7 @@ void UIStart(){
 
 	cli_user = USER_COUNT > 0 ? &USER_TABLE[0] : NULL;
 
-	SetUpContexts(&cli_user->nodes);
+	SetupContextNodes(&cli_user->nodes);
 	InitGlobalPointerMap();
 
 	// Setup Global Pointers
@@ -200,7 +189,7 @@ static void Run(int i){
 
 	if (options[i].type == STARTCLIENTSERVER){
 		User *u = prompt_select_or_create_user();
-		start_server(0, u);
+		start_server(u->port, u);
 		printf("\nClient server is up on port %d (user: %s). Press enter to stop.\n\n",
 			client_server_port(),
 			u && u->name.p ? u->name.p : "?");

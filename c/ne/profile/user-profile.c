@@ -193,6 +193,32 @@ static void parse_derived_state(String *derived_section, UserProfileDerivedState
 	free(cursor);
 }
 
+/* Keys owned by write_derived_state — anything else is a user/AI custom field and must be preserved. */
+static const char * const FIXED_DERIVED_KEYS[] = {
+	"updated_at",
+	"profile_kind",
+	"profile_note",
+	"latest_input_source",
+	"latest_input",
+	"last_goal_event",
+	"last_goal_id",
+	"last_goal_title",
+	"current_focus_goal_id",
+	"current_focus_goal_title",
+	NULL
+};
+
+static _Bool is_fixed_derived_key(const char *line)
+{
+	for (int i = 0; FIXED_DERIVED_KEYS[i]; i++) {
+		size_t klen = strlen(FIXED_DERIVED_KEYS[i]);
+		if (strncmp(line, FIXED_DERIVED_KEYS[i], klen) == 0 && line[klen] == '=')
+			return 1;
+	}
+	return 0;
+}
+
+/* derived_section is both input (custom fields to preserve) and output (full new section). */
 static void write_derived_state(String *derived_section, UserProfileDerivedState *state)
 {
 	char time_buffer[128];
@@ -203,8 +229,8 @@ static void write_derived_state(String *derived_section, UserProfileDerivedState
 	char *esc_last_goal_title = NULL;
 	char *esc_current_focus_goal_id = NULL;
 	char *esc_current_focus_goal_title = NULL;
-
-	EmptyString(derived_section);
+	char *old_copy = NULL;
+	String out;
 
 	if (!state->updated_at)
 		state->updated_at = change_time_now();
@@ -219,16 +245,45 @@ static void write_derived_state(String *derived_section, UserProfileDerivedState
 	esc_current_focus_goal_id = json_escape_dup(state->current_focus_goal_id.p);
 	esc_current_focus_goal_title = json_escape_dup(state->current_focus_goal_title.p);
 
-	CatTemplateString(derived_section, "updated_at=%s\n", time_buffer);
-	CatFixed(derived_section, "profile_kind=automated_mvp_memory\n");
-	CatFixed(derived_section, "profile_note=system-maintained operational summary for the MVP, not a psychological truth\n");
-	CatTemplateString(derived_section, "latest_input_source=%s\n", esc_latest_input_source);
-	CatTemplateString(derived_section, "latest_input=%s\n", esc_latest_input);
-	CatTemplateString(derived_section, "last_goal_event=%s\n", esc_last_goal_event);
-	CatTemplateString(derived_section, "last_goal_id=%s\n", esc_last_goal_id);
-	CatTemplateString(derived_section, "last_goal_title=%s\n", esc_last_goal_title);
-	CatTemplateString(derived_section, "current_focus_goal_id=%s\n", esc_current_focus_goal_id);
-	CatTemplateString(derived_section, "current_focus_goal_title=%s\n", esc_current_focus_goal_title);
+	/* Save a copy of old custom lines before overwriting. */
+	if (derived_section->len > 0) {
+		old_copy = malloc(derived_section->len + 1);
+		if (old_copy) {
+			memcpy(old_copy, derived_section->p, derived_section->len);
+			old_copy[derived_section->len] = '\0';
+		}
+	}
+
+	InitString(&out, derived_section->cap > 0 ? derived_section->cap : 1024);
+
+	CatTemplateString(&out, "updated_at=%s\n", time_buffer);
+	CatFixed(&out, "profile_kind=automated_mvp_memory\n");
+	CatFixed(&out, "profile_note=system-maintained operational summary for the MVP, not a psychological truth\n");
+	CatTemplateString(&out, "latest_input_source=%s\n", esc_latest_input_source);
+	CatTemplateString(&out, "latest_input=%s\n", esc_latest_input);
+	CatTemplateString(&out, "last_goal_event=%s\n", esc_last_goal_event);
+	CatTemplateString(&out, "last_goal_id=%s\n", esc_last_goal_id);
+	CatTemplateString(&out, "last_goal_title=%s\n", esc_last_goal_title);
+	CatTemplateString(&out, "current_focus_goal_id=%s\n", esc_current_focus_goal_id);
+	CatTemplateString(&out, "current_focus_goal_title=%s\n", esc_current_focus_goal_title);
+
+	/* Re-append any custom (non-fixed) lines from the old section. */
+	if (old_copy) {
+		char *line = strtok(old_copy, "\n");
+		while (line) {
+			if (*line && !is_fixed_derived_key(line)) {
+				CatString(&out, line, strlen(line));
+				CatFixed(&out, "\n");
+			}
+			line = strtok(NULL, "\n");
+		}
+		free(old_copy);
+	}
+
+	/* Replace derived_section content with the new merged output. */
+	EmptyString(derived_section);
+	CatString(derived_section, out.p, out.len);
+	FreeString(&out);
 
 	free(esc_current_focus_goal_title);
 	free(esc_current_focus_goal_id);
@@ -403,6 +458,52 @@ void UserProfileSetDerivedField(User *u, const char *key, const char *value)
 void UserProfileClearDerivedField(User *u, const char *key)
 {
 	rewrite_derived_field(u, key, "", 0);
+}
+
+_Bool UserProfileGetDerivedField(User *u, const char *key, char *out, size_t out_size)
+{
+	String inputs, goals, derived;
+	char *cursor;
+	char *line;
+	size_t key_len;
+	_Bool found = 0;
+
+	if (!u || !key || !out || out_size == 0)
+		return 0;
+
+	InitString(&inputs, 256);
+	InitString(&goals, 256);
+	InitString(&derived, 1024);
+
+	read_profile_sections(u, &inputs, &goals, &derived);
+
+	key_len = strlen(key);
+
+	if (derived.len > 0) {
+		cursor = malloc(derived.len + 1);
+		if (cursor) {
+			memcpy(cursor, derived.p, derived.len);
+			cursor[derived.len] = '\0';
+			line = strtok(cursor, "\n");
+			while (line) {
+				if (strncmp(line, key, key_len) == 0 && line[key_len] == '=') {
+					const char *val = line + key_len + 1;
+					strncpy(out, val, out_size - 1);
+					out[out_size - 1] = '\0';
+					found = 1;
+					break;
+				}
+				line = strtok(NULL, "\n");
+			}
+			free(cursor);
+		}
+	}
+
+	FreeString(&derived);
+	FreeString(&goals);
+	FreeString(&inputs);
+
+	return found;
 }
 
 static void append_last_lines(String *src, size_t max_entries, String *out)

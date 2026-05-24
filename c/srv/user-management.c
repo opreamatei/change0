@@ -2,6 +2,7 @@
 #include "journey.h"
 #include "config.h"
 #include "ne/graph/graph-export.h"
+#include "ne/input/json-to-graph.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -10,6 +11,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <sys/types.h>
 
 User USER_TABLE[MAX_USERS] = {0};
@@ -34,12 +36,18 @@ static void write_user_meta(const User *u)
 	char path[USER_DIRECTORY_SIZE];
 	String out;
 	char *esc_name;
+	char *esc_desc;
 
 	GetUserMetaPath(u, path);
 	esc_name = json_escape_dup(u->name.p ? u->name.p : "");
+	esc_desc = json_escape_dup(u->description.p ? u->description.p : "");
 
-	InitString(&out, 512);
-	CatTemplateString(&out, "{\"id\":\"%s\",\"name\":\"%s\",\"journeys\":[", u->id, esc_name);
+	InitString(&out, 512 + (u->description.p ? u->description.len : 0));
+	CatTemplateString(&out,
+		"{\"id\":\"%s\",\"name\":\"%s\",\"port\":%d,"
+		"\"discoverable\":%s,\"description\":\"%s\",\"journeys\":[",
+		u->id, esc_name, u->port,
+		u->discoverable ? "true" : "false", esc_desc);
 	for (size_t i = 0; i < u->journey_count; i++) {
 		if (i > 0) CatFixed(&out, ",");
 		CatTemplateString(&out, "\"%s\"", u->journeys[i]);
@@ -50,6 +58,7 @@ static void write_user_meta(const User *u)
 
 	FreeString(&out);
 	free(esc_name);
+	free(esc_desc);
 }
 
 _Bool MatchesUserID(User *u, user_id_like id)
@@ -92,7 +101,11 @@ static User *alloc_user_slot(void)
 
 	memset(u, 0, sizeof(*u));
 	InitString(&u->name, 128);
+	InitString(&u->description, 256);
 	InitNodes(&u->nodes);
+	u->schedule_needs_refresh = 1;
+	u->goal_health_needs_refresh = 1;
+	u->discoverable = 0;
 
 	USER_COUNT++;
 
@@ -108,6 +121,7 @@ User *NewUser(const String *name)
 	if (name && name->p && name->len > 0)
 		CatString(&u->name, name->p, name->len);
 
+	u->port = 9000 + (int)(USER_COUNT - 1);
 	u->journey_count = 0;
 
 	String journey_title;
@@ -116,6 +130,8 @@ User *NewUser(const String *name)
 	Journey *j = NewJourney(&journey_title);
 	FreeString(&journey_title);
 	AddToJourney(u, j);
+
+	SetupContextNodes(&u->nodes);
 
 	make_user_dir(u);
 	write_user_meta(u);
@@ -126,7 +142,9 @@ User *NewUser(const String *name)
 void FreeUser(User *user)
 {
 	FreeString(&user->name);
+	FreeString(&user->description);
 	FreeNodes(&user->nodes);
+	if (user->schedule_table) free(user->schedule_table);
 }
 
 /*
@@ -162,6 +180,18 @@ static _Bool load_user_from_dir(const char *id_dirname)
 		if (name_v && name_v->type == json_string)
 			CatString(&u->name, name_v->u.string.ptr, name_v->u.string.length);
 
+		json_value *port_v = json_object_get(doc, "port");
+		if (port_v && port_v->type == json_integer)
+			u->port = (int)port_v->u.integer;
+
+		json_value *disc_v = json_object_get(doc, "discoverable");
+		if (disc_v && disc_v->type == json_boolean)
+			u->discoverable = disc_v->u.boolean ? 1 : 0;
+
+		json_value *desc_v = json_object_get(doc, "description");
+		if (desc_v && desc_v->type == json_string)
+			CatString(&u->description, desc_v->u.string.ptr, desc_v->u.string.length);
+
 		json_value *journeys_v = json_object_get(doc, "journeys");
 		if (journeys_v && journeys_v->type == json_array) {
 			for (unsigned i = 0; i < journeys_v->u.array.length && u->journey_count < USER_MAX_JOURNEYS; i++) {
@@ -186,6 +216,16 @@ static _Bool load_user_from_dir(const char *id_dirname)
 	if (doc)
 		json_value_free(doc);
 	free(file_data);
+
+	{
+		char gr_path[USER_DIRECTORY_SIZE];
+		GetUserGraphExportPath(u, gr_path);
+		if (access(gr_path, R_OK) == 0)
+			LoadGraphFromFile(gr_path, &u->nodes);
+	}
+
+	SetupContextNodes(&u->nodes);
+
 	return 1;
 }
 

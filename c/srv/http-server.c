@@ -5,6 +5,8 @@
 #include "graph-export.h"
 #include "input/input-processor.h"
 #include "util.h"
+#include "profile/user-profile.h"
+#include "connections.h"
 
 #include "search/deep-search-session.h"
 #include "goal/goal.h"
@@ -1386,7 +1388,11 @@ static void handle_post_goal_status_action(
 		}
 	}
 
+	Goal *root = CalcGoalRoot(goal);
+	time_t root_end_before = root ? root->end_date : 0;
+
 	action_time = action_fn(goal, user);
+	SaveUser(user);
 	event_len = snprintf(
 		event_body,
 		sizeof(event_body),
@@ -1401,6 +1407,19 @@ static void handle_post_goal_status_action(
 
 	if (event_len > 0 && (size_t)event_len < sizeof(event_body)) {
 		goal_emit_event(goal_id, event_type, event_body, (size_t)event_len);
+	}
+
+	if (strcmp(event_type, "goal_ended") == 0 && root && root_end_before == 0 && root->end_date != 0) {
+		char tree_body[256];
+		char *esc_root_id = json_escape_dup(root->id);
+		char *esc_root_title = json_escape_dup(root->title.p ? root->title.p : "");
+		int tree_len = snprintf(tree_body, sizeof(tree_body),
+			"{\"root_goal_id\":\"%s\",\"title\":\"%s\",\"end_date\":%lld}",
+			esc_root_id, esc_root_title, (long long)root->end_date);
+		free(esc_root_id);
+		free(esc_root_title);
+		if (tree_len > 0 && (size_t)tree_len < sizeof(tree_body))
+			goal_emit_event(root->id, "goal_tree_completed", tree_body, (size_t)tree_len);
 	}
 
 	esc_goal_id = json_escape_dup(goal_id);
@@ -1664,6 +1683,9 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req, User 
 	FreeString(&extra_info_s);
 	FreeString(&title_s);
 
+	if (goal)
+		SaveUser(user);
+
 	if (!goal) {
 		goal_emit_event(
 			NULL,
@@ -1724,6 +1746,146 @@ static void handle_post_goal_create(int client_fd, const HttpRequest* req, User 
 		response_body,
 		(size_t)response_len
 	);
+}
+
+static void handle_get_profile(int client_fd, User *user)
+{
+	String derived;
+	String response;
+	char *esc_name;
+	char *esc_derived;
+	char *esc_desc;
+
+	InitString(&derived, 2048);
+	InitString(&response, 4096);
+
+	SerializeUserProfileDerivedSummary(user, &derived);
+
+	esc_name    = json_escape_dup(user->name.p ? user->name.p : "");
+	esc_derived = json_escape_dup(derived.p ? derived.p : "");
+	esc_desc    = json_escape_dup(user->description.p ? user->description.p : "");
+
+	CatTemplateString(&response,
+		"{\"ok\":true,\"name\":\"%s\",\"user_id\":\"%s\",\"derived\":\"%s\","
+		"\"discoverable\":%s,\"description\":\"%s\"}",
+		esc_name, user->id, esc_derived,
+		user->discoverable ? "true" : "false",
+		esc_desc);
+
+	free(esc_name);
+	free(esc_derived);
+	free(esc_desc);
+
+	send_response(client_fd, 200, "OK", "application/json", response.p, response.len);
+
+	FreeString(&response);
+	FreeString(&derived);
+}
+
+/* ALLOWED_UPDATE_KEYS: profile-derived keys that may be set directly by the
+ * user (not AI-only) from the settings UI. */
+static _Bool is_user_editable_key(const char *key)
+{
+	static const char *editable[] = {
+		"age", "work_day_start", "daily_work_hours", NULL
+	};
+	for (int i = 0; editable[i]; i++)
+		if (strcmp(key, editable[i]) == 0) return 1;
+	return 0;
+}
+
+static void handle_post_profile_update(int client_fd, const HttpRequest *req, User *user)
+{
+	if (!req->body) {
+		send_json_response(client_fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_body\"}");
+		return;
+	}
+
+	char key[64] = {0};
+	char value[1024] = {0};
+
+	if (!json_get_string_field(req->body, "key", key, sizeof(key)) || !key[0]) {
+		send_json_response(client_fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_key\"}");
+		return;
+	}
+
+	/* special key: name — update user struct directly */
+	if (strcmp(key, "name") == 0) {
+		json_get_string_field(req->body, "value", value, sizeof(value));
+		if (!value[0]) {
+			send_json_response(client_fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"empty_name\"}");
+			return;
+		}
+		EmptyString(&user->name);
+		CatString(&user->name, value, strlen(value));
+		SaveUser(user);
+		send_json_response(client_fd, 200, "OK", "{\"ok\":true}");
+		return;
+	}
+
+	/* special key: discoverable — toggle connection matching */
+	if (strcmp(key, "discoverable") == 0) {
+		json_get_string_field(req->body, "value", value, sizeof(value));
+		if (strcmp(value, "true") == 0 || strcmp(value, "1") == 0) {
+			/* use existing description if not provided */
+			char desc[1024] = {0};
+			json_get_string_field(req->body, "description", desc, sizeof(desc));
+			SetUserDiscoverable(user, desc[0] ? desc : (user->description.p ? user->description.p : ""));
+		} else {
+			SetUserPrivate(user);
+		}
+		send_json_response(client_fd, 200, "OK", "{\"ok\":true}");
+		return;
+	}
+
+	/* special key: description — update match description */
+	if (strcmp(key, "description") == 0) {
+		json_get_string_field(req->body, "value", value, sizeof(value));
+		UpdateUserDescription(user, value);
+		send_json_response(client_fd, 200, "OK", "{\"ok\":true}");
+		return;
+	}
+
+	/* schedule / identity derived fields */
+	if (!is_user_editable_key(key)) {
+		send_json_response(client_fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"key_not_editable\"}");
+		return;
+	}
+
+	json_get_string_field(req->body, "value", value, sizeof(value));
+	UserProfileSetDerivedField(user, key, value);
+	send_json_response(client_fd, 200, "OK", "{\"ok\":true}");
+}
+
+static void handle_post_goal_drop(int client_fd, const HttpRequest *req, User *user)
+{
+	char goal_id[GOAL_ID_LEN + 1] = {0};
+	char event_body[512];
+
+	if (!req->body) {
+		send_json_response(client_fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_body\"}");
+		return;
+	}
+
+	Goal *goal = find_goal_from_request_body_by_id(req, goal_id, user->journeys[0]);
+	if (!goal) {
+		send_json_response(client_fd, 404, "Not Found", "{\"ok\":false,\"error\":\"goal_not_found\"}");
+		return;
+	}
+
+	Goal *root = CalcGoalRoot(goal);
+	char *esc_title = json_escape_dup(root->title.p ? root->title.p : "");
+	DropGoalTree(root, user);
+	SaveUser(user);
+
+	int event_len = snprintf(event_body, sizeof(event_body),
+		"{\"goal_id\":\"%s\",\"title\":\"%s\"}", root->id, esc_title);
+	free(esc_title);
+
+	if (event_len > 0 && (size_t)event_len < sizeof(event_body))
+		goal_emit_event(root->id, "goal_dropped", event_body, (size_t)event_len);
+
+	send_json_response(client_fd, 200, "OK", "{\"ok\":true}");
 }
 
 static void handle_post_goal_repair(int client_fd, const HttpRequest* req, User *user) {
@@ -1789,6 +1951,9 @@ static void handle_post_goal_repair(int client_fd, const HttpRequest* req, User 
 	repaired = RepairGoalBranch(target, &reason_s, start_ds_session, user);
 
 	FreeString(&reason_s);
+
+	if (repaired)
+		SaveUser(user);
 
 	if (!repaired) {
 		send_json_response(
@@ -1962,12 +2127,30 @@ static void handle_post_message(int client_fd, const HttpRequest* req, User *use
 
 	FreeString(&inputS);
 
+	SaveUser(user);
+
 	send_json_response(
 		client_fd,
 		200,
 		"OK",
 		"{\"ok\":true}"
 	);
+}
+
+static void scope_session(const User *user, const char *sid, char *out, size_t out_size)
+{
+	snprintf(out, out_size, "%s:%s", user->id, (sid && sid[0]) ? sid : "default");
+}
+
+static void handle_get_chat_sessions(int client_fd, User *user)
+{
+	char *json = ListChatSessionsJSON(user->id);
+	String out;
+	InitString(&out, 256);
+	CatTemplateString(&out, "{\"ok\":true,\"sessions\":%s}", json ? json : "[]");
+	free(json);
+	send_response(client_fd, 200, "OK", "application/json", out.p, out.len);
+	FreeString(&out);
 }
 
 static void handle_post_middleware_message(int client_fd, const HttpRequest* req, User *user) {
@@ -1992,11 +2175,14 @@ static void handle_post_middleware_message(int client_fd, const HttpRequest* req
 		return;
 	}
 
-	if (!json_get_string_field(req->body, "sessionId", session_id, sizeof(session_id)) &&
-	    !json_get_string_field(req->body, "session_id", session_id, sizeof(session_id)) &&
-	    !json_get_string_field(req->body, "id", session_id, sizeof(session_id))) {
-		strncpy(session_id, "default", sizeof(session_id) - 1);
-		session_id[sizeof(session_id) - 1] = '\0';
+	{
+		char raw_sid[MAX_STREAM_ID_LEN + 1];
+		raw_sid[0] = '\0';
+		if (!json_get_string_field(req->body, "sessionId", raw_sid, sizeof(raw_sid)) &&
+		    !json_get_string_field(req->body, "session_id", raw_sid, sizeof(raw_sid)) &&
+		    !json_get_string_field(req->body, "id", raw_sid, sizeof(raw_sid))) {
+		}
+		scope_session(user, raw_sid, session_id, sizeof(session_id));
 	}
 
 	if (!json_get_string_field(req->body, "input", input, sizeof(input)) &&
@@ -2023,6 +2209,8 @@ static void handle_post_middleware_message(int client_fd, const HttpRequest* req
 	printf("middleware/message sessionId=%s input=%s\n", session_id, input);
 
 	result = RunClientMiddleware(session_id, input, start_ds_session, middleware_emit_event, user);
+
+	SaveUser(user);
 
 	esc_message = json_escape_dup(result.assistant_message.p);
 	esc_type = json_escape_dup(result.response_type.p);
@@ -2132,7 +2320,7 @@ static void handle_get_research_events(int client_fd, const char* full_path) {
 	}
 }
 
-static void handle_get_middleware_events(int client_fd, const char* full_path) {
+static void handle_get_middleware_events(int client_fd, const char* full_path, User *user) {
 	char path_only[256];
 	const char* query = NULL;
 	char session_id[MAX_STREAM_ID_LEN + 1];
@@ -2144,26 +2332,28 @@ static void handle_get_middleware_events(int client_fd, const char* full_path) {
 		"Access-Control-Allow-Origin: *\r\n"
 		"\r\n";
 
+	char raw_sid[MAX_STREAM_ID_LEN + 1];
 	split_path_and_query(full_path, path_only, sizeof(path_only), &query);
-	session_id[0] = '\0';
+	raw_sid[0] = '\0';
 
-	if (!query_get_param(query, "sessionId", session_id, sizeof(session_id)) &&
-	    !query_get_param(query, "session_id", session_id, sizeof(session_id))) {
-		query_get_param(query, "id", session_id, sizeof(session_id));
+	if (!query_get_param(query, "sessionId", raw_sid, sizeof(raw_sid)) &&
+	    !query_get_param(query, "session_id", raw_sid, sizeof(raw_sid))) {
+		query_get_param(query, "id", raw_sid, sizeof(raw_sid));
 	}
+
+	scope_session(user, raw_sid, session_id, sizeof(session_id));
 
 	if (send_all(client_fd, header, strlen(header)) != 0) {
 		close(client_fd);
 		return;
 	}
 
-	if (!add_sse_client(client_fd, session_id[0] ? session_id : NULL)) {
+	if (!add_sse_client(client_fd, session_id)) {
 		close(client_fd);
 		return;
 	}
 
-	if (session_id[0])
-		middleware_emit_event(session_id, "sse_connected", "connected", strlen("connected"));
+	middleware_emit_event(session_id, "sse_connected", "connected", strlen("connected"));
 }
 
 static void handle_get_session_goals(int client_fd, User *user) {
@@ -2189,7 +2379,7 @@ static void handle_get_session_goals(int client_fd, User *user) {
 
 static void handle_get_schedule(int client_fd, User *user) {
 	size_t len = 0;
-	const struct ScheduleEntry* entries = GetSchedule(&len, user->journeys[0]);
+	const struct ScheduleEntry* entries = GetSchedule(&len, user);
 	String out;
 
 	InitString(&out, 1024 + len * 256);
@@ -2218,24 +2408,22 @@ static void handle_get_schedule(int client_fd, User *user) {
 	free(out.p);
 }
 
-static void handle_get_middleware_session(int client_fd, const char* full_path) {
+static void handle_get_middleware_session(int client_fd, const char* full_path, User *user) {
 	char path_only[256];
 	const char *query = NULL;
+	char raw_sid[MAX_STREAM_ID_LEN + 1];
 	char session_id[MAX_STREAM_ID_LEN + 1];
 	char *result_json = NULL;
 
 	split_path_and_query(full_path, path_only, sizeof(path_only), &query);
-	session_id[0] = '\0';
+	raw_sid[0] = '\0';
 
-	if (!query_get_param(query, "sessionId", session_id, sizeof(session_id)) &&
-	    !query_get_param(query, "session_id", session_id, sizeof(session_id))) {
-		query_get_param(query, "id", session_id, sizeof(session_id));
+	if (!query_get_param(query, "sessionId", raw_sid, sizeof(raw_sid)) &&
+	    !query_get_param(query, "session_id", raw_sid, sizeof(raw_sid))) {
+		query_get_param(query, "id", raw_sid, sizeof(raw_sid));
 	}
 
-	if (!session_id[0]) {
-		strncpy(session_id, "default", sizeof(session_id) - 1);
-		session_id[sizeof(session_id) - 1] = '\0';
-	}
+	scope_session(user, raw_sid, session_id, sizeof(session_id));
 
 	result_json = ExportMiddlewareSessionJSON(session_id);
 	if (!result_json) {
@@ -2314,12 +2502,17 @@ static int handle_request(int client_fd, const HttpRequest* req, User *user) {
 	}
 
 	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/middleware/events") == 0) {
-		handle_get_middleware_events(client_fd, req->path);
+		handle_get_middleware_events(client_fd, req->path, user);
 		return 1;
 	}
 
 	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/middleware/session") == 0) {
-		handle_get_middleware_session(client_fd, req->path);
+		handle_get_middleware_session(client_fd, req->path, user);
+		return 0;
+	}
+
+	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/chat/sessions") == 0) {
+		handle_get_chat_sessions(client_fd, user);
 		return 0;
 	}
 
@@ -2330,6 +2523,21 @@ static int handle_request(int client_fd, const HttpRequest* req, User *user) {
 
 	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/goal/repair") == 0) {
 		handle_post_goal_repair(client_fd, req, user);
+		return 0;
+	}
+
+	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/goal/drop") == 0) {
+		handle_post_goal_drop(client_fd, req, user);
+		return 0;
+	}
+
+	if (strcmp(req->method, "GET") == 0 && strcmp(path_only, "/profile") == 0) {
+		handle_get_profile(client_fd, user);
+		return 0;
+	}
+
+	if (strcmp(req->method, "POST") == 0 && strcmp(path_only, "/profile/update") == 0) {
+		handle_post_profile_update(client_fd, req, user);
 		return 0;
 	}
 
@@ -2417,6 +2625,7 @@ static int handle_request(int client_fd, const HttpRequest* req, User *user) {
 			return 0;
 		}
 
+		SaveUser(user);
 		send_response(client_fd, 200, "OK", "application/json", response_body, (size_t)response_len);
 		return 0;
 	}
@@ -2551,15 +2760,28 @@ void start_server(int port, User *user) {
 	addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
 	if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-		perror("bind");
-		close(server_fd);
-		server_fd = -1;
-		pthread_mutex_unlock(&server_lock);
-		cassert(0, "Failed binding the server socket\n");
-		return;
+		if (port != 0) {
+			/* Fixed port busy — fall back to ephemeral. */
+			addr.sin_port = 0;
+			if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+				perror("bind");
+				close(server_fd);
+				server_fd = -1;
+				pthread_mutex_unlock(&server_lock);
+				cassert(0, "Failed binding the server socket\n");
+				return;
+			}
+		} else {
+			perror("bind");
+			close(server_fd);
+			server_fd = -1;
+			pthread_mutex_unlock(&server_lock);
+			cassert(0, "Failed binding the server socket\n");
+			return;
+		}
 	}
 
-	/* Resolve ephemeral port when caller passed 0. */
+	/* Resolve actual bound port (covers both fixed and ephemeral cases). */
 	if (getsockname(server_fd, (struct sockaddr*)&addr, &addr_len) == 0)
 		bound_port = ntohs(addr.sin_port);
 	else

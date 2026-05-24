@@ -27,5 +27,6 @@ void SerializeUserProfileHistorySection(User *u, const char *section, size_t max
 void SerializeUserProfileDerivedSummary(User *u, String *out);
 void UserProfileSetDerivedField(User *u, const char *key, const char *value);
 void UserProfileClearDerivedField(User *u, const char *key);
+_Bool UserProfileGetDerivedField(User *u, const char *key, char *out, size_t out_size);
 
 #endif

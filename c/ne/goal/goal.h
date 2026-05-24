@@ -40,6 +40,7 @@ void UpdateGoal(Goal *g, time_t now);
 Goal* ComputePartialDecomposition(Goal *goal, User *user);
 
 time_t StartGoal(goalIDType goalID, User *user);
+void DropGoalTree(Goal *root, User *user);
 Goal*  StartGoalDeep(goalIDType goalID, User *user);
 Goal*  StartGoalDeepFromGoal(Goal *g, User *user);
 time_t EndGoal(goalIDType goalID, User *user);

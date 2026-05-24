@@ -1,19 +1,26 @@
 #include "journey.h"
 #include "goal-util.h"
 #include "globals.h"
+#include "config.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
 
-Journey JourneyTable[MAX_JOURNEYS] = {0};
-size_t JourneyCount = 0;
+Journey UserCachedJourneys[MAX_JOURNEYS] = {0};
+size_t UserCachedJourneysCount = 0;
 
 _Bool MatchesJourneyID(Journey *j, const char *id) {
+	change_assert(j && id, "MatchesJourneyID: NULL argument\n");
 	return strcmp(j->id, id) == 0;
 }
 
 Journey *FindJourneyByID(const char *id) {
-	for (size_t i = 0; i < JourneyCount; i++) {
-		Journey *j = &JourneyTable[i];
+	for (size_t i = 0; i < UserCachedJourneysCount; i++) {
+		Journey *j = &UserCachedJourneys[i];
 		if (MatchesJourneyID(j, id))
 			return j;
 	}
@@ -21,8 +28,8 @@ Journey *FindJourneyByID(const char *id) {
 }
 
 static Journey *alloc_journey_slot(void) {
-	change_assert(JourneyCount < MAX_JOURNEYS, "Max journeys limit reached");
-	Journey *j = &JourneyTable[JourneyCount++];
+	change_assert(UserCachedJourneysCount < MAX_JOURNEYS, "Max journeys limit reached");
+	Journey *j = &UserCachedJourneys[UserCachedJourneysCount++];
 	memset(j, 0, sizeof(*j));
 	InitString(&j->title, 64);
 	InitString(&j->extra_info, 256);
@@ -65,10 +72,10 @@ Goal *FindGoalFromIndex(const char *journey_id, size_t index) {
 
 Goal **GetGoalsSorted(size_t *out_count, const char *journey_id) {
 	size_t total = 0;
-	for (size_t i = 0; i < JourneyCount; i++) {
-		if (strcmp(JourneyTable[i].id, journey_id) != 0) continue;
-		for (size_t k = 0; k < JourneyTable[i].goals_count; k++)
-			if (JourneyTable[i].goals[k]) total++;
+	for (size_t i = 0; i < UserCachedJourneysCount; i++) {
+		if (strcmp(UserCachedJourneys[i].id, journey_id) != 0) continue;
+		for (size_t k = 0; k < UserCachedJourneys[i].goals_count; k++)
+			if (UserCachedJourneys[i].goals[k]) total++;
 	}
 
 	*out_count = total;
@@ -79,8 +86,8 @@ Goal **GetGoalsSorted(size_t *out_count, const char *journey_id) {
 	change_assert(arr, "GetGoalsSorted: malloc failed.\n");
 
 	size_t w = 0;
-	for (size_t i = 0; i < JourneyCount; i++) {
-		Journey *j = &JourneyTable[i];
+	for (size_t i = 0; i < UserCachedJourneysCount; i++) {
+		Journey *j = &UserCachedJourneys[i];
 		if (strcmp(j->id, journey_id) != 0) continue;
 		for (size_t k = 0; k < j->goals_count; k++)
 			if (j->goals[k]) arr[w++] = j->goals[k];
@@ -100,8 +107,8 @@ Goal **GetGoalsSorted(size_t *out_count, const char *journey_id) {
 }
 
 void ClearAllJourneyGoals(void) {
-	for (size_t i = 0; i < JourneyCount; i++) {
-		Journey *j = &JourneyTable[i];
+	for (size_t i = 0; i < UserCachedJourneysCount; i++) {
+		Journey *j = &UserCachedJourneys[i];
 		for (size_t k = 0; k < j->goals_count; k++) {
 			Goal *g = j->goals[k];
 			if (!g) continue;
@@ -140,48 +147,46 @@ static void FreeJourneyEntry(Journey *j) {
 }
 
 void InitJourneySystem(void) {
-	JourneyCount = 0;
+	UserCachedJourneysCount = 0;
 	SetGlobalPointerF("journey_title", GetJourneyTitleByID);
 	SetGlobalPointerF("journey_info",  GetJourneyExtraInfoByID);
 }
 
 void FreeJourneySystem(void) {
-	for (size_t i = 0; i < JourneyCount; i++)
-		FreeJourneyEntry(&JourneyTable[i]);
-	JourneyCount = 0;
+	for (size_t i = 0; i < UserCachedJourneysCount; i++)
+		FreeJourneyEntry(&UserCachedJourneys[i]);
+	UserCachedJourneysCount = 0;
 }
 
-void ExportJourneyTo(const Journey *j, const char *path) {
-	char *esc_id        = json_escape_dup(j->id);
-	char *esc_title     = json_escape_dup(j->title.p ? j->title.p : "");
-	char *esc_extra     = json_escape_dup(j->extra_info.p ? j->extra_info.p : "");
+void SerializeJourney(const Journey *j, String *out) {
+	char *esc_id    = json_escape_dup(j->id);
+	char *esc_title = json_escape_dup(j->title.p ? j->title.p : "");
+	char *esc_extra = json_escape_dup(j->extra_info.p ? j->extra_info.p : "");
 
 	String goals_buf; InitString(&goals_buf, 512);
 	SerializeGoalList((Goal **)j->goals, j->goals_count, &goals_buf);
 
-	String out; InitString(&out, 64 + j->title.len + j->extra_info.len + goals_buf.len);
-	CatTemplateString(&out,
+	ResizeString(out, 64 + j->title.len + j->extra_info.len + goals_buf.len);
+	CatTemplateString(out,
 		"{\"id\":\"%s\",\"title\":\"%s\",\"extra_info\":\"%s\",\"goals\":%s}",
 		esc_id, esc_title, esc_extra, goals_buf.p);
 
-	dump_to_file(path, out.p, out.len);
-
 	FreeString(&goals_buf);
-	FreeString(&out);
 	free(esc_id);
 	free(esc_title);
 	free(esc_extra);
 }
 
-void LoadJourneyFromFile(Journey *j, const char *path) {
-	size_t file_len = 0;
-	char *buff = readFile((char *)path, &file_len);
-	if (massert(buff, "Couldn't load journey from file.\n"))
-		return;
+void ExportJourneyTo(const Journey *j, const char *path) {
+	String out; InitString(&out, 1);
+	SerializeJourney(j, &out);
+	dump_to_file(path, out.p, out.len);
+	FreeString(&out);
+}
 
-	json_value *doc = json_parse(buff, file_len);
-	change_assert(doc && doc->type == json_object,
-		"Journey file is not a JSON object [%s].\n", path);
+void LoadJourneyFromBuffer(Journey *j, const char *buf, size_t len) {
+	json_value *doc = json_parse(buf, len);
+	change_assert(doc && doc->type == json_object, "Journey buffer is not a JSON object.\n");
 
 	json_value *id_v         = json_object_get(doc, "id");
 	json_value *title_v      = json_object_get(doc, "title");
@@ -203,7 +208,6 @@ void LoadJourneyFromFile(Journey *j, const char *path) {
 
 	if (!goals_v || goals_v->type != json_array) {
 		json_value_free(doc);
-		free(buff);
 		return;
 	}
 
@@ -324,5 +328,112 @@ void LoadJourneyFromFile(Journey *j, const char *path) {
 	}
 
 	json_value_free(doc);
+}
+
+void LoadJourneyFromFile(Journey *j, const char *path) {
+	size_t file_len = 0;
+	char *buff = readFile((char *)path, &file_len);
+	if (massert(buff, "Couldn't load journey from file.\n"))
+		return;
+	LoadJourneyFromBuffer(j, buff, file_len);
 	free(buff);
+}
+
+static int central_connect(void) {
+	int fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (fd < 0) return -1;
+
+	struct sockaddr_in addr;
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family      = AF_INET;
+	addr.sin_port        = htons(CENTRAL_SERVER_PORT);
+	addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+	if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+		close(fd);
+		return -1;
+	}
+	return fd;
+}
+
+static char *central_recv_body(int fd, size_t *out_len) {
+	char buf[65536];
+	size_t total = 0;
+	ssize_t r;
+
+	while (total < sizeof(buf) - 1) {
+		r = recv(fd, buf + total, sizeof(buf) - 1 - total, 0);
+		if (r <= 0) break;
+		total += (size_t)r;
+	}
+	buf[total] = '\0';
+
+	char *body = strstr(buf, "\r\n\r\n");
+	if (!body) return NULL;
+	body += 4;
+
+	size_t body_len = total - (size_t)(body - buf);
+	char *result = malloc(body_len + 1);
+	if (!result) return NULL;
+	memcpy(result, body, body_len);
+	result[body_len] = '\0';
+	*out_len = body_len;
+	return result;
+}
+
+Journey *FetchSharedJourney(const char *journey_id) {
+	int fd = central_connect();
+	if (massert(fd >= 0, "FetchSharedJourney: couldn't connect to central server.\n"))
+		return NULL;
+
+	char req[256];
+	int req_len = snprintf(req, sizeof(req),
+		"GET /journey/%s HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+		journey_id);
+	send(fd, req, (size_t)req_len, 0);
+
+	size_t body_len = 0;
+	char *body = central_recv_body(fd, &body_len);
+	close(fd);
+
+	if (!body || body_len == 0) { free(body); return NULL; }
+
+	/* Check for existing slot first */
+	Journey *j = FindJourneyByID(journey_id);
+	if (!j) {
+		change_assert(UserCachedJourneysCount < MAX_JOURNEYS, "UserCachedJourneys full.\n");
+		j = &UserCachedJourneys[UserCachedJourneysCount++];
+		memset(j, 0, sizeof(*j));
+		InitString(&j->title, 64);
+		InitString(&j->extra_info, 256);
+	}
+
+	LoadJourneyFromBuffer(j, body, body_len);
+	j->is_shared = 1;
+	free(body);
+	return j;
+}
+
+void PushJourneyToCentral(const Journey *j) {
+	String body; InitString(&body, 1);
+	SerializeJourney(j, &body);
+
+	int fd = central_connect();
+	if (massert(fd >= 0, "PushJourneyToCentral: couldn't connect to central server.\n")) {
+		FreeString(&body);
+		return;
+	}
+
+	char header[256];
+	int header_len = snprintf(header, sizeof(header),
+		"POST /journey/%s HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+		"Content-Type: application/json\r\nContent-Length: %zu\r\n"
+		"Connection: close\r\n\r\n",
+		j->id, body.len);
+
+	send(fd, header, (size_t)header_len, 0);
+	send(fd, body.p, body.len, 0);
+	close(fd);
+
+	FreeString(&body);
 }

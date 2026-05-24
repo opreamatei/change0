@@ -31,5 +31,6 @@ _Bool ResolveMiddlewarePermission(
 );
 
 char* ExportMiddlewareSessionJSON(const char *session_id);
+char* ListChatSessionsJSON(const char *user_prefix);
 
 #endif

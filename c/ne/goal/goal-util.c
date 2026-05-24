@@ -44,15 +44,19 @@ time_t CalcGoalRequiredTime(Goal *g){
 void GoalSystemLazyLoad(goal_emit_like_func *goal_emit){
 	if (*goal_emit == NULL){
 		*goal_emit = (goal_emit_like_func)ReadGlobalPointer(FSTRING_SIZE_PARAMS("goal_emit"));
-		change_assert(goal_emit, "Can't load goal_emit");
+		change_assert(*goal_emit, "Can't load goal_emit");
 	}
 }
 
 void JourneySystemLazyLoad(journey_str_func *title, journey_str_func *info){
-	if (title && !*title)
+	if (title && !*title){
 		*title = (journey_str_func)ReadGlobalPointer(FSTRING_SIZE_PARAMS("journey_title"));
-	if (info && !*info)
+		change_assert(*title, "Can't load journey_title — InitJourneySystem not called?\n");
+	}
+	if (info && !*info){
 		*info = (journey_str_func)ReadGlobalPointer(FSTRING_SIZE_PARAMS("journey_info"));
+		change_assert(*info, "Can't load journey_info — InitJourneySystem not called?\n");
+	}
 }
 
 void CreateGoalDSId(char* name, char* deep_search_id){
@@ -101,7 +105,8 @@ Goal *CreateGoal(char goalId[], String *input_goal, String *input_extrainfo, siz
 	g->parent = parent_index;
 
 	Journey *j = FindJourneyByID(journey_id);
-	change_assert(j, "CreateGoal: unknown journey.\n");
+	change_assert(j, "CreateGoal: unknown journey. [%s]\n", journey_id);
+
 	AddGoalToJourney(j, g);
 
 	return g;
@@ -118,6 +123,8 @@ static journey_str_func journey_get_title = NULL;
 static journey_str_func journey_get_info  = NULL;
 
 void PersonalizeGoal(String* input1, String *input2, String* out, char* goalId, String *feedback, start_ds_session_like_func start_ds_session, const char *journey_id, User *user){
+	change_assert(input1 && input1->p, "PersonalizeGoal: input1 is NULL\n");
+	change_assert(start_ds_session, "PersonalizeGoal: start_ds_session is NULL\n");
 
 	char search_id[256];
 	CreateGoalDSId(c_str(input1), search_id);

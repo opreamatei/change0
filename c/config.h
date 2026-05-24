@@ -463,9 +463,9 @@
  * - if helpfull, you can see in input-processor.h the JSON schema, paste it into ChatGPT so you can see some command examples
  * */
 #define DECOMPOSITION_INTO_GRAPH_PROMPT \
-"you are analyzing a single user input and decomposing it into a semantic identity graph across five psychological contexts." \
-"the input text is: [%s]." \
-"the goal is to transform the input into a structured graph representation of the user's identity, motivations, emotions, passions, general tendencies, and subjective interpretations." \
+"you are analyzing an interpreted summary of recent user activity and decomposing it into a semantic identity graph across five psychological contexts." \
+"the input is a third-person summary of what the user expressed, not raw user text: [%s]." \
+"the goal is to transform this interpreted context into a structured graph representation of the user's identity, motivations, emotions, passions, general tendencies, and subjective interpretations." \
 "this graph will later be traversed by an ai investigation engine." \
 "return exactly one valid json object and nothing else." \
 "do not output markdown. do not output explanations. do not output commentary." \

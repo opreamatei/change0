@@ -184,7 +184,14 @@ void start_ds_session(Task *task, char* id, String* out, User *user){
 	String reason; InitString(&reason, 1024);
 
 	while (++edepth){
-		cassert(edepth < 10, "Error : External Depth went way too hight\n");
+		change_assert(
+			edepth < 10,
+			"Error: external depth went too high. edepth=%zu idepth=%zu task=[%s] last_reason=[%s]\n",
+			edepth,
+			idepth,
+			task && task->name.p ? task->name.p : "<null>",
+			reason.p ? reason.p : "<empty>"
+		);
 
 		idepth = 1;
 		while(idepth++) {

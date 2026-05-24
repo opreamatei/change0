@@ -483,7 +483,7 @@ void run7(json_value* doc, String *dynamic_mem, char* ds_id, User *user){
 	InitString(&data, 2);
 	change_assert(data.p, "Failed to allocate memory for data.\n");
 
-	SerializeScheduleData(&data, offset_seconds, user->journeys[0]);
+	SerializeScheduleData(&data, offset_seconds, user);
 
 	ds_emit(ds_id, "cmd-7", c_str(&data), data.len);
 

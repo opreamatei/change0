@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import GoalViewer from './section/goal-view'
 import CurrentGoalsView from './section/current-goals-view'
-import ScheduleView from './section/schedule-view'
+import DailyBriefView from './section/daily-brief-view'
+import ProfileView from './section/profile-view'
 import ChatView from './section/chat-view'
+import ConnectionsView from './section/connections-view'
 import LoginView, { type LocalUser } from './section/login-view'
+import LoadingOrb from './components/loading-orb'
 import {
   applyGoalEvent,
   endGoalOnServer,
   findGoalById,
   getGoalIdFromEvent,
-  getGoalChildren,
-  getRootGoals,
   type GoalEventEnvelope,
   type GoalEventPayload,
   loadGoalsFromServer,
@@ -19,7 +19,6 @@ import {
   type Goal,
 } from './goal'
 import {
-  CENTRAL_ENDPOINTS,
   SERVER_ENDPOINTS,
   getClientBaseUrl,
   setClientBaseUrl,
@@ -61,7 +60,9 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState('Loading goals from server...')
   const [pendingGoalIndex, setPendingGoalIndex] = useState<number | null>(null)
-  const [goalPanel, setGoalPanel] = useState<'structure' | 'current' | 'schedule' | 'chat'>('structure')
+  const [goalPanel, setGoalPanel] = useState<'current' | 'schedule' | 'chat' | 'profile' | 'connections'>('current')
+  const [celebration, setCelebration] = useState<{ title: string } | null>(null)
+  const [dropConfirm, setDropConfirm] = useState<{ goalId: string; title: string } | null>(null)
   const [devTime, setDevTime] = useState<DevTimeState | null>(null)
   const [devTimeBusy, setDevTimeBusy] = useState(false)
   const [localUser, setLocalUser] = useState<LocalUser | null>(() => readStoredLocalUser())
@@ -93,17 +94,6 @@ function App() {
     return findGoalById(goals, goalId)
   }, [goalId, goals])
 
-  const visibleGoals = useMemo(() => {
-    if (!goalId || goalId === ROOT_GOAL_ID) {
-      return getRootGoals(goals)
-    }
-
-    if (!selectedParentGoal) {
-      return []
-    }
-
-    return getGoalChildren(goals, selectedParentGoal.localIndex)
-  }, [goalId, goals, selectedParentGoal])
 
   useEffect(() => {
     const onPopState = () => {
@@ -216,6 +206,23 @@ function App() {
         return
       }
 
+      if (envelope.type === 'goal_drop_requested') {
+        try {
+          const data = JSON.parse(envelope.data) as { goal_id: string; title: string }
+          setDropConfirm({ goalId: data.goal_id, title: data.title })
+        } catch { /* ignore */ }
+        return
+      }
+
+      if (envelope.type === 'goal_tree_completed') {
+        try {
+          const data = JSON.parse(envelope.data) as { title: string }
+          setCelebration({ title: data.title })
+        } catch { /* ignore */ }
+        void refreshGoals({ silent: true })
+        return
+      }
+
       if (envelope.type !== 'goal_started' && envelope.type !== 'goal_ended' && envelope.type !== 'goal_created') {
         return
       }
@@ -283,6 +290,23 @@ function App() {
       setPendingGoalIndex(null)
       setError(nextError)
       setMessage(nextError)
+    }
+  }
+
+  async function confirmDrop() {
+    if (!dropConfirm) return
+    const { goalId } = dropConfirm
+    setDropConfirm(null)
+    try {
+      await fetch(SERVER_ENDPOINTS.goalDrop, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 'goal-id': goalId }),
+      })
+      await refreshGoals({ silent: true })
+      setMessage('Goal dropped.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -356,9 +380,18 @@ function App() {
 
   if (loading) {
     return (
-      <main className="min-h-full bg-white px-4 py-8 text-black sm:px-6">
-        <section className="mx-auto w-full max-w-5xl p-2">
-          <p className="text-sm text-neutral-600">{message}</p>
+      <main className="relative min-h-full overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(0,0,0,0.05),_transparent_42%),linear-gradient(180deg,_#ffffff_0%,_#f7f7f5_100%)] px-4 py-8 text-black sm:px-6">
+        <div className="pointer-events-none absolute inset-0 opacity-70">
+          <div className="absolute left-1/2 top-16 h-72 w-72 -translate-x-1/2 rounded-full bg-neutral-200/40 blur-3xl" />
+          <div className="absolute bottom-12 right-16 h-56 w-56 rounded-full bg-neutral-300/35 blur-3xl" />
+        </div>
+        <section className="relative mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-5xl items-center justify-center p-2">
+          <div className="w-full max-w-md rounded-3xl border border-neutral-200 bg-white/80 p-8 shadow-[0_20px_70px_rgba(0,0,0,0.08)] backdrop-blur">
+            <LoadingOrb label={message} />
+            <p className="mt-4 text-center text-sm text-neutral-500">
+              Syncing goals, session history, and live events.
+            </p>
+          </div>
         </section>
       </main>
     )
@@ -420,8 +453,51 @@ function App() {
             ))}
           </div>
         </aside>
+        {dropConfirm && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+            <div className="mx-4 w-full max-w-sm rounded-3xl border border-neutral-200 bg-white p-8 text-center shadow-2xl">
+              <h2 className="mb-2 text-lg font-bold text-black">Drop this goal?</h2>
+              <p className="mb-1 text-sm text-neutral-600">
+                <span className="font-medium text-black">{dropConfirm.title}</span>
+              </p>
+              <p className="mb-6 text-xs text-neutral-400">This will remove the goal and all its tasks. This cannot be undone.</p>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  className="flex-1 rounded-xl border border-neutral-200 py-3 text-sm font-medium text-neutral-600 hover:bg-neutral-50"
+                  onClick={() => setDropConfirm(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="flex-1 rounded-xl bg-red-600 py-3 text-sm font-semibold text-white hover:bg-red-700"
+                  onClick={() => void confirmDrop()}
+                >
+                  Drop it
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {celebration && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+            <div className="mx-4 w-full max-w-sm rounded-3xl border border-neutral-200 bg-white p-8 text-center shadow-2xl">
+              <div className="mb-4 text-5xl">🎉</div>
+              <h2 className="mb-2 text-xl font-bold text-black">Goal complete!</h2>
+              <p className="mb-6 text-sm text-neutral-500">You finished <span className="font-medium text-black">{celebration.title}</span>.</p>
+              <button
+                type="button"
+                className="w-full rounded-xl bg-black py-3 text-sm font-semibold text-white"
+                onClick={() => setCelebration(null)}
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        )}
         {goalPanel === 'schedule' ? (
-          <ScheduleView />
+          <DailyBriefView />
         ) : goalPanel === 'current' ? (
           <CurrentGoalsView
             goals={goals}
@@ -432,27 +508,20 @@ function App() {
             onEndGoal={(targetGoal) => void runGoalAction(targetGoal, 'end')}
             onRepairGoal={(targetGoal, reason) => void runRepairGoal(targetGoal, reason)}
           />
-        ) : goalPanel === 'chat' ? (
-          <ChatView />
+        ) : goalPanel === 'profile' ? (
+          <ProfileView />
+        ) : goalPanel === 'connections' ? (
+          <ConnectionsView userId={localUser?.id ?? ''} />
         ) : (
-          <GoalViewer
-            parentGoal={selectedParentGoal}
-            childrenGoals={visibleGoals}
-            globalGoals={goals}
-            statusMessage={error ?? message}
-            pendingGoalIndex={pendingGoalIndex}
-            onNavigate={navigateToGoal}
-            onStartGoal={(targetGoal) => void runGoalAction(targetGoal, 'start')}
-            onEndGoal={(targetGoal) => void runGoalAction(targetGoal, 'end')}
-            onRepairGoal={(targetGoal, reason) => void runRepairGoal(targetGoal, reason)}
-          />
+          <ChatView key={localUser?.id ?? 'default'} />
         )}
         <nav className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-neutral-200 bg-white/95 backdrop-blur">
           {([
-            ['structure', 'Structure'],
             ['current', 'Session'],
             ['schedule', 'Schedule'],
+            ['profile', 'You'],
             ['chat', 'Chat'],
+            ['connections', 'People'],
           ] as [typeof goalPanel, string][]).map(([panel, label]) => (
             <button
               key={panel}

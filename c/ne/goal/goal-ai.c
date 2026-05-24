@@ -300,7 +300,7 @@ String *CallGoalDecompositionAI(String *prompt)
 	req.model = AI_OPENAI_MODEL_GPT_5_4_MINI;
 	req.schema_name = "goal_decomposition";
 
-	printf("Calling goal decomposition...\n\n");
+	printf("\n\n------------------\n\nCalling goal decomposition...\n\n------------------\n\n");
 
 	String *result = ai_openai_call_gpt_request(&req);
 	cassert(result, "OpenAI goal decomposition call failed.\n");

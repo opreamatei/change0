@@ -17,6 +17,7 @@ void SerializeSlibingGoals(Goal *g, String *buffer);
 void SerializeGoalParentChain(Goal *g, String *buffer);
 void SerializeGoalLinkedSlibingsChain(Goal *g, String *buffer, _Bool displayInfo);
 void SerializeGoalParentSlibings(Goal *g, String *buffer, _Bool displayInfo);
+void SerializeStalledGoals(String *buffer, size_t max, const char *journey_id);
 void SerializeDueGoals(String *buffer, size_t max, const char *journey_id);
 
 #endif

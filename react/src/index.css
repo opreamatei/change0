@@ -25,3 +25,86 @@ body,
 body {
   background: #ffffff;
 }
+
+@keyframes loader-orbit {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes loader-bob {
+  0%,
+  100% {
+    transform: translateY(0) scale(0.98);
+    opacity: 0.7;
+  }
+
+  50% {
+    transform: translateY(-2px) scale(1.06);
+    opacity: 1;
+  }
+}
+
+.loading-orbit {
+  animation: loader-orbit 4s linear infinite;
+  transform-origin: center;
+}
+
+.loading-bob {
+  animation: loader-bob 1.6s ease-in-out infinite;
+}
+
+/* thinking bubble skeleton shimmer */
+@keyframes think-skeleton {
+  from { background-position: -200% center; }
+  to   { background-position: 200% center; }
+}
+
+.think-skeleton-line {
+  height: 9px;
+  border-radius: 5px;
+  background: linear-gradient(90deg, #ebebeb 25%, #d4d4d4 50%, #ebebeb 75%);
+  background-size: 200% 100%;
+  animation: think-skeleton 1.6s ease-in-out infinite;
+}
+
+/* graph-update-bubble */
+@keyframes gu-node-appear {
+  from { opacity: 0; transform: scale(0); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes gu-node-flash {
+  0%   { opacity: 0.55; transform: scale(1);   }
+  35%  { opacity: 1;    transform: scale(1.55); }
+  100% { opacity: 1;    transform: scale(1);    }
+}
+
+@keyframes gu-edge-appear {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes gu-edge-solid {
+  0%   { stroke: #d4d4d4; }
+  100% { stroke: #171717; }
+}
+
+@keyframes gu-scan {
+  0%   { transform: scale(1);  opacity: 0.5; }
+  100% { transform: scale(11); opacity: 0;   }
+}
+
+@keyframes gu-bubble-exit {
+  0%   { opacity: 1; transform: scale(1)    translateY(0);  }
+  100% { opacity: 0; transform: scale(0.9)  translateY(3px); }
+}
+
+@keyframes gu-pill-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}

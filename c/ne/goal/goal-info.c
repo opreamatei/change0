@@ -1,6 +1,7 @@
 #include "goal-info.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 static journey_str_func journey_get_title = NULL;
 
@@ -183,6 +184,41 @@ void SerializeGoalParentSlibings(Goal *g, String *buffer, _Bool displayInfo){
 }
 
 // AI Generated
+void SerializeStalledGoals(String *buffer, size_t max, const char *journey_id)
+{
+	size_t total = 0;
+	Goal **goals = GetGoalsSorted(&total, journey_id);
+	time_t now = change_time_now();
+	size_t count = 0;
+
+	for (size_t idx = 0; idx < total && count < max; idx++) {
+		Goal *g = goals[idx];
+		if (!g) continue;
+		if (g->start_date == 0 || g->end_date != 0) continue;
+
+		time_t elapsed = now - g->start_date;
+		if (elapsed < 2 * 24 * 3600) continue;
+
+		long long days = (long long)(elapsed / 86400);
+		long long hours = (long long)((elapsed % 86400) / 3600);
+		char relation[64];
+		if (days == 1)
+			snprintf(relation, sizeof(relation), "stalled-1-day-%lld-hours", hours);
+		else
+			snprintf(relation, sizeof(relation), "stalled-%lld-days", days);
+
+		size_t len = 0;
+		char *info = SerializeGoal(g, &len, relation, 1);
+		if (info) {
+			CatString(buffer, info, len);
+			free(info);
+		}
+		count++;
+	}
+
+	free(goals);
+}
+
 void SerializeDueGoals(String *buffer, size_t max, const char *journey_id){
 
 	size_t emitted = 0;

@@ -190,25 +190,15 @@ static int ai_http_status_code(const char *http_response) {
     return 0;
 }
 
-static void ai_force_ascii_buffer(char *buf, size_t len) {
+/* Strip bare control characters from AI text output.
+ * Passes all printable ASCII and all UTF-8 multi-byte sequences (>= 0x80). */
+static void sanitize_ai_output(char *buf, size_t len) {
     if (!buf) return;
-
     for (size_t i = 0; i < len; i++) {
         unsigned char ch = (unsigned char)buf[i];
-
-        if (ch == '\n' || ch == '\r' || ch == '\t') {
-            continue;
-        }
-
-        if (ch < 0x20 || ch > 0x7E) {
-            buf[i] = '?';
-        }
+        if (ch < 0x20 && ch != '\n' && ch != '\r' && ch != '\t')
+            buf[i] = ' ';
     }
-}
-
-static void ai_force_ascii_string(String *s) {
-    if (!s || !s->p) return;
-    ai_force_ascii_buffer(s->p, s->len);
 }
 
 static int ai_extract_json_string_field(
@@ -332,7 +322,6 @@ static ai_openai_status ai_openai_request(
             char *body = ai_find_body(c_str(&out->raw_http));
             if (body) {
                 ai_dup_string(body, &out->body);
-                ai_force_ascii_string(&out->body);
             }
 
             return AI_OPENAI_ERR_HTTP;
@@ -351,8 +340,6 @@ static ai_openai_status ai_openai_request(
             ai_openai_response_free(out);
             return st;
         }
-
-        ai_force_ascii_string(&out->body);
 
         if (expect_id) {
             if (!ai_extract_json_string_field(
@@ -557,7 +544,7 @@ char *openai_extract_output_text_dup(json_value *root, size_t *out_len) {
 
                 memcpy(dup, text->u.string.ptr, len);
                 dup[len] = '\0';
-                ai_force_ascii_buffer(dup, len);
+                sanitize_ai_output(dup, len);
 
                 if (out_len) {
                     *out_len = len;

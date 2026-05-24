@@ -1,6 +1,7 @@
 build/
 debug/
 dumps/*
+user-data/
 compile_commands.json
 .cache/clangd/index
 models/
@@ -14,6 +15,7 @@ sent.txt
 js/.codex
 *.json
 .codex
+.cloudlfare*
 graph-copy.json
 goals-copy.json
 

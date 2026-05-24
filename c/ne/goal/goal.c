@@ -134,12 +134,14 @@ static void print_goal_data(Goal *g, String *buffer){
 	free(esc_title);
 }
 
-static void free_goal_tree_and_clear_container(Goal *g)
+static void free_goal_tree_and_clear_container_jid(Goal *g, const char *jid)
 {
 	if (!g) return;
 
+	const char *effective_jid = (g->journey_id[0]) ? g->journey_id : jid;
+
 	for (size_t i = 0; i < g->subgoals_len; i++)
-		free_goal_tree_and_clear_container(FindGoalFromIndex(g->journey_id, g->subgoals[i]));
+		free_goal_tree_and_clear_container_jid(FindGoalFromIndex(effective_jid, g->subgoals[i]), effective_jid);
 
 	if (g->title.p)
 		FreeString(&g->title);
@@ -151,12 +153,18 @@ static void free_goal_tree_and_clear_container(Goal *g)
 	free(g);
 }
 
-static void register_repair_tree(Journey *j, Goal *g) {
-	AddGoalToJourney(j, g);
-	for (size_t i = 0; i < g->subgoals_len; i++) {
-		Goal *child = FindGoalFromIndex(g->journey_id, g->subgoals[i]);
-		if (child) register_repair_tree(j, child);
-	}
+static void free_goal_tree_and_clear_container(Goal *g)
+{
+	free_goal_tree_and_clear_container_jid(g, g ? g->journey_id : "");
+}
+
+/* Move new_root from its temporary creation slot to the freed old slot. */
+static void swap_goal_slot(Journey *j, Goal *g, size_t old_index, size_t new_original_index)
+{
+	if (!j) return;
+	j->goals[old_index - 1] = g;
+	if (new_original_index != old_index && new_original_index <= j->goals_count)
+		j->goals[new_original_index - 1] = NULL;
 }
 
 static GoalProgressSnapshot *snapshot_goal_progress_tree(Goal *g)
@@ -535,18 +543,24 @@ static void transfer_goal_progress_recursive(Goal *new_goal, const GoalProgressS
 	free(used_old);
 }
 
-static void rebase_goal_tree(Goal *g, size_t parent_index, size_t depth)
+static void rebase_goal_tree_jid(Goal *g, size_t parent_index, size_t depth, const char *jid)
 {
 	change_assert(g, "Cannot rebase NULL goal tree.\n");
 
+	const char *effective_jid = (g->journey_id[0]) ? g->journey_id : jid;
 	g->parent = parent_index;
 	g->depth = depth;
 
 	for (size_t i = 0; i < g->subgoals_len; i++) {
-		Goal *child = FindGoalFromIndex(g->journey_id, g->subgoals[i]);
+		Goal *child = FindGoalFromIndex(effective_jid, g->subgoals[i]);
 		change_assert(child, "Broken child while rebasing repaired goal branch.\n");
-		rebase_goal_tree(child, g->localIndex, depth + 1);
+		rebase_goal_tree_jid(child, g->localIndex, depth + 1, effective_jid);
 	}
+}
+
+static void rebase_goal_tree(Goal *g, size_t parent_index, size_t depth)
+{
+	rebase_goal_tree_jid(g, parent_index, depth, g ? g->journey_id : "");
 }
 
 static void append_repair_history(Goal *new_branch, String *reason, String *old_goals_data, String *ds_out)
@@ -690,11 +704,12 @@ static void replace_goal_branch(Goal *old_branch, Goal *new_branch, GoalProgress
 	CalcGoalRequiredTime(new_branch);
 
 	if (target_journey)
-		register_repair_tree(target_journey, new_branch);
+		swap_goal_slot(target_journey, new_branch, old_index, new_original_index);
 
 	UserProfileRecordGoalEvent(user, "goal_repaired", new_branch, reason && reason->p ? reason->p : "");
 
-	SCHEDULE_NEEDS_REFRESH = 1;
+	user->schedule_needs_refresh = 1;
+	user->goal_health_needs_refresh = 1;
 }
 
 static void build_goal_repair_ds_prompt(
@@ -1349,6 +1364,9 @@ void FreeGoals()
 // those are mapped to input1 -> title input2 -> extrainfo
 Goal* CreateUserGoal(String *input1, String *input2, const char *journey_id, start_ds_session_like_func* start_ds_session, User *user)
 {
+	change_assert(input1 && input1->p, "CreateUserGoal: input1 is NULL\n");
+	change_assert(start_ds_session && *start_ds_session, "CreateUserGoal: start_ds_session is NULL\n");
+	change_assert(user, "CreateUserGoal: user is NULL\n");
 	GoalSystemLazyLoad(&goal_emit);
 	UserProfileRecordInput(user, "goal_create_request_title", input1 ? input1->p : "");
 	UserProfileRecordInput(user, "goal_create_request_extrainfo", input2 ? input2->p : "");
@@ -1394,6 +1412,9 @@ Goal* CreateUserGoal(String *input1, String *input2, const char *journey_id, sta
 
 	ComputePartialDecomposition(created, user);
 	UserProfileRecordGoalEvent(user, "goal_created", created, created->extra_info.p);
+
+	user->schedule_needs_refresh = 1;
+	user->goal_health_needs_refresh = 1;
 
 	FreeString(&title);
 	FreeString(&extra_info);
@@ -1652,6 +1673,12 @@ time_t StartGoal(goalIDType goalID, User *user){
 	g->start_date = now;
 	UserProfileRecordGoalEvent(user, "goal_started", g, "manual start");
 
+	user->schedule_needs_refresh = 1;
+	user->goal_health_needs_refresh = 1;
+
+	Journey *j = FindJourneyByID(g->journey_id);
+	if (j && j->is_shared) PushJourneyToCentral(j);
+
 	return now;
 }
 
@@ -1674,7 +1701,11 @@ time_t EndGoalFromGoal(Goal *g, User *user){
 	refresh_goal_completion_from_children_upwards(g, now);
 	UserProfileRecordGoalEvent(user, "goal_ended", g, "goal marked complete");
 
-	SCHEDULE_NEEDS_REFRESH = 1;
+	user->schedule_needs_refresh = 1;
+	user->goal_health_needs_refresh = 1;
+
+	Journey *j = FindJourneyByID(g->journey_id);
+	if (j && j->is_shared) PushJourneyToCentral(j);
 
 	return now;
 }
@@ -1684,4 +1715,26 @@ time_t EndGoal(goalIDType goalID, User *user){
 	change_assert(g, "Goal not found, target goal id %s, serialized goals.", goalID);
 
 	return EndGoalFromGoal(g, user);
+}
+
+void DropGoalTree(Goal *root, User *user)
+{
+	change_assert(root, "DropGoalTree: root is NULL.\n");
+
+	size_t total = 0;
+	Goal **goals = GetGoalsSorted(&total, user->journeys[0]);
+	time_t now = change_time_now();
+
+	for (size_t i = 0; i < total; i++) {
+		Goal *g = goals[i];
+		if (!g || g->end_date != 0) continue;
+		if (CalcGoalRoot(g) != root) continue;
+		if (!g->start_date) g->start_date = now;
+		g->end_date = now;
+		UserProfileRecordGoalEvent(user, "goal_dropped", g, "goal dropped by user");
+	}
+
+	user->schedule_needs_refresh = 1;
+	user->goal_health_needs_refresh = 1;
+	free(goals);
 }

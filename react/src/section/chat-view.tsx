@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { SERVER_ENDPOINTS } from '../config/server'
+import GraphUpdateBubble from '../components/graph-update-bubble'
 
 type ChatEntryKind = 'user' | 'assistant' | 'action' | 'permission'
 
@@ -25,7 +26,25 @@ interface ChatEntry {
   permission?: PermissionData
   permissionResolved?: boolean
   permissionApproved?: boolean
+  graphUpdateResolved?: boolean
+  suggestions?: string[]
+  suggestionsHidden?: boolean
+  suggestionsExiting?: boolean
+  selectedSuggestion?: string
+  highlightOnMount?: boolean
+  highlightColor?: string
 }
+
+const SUGGESTION_EXIT_MS = 500
+const SUGGESTION_EXIT_STAGGER_MS = 70
+const SUGGESTION_HIGHLIGHT_COLORS = [
+  '#4f46e5',
+  '#7c3aed',
+  '#0284c7',
+  '#0f766e',
+  '#e11d48',
+  '#f59e0b',
+]
 
 interface ServerSessionEvent {
   type: string
@@ -54,7 +73,20 @@ function parseEntry(id: string, type: string, content: string, timestamp: number
     }
   }
 
+  if (type === 'graph_update_started') return { ...base, kind: 'action' }
+
   return base
+}
+
+function applyGraphUpdateResolved(entries: ChatEntry[]): ChatEntry[] {
+  const copy = [...entries]
+  for (let i = copy.length - 1; i >= 0; i--) {
+    if (copy[i].eventType === 'graph_update_started' && !copy[i].graphUpdateResolved) {
+      copy[i] = { ...copy[i], graphUpdateResolved: true }
+      break
+    }
+  }
+  return copy
 }
 
 function applyPermissionResolution(entries: ChatEntry[], resolvedJson: string): ChatEntry[] {
@@ -70,10 +102,71 @@ function applyPermissionResolution(entries: ChatEntry[], resolvedJson: string): 
   }
 }
 
+function applySuggestedReplies(entries: ChatEntry[], suggestionsJson: string): ChatEntry[] {
+  try {
+    const suggestions = JSON.parse(suggestionsJson) as string[]
+    const copy = [...entries]
+    for (let i = copy.length - 1; i >= 0; i--) {
+      if (copy[i].kind === 'assistant') {
+        copy[i] = {
+          ...copy[i],
+          suggestions,
+          suggestionsHidden: false,
+          suggestionsExiting: false,
+          selectedSuggestion: undefined,
+        }
+        break
+      }
+    }
+    return copy
+  } catch {
+    return entries
+  }
+}
+
+function hidePendingSuggestions(entries: ChatEntry[]): ChatEntry[] {
+  const copy = [...entries]
+  for (let i = copy.length - 1; i >= 0; i--) {
+    const entry = copy[i]
+    if (entry.kind === 'assistant' && entry.suggestions && entry.suggestions.length > 0 && !entry.suggestionsHidden) {
+      copy[i] = { ...entry, suggestionsHidden: true, suggestionsExiting: false }
+      break
+    }
+  }
+  return copy
+}
+
+function beginHidePendingSuggestions(entries: ChatEntry[]): ChatEntry[] {
+  const copy = [...entries]
+  for (let i = copy.length - 1; i >= 0; i--) {
+    const entry = copy[i]
+    if (
+      entry.kind === 'assistant' &&
+      entry.suggestions &&
+      entry.suggestions.length > 0 &&
+      !entry.suggestionsHidden &&
+      !entry.suggestionsExiting
+    ) {
+      copy[i] = { ...entry, suggestionsExiting: true }
+      break
+    }
+  }
+  return copy
+}
+
+function markSuggestionSelected(entries: ChatEntry[], entryId: string, suggestion: string): ChatEntry[] {
+  return entries.map((entry) =>
+    entry.id === entryId
+      ? { ...entry, selectedSuggestion: suggestion, suggestionsHidden: false, suggestionsExiting: false }
+      : entry,
+  )
+}
+
 const ACTION_LABEL: Record<string, string> = {
   goal_create_started: 'Creating goal',
   goal_created: 'Goal created',
   goal_priority_changed: 'Priority updated',
+  goal_delayed: 'Goal delayed',
   profile_updated: 'Profile updated',
   deep_search_started: 'Searching',
   deep_search_done: 'Search complete',
@@ -92,6 +185,15 @@ function actionSummary(entry: ChatEntry): string {
     } catch { /* fall through */ }
   }
 
+  if (entry.eventType === 'goal_delayed') {
+    try {
+      const data = JSON.parse(entry.content) as { title: string; added_seconds: number }
+      const days = Math.round(data.added_seconds / 86400)
+      const suffix = days >= 1 ? `+${days}d` : `+${data.added_seconds}s`
+      return `${label}: ${data.title} (${suffix})`
+    } catch { /* fall through */ }
+  }
+
   if (entry.eventType === 'profile_updated') {
     return `${label}: ${entry.content}`
   }
@@ -107,22 +209,381 @@ function isLoadingAction(eventType: string): boolean {
   return eventType === 'deep_search_started' || eventType === 'goal_create_started' || eventType === 'middleware_retry'
 }
 
+type ParsedBlock =
+  | { type: 'paragraph'; text: string }
+  | { type: 'heading'; level: number; text: string }
+  | { type: 'unordered-list'; items: string[] }
+  | { type: 'ordered-list'; items: string[] }
+  | { type: 'quote'; text: string }
+  | { type: 'code'; text: string; language?: string }
+
+function renderInlineContent(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = []
+  let index = 0
+  let key = 0
+
+  function pushText(value: string) {
+    if (!value) return
+    nodes.push(<span key={`${keyPrefix}-t-${key++}`}>{value}</span>)
+  }
+
+  while (index < text.length) {
+    const remaining = text.slice(index)
+
+    if (remaining.startsWith('`')) {
+      const end = text.indexOf('`', index + 1)
+      if (end > index + 1) {
+        nodes.push(
+          <code
+            key={`${keyPrefix}-c-${key++}`}
+            className="rounded bg-neutral-100 px-1 py-0.5 font-mono text-[0.85em] text-neutral-800"
+          >
+            {text.slice(index + 1, end)}
+          </code>,
+        )
+        index = end + 1
+        continue
+      }
+    }
+
+    if (remaining.startsWith('**') || remaining.startsWith('__')) {
+      const marker = remaining.startsWith('**') ? '**' : '__'
+      const end = text.indexOf(marker, index + 2)
+      if (end > index + 2) {
+        nodes.push(
+          <strong key={`${keyPrefix}-s-${key++}`} className="font-semibold text-black">
+            {renderInlineContent(text.slice(index + 2, end), `${keyPrefix}-s${key}`)}
+          </strong>,
+        )
+        index = end + 2
+        continue
+      }
+    }
+
+    if (remaining.startsWith('[')) {
+      const closeLabel = text.indexOf('](', index + 1)
+      const closeUrl = closeLabel >= 0 ? text.indexOf(')', closeLabel + 2) : -1
+      if (closeLabel > index + 1 && closeUrl > closeLabel + 2) {
+        const label = text.slice(index + 1, closeLabel)
+        const url = text.slice(closeLabel + 2, closeUrl)
+        nodes.push(
+          <a
+            key={`${keyPrefix}-l-${key++}`}
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-black underline decoration-neutral-300 underline-offset-2 hover:decoration-neutral-600"
+          >
+            {renderInlineContent(label, `${keyPrefix}-l${key}`)}
+          </a>,
+        )
+        index = closeUrl + 1
+        continue
+      }
+    }
+
+    let nextSpecial = text.length
+    const specials = ['`', '**', '__', '[']
+    for (const token of specials) {
+      const found = text.indexOf(token, index + 1)
+      if (found !== -1 && found < nextSpecial) nextSpecial = found
+    }
+
+    pushText(text.slice(index, nextSpecial))
+    index = nextSpecial
+  }
+
+  return nodes
+}
+
+function parseAssistantBlocks(content: string): ParsedBlock[] {
+  const lines = content.replace(/\r\n/g, '\n').split('\n')
+  const blocks: ParsedBlock[] = []
+  let paragraph: string[] = []
+  let quote: string[] = []
+  let listKind: 'unordered' | 'ordered' | null = null
+  let listItems: string[] = []
+  let codeLines: string[] | null = null
+  let codeLanguage = ''
+
+  function flushParagraph() {
+    if (!paragraph.length) return
+    blocks.push({ type: 'paragraph', text: paragraph.join(' ').trim() })
+    paragraph = []
+  }
+
+  function flushQuote() {
+    if (!quote.length) return
+    blocks.push({ type: 'quote', text: quote.join('\n').trim() })
+    quote = []
+  }
+
+  function flushList() {
+    if (!listKind || !listItems.length) return
+    blocks.push({
+      type: listKind === 'ordered' ? 'ordered-list' : 'unordered-list',
+      items: [...listItems],
+    })
+    listKind = null
+    listItems = []
+  }
+
+  function flushAll() {
+    flushParagraph()
+    flushQuote()
+    flushList()
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd()
+
+    if (codeLines) {
+      if (line.startsWith('```')) {
+        blocks.push({
+          type: 'code',
+          text: codeLines.join('\n'),
+          language: codeLanguage || undefined,
+        })
+        codeLines = null
+        codeLanguage = ''
+      } else {
+        codeLines.push(rawLine)
+      }
+      continue
+    }
+
+    if (!line.trim()) {
+      flushAll()
+      continue
+    }
+
+    const codeMatch = line.match(/^```(\w+)?\s*$/)
+    if (codeMatch) {
+      flushAll()
+      codeLanguage = codeMatch[1] ?? ''
+      codeLines = []
+      continue
+    }
+
+    const headingMatch = line.match(/^(#{1,6})\s+(.*)$/)
+    if (headingMatch) {
+      flushAll()
+      blocks.push({
+        type: 'heading',
+        level: headingMatch[1].length,
+        text: headingMatch[2].trim(),
+      })
+      continue
+    }
+
+    const quoteMatch = line.match(/^>\s?(.*)$/)
+    if (quoteMatch) {
+      if (listKind) flushList()
+      quote.push(quoteMatch[1])
+      continue
+    }
+
+    const unorderedMatch = line.match(/^\s*[-*•]\s+(.*)$/)
+    if (unorderedMatch) {
+      flushParagraph()
+      flushQuote()
+      if (listKind && listKind !== 'unordered') flushList()
+      listKind = 'unordered'
+      listItems.push(unorderedMatch[1])
+      continue
+    }
+
+    const orderedMatch = line.match(/^\s*\d+[.)]\s+(.*)$/)
+    if (orderedMatch) {
+      flushParagraph()
+      flushQuote()
+      if (listKind && listKind !== 'ordered') flushList()
+      listKind = 'ordered'
+      listItems.push(orderedMatch[1])
+      continue
+    }
+
+    if (quote.length) flushQuote()
+    if (listKind) flushList()
+    paragraph.push(line.trim())
+  }
+
+  if (codeLines) {
+    blocks.push({
+      type: 'code',
+      text: codeLines.join('\n'),
+      language: codeLanguage || undefined,
+    })
+  }
+
+  flushAll()
+  return blocks
+}
+
+function AssistantContent({ content }: { content: string }) {
+  const blocks = parseAssistantBlocks(content)
+
+  if (blocks.length === 0) {
+    return <span className="whitespace-pre-wrap">{content}</span>
+  }
+
+  return (
+    <div className="space-y-3">
+      {blocks.map((block, blockIndex) => {
+        if (block.type === 'heading') {
+          const sizes: Record<number, string> = {
+            1: 'text-lg',
+            2: 'text-base',
+            3: 'text-sm',
+            4: 'text-sm',
+            5: 'text-sm',
+            6: 'text-sm',
+          }
+
+          return (
+            <p key={blockIndex} className={`font-semibold ${sizes[block.level] ?? 'text-sm'}`}>
+              {renderInlineContent(block.text, `h-${blockIndex}`)}
+            </p>
+          )
+        }
+
+        if (block.type === 'unordered-list' || block.type === 'ordered-list') {
+          const isOrdered = block.type === 'ordered-list'
+          const ListTag = isOrdered ? 'ol' : 'ul'
+          const listClass = isOrdered ? 'list-decimal' : 'list-disc'
+
+          return (
+            <ListTag key={blockIndex} className={`ml-5 space-y-1 ${listClass} pl-1`}>
+              {block.items.map((item, itemIndex) => (
+                <li key={itemIndex} className="whitespace-pre-wrap">
+                  {renderInlineContent(item, `li-${blockIndex}-${itemIndex}`)}
+                </li>
+              ))}
+            </ListTag>
+          )
+        }
+
+        if (block.type === 'quote') {
+          return (
+            <blockquote
+              key={blockIndex}
+              className="border-l-2 border-neutral-200 pl-3 text-neutral-600"
+            >
+              <div className="space-y-1">
+                {block.text.split('\n').map((line, lineIndex) => (
+                  <p key={lineIndex} className="whitespace-pre-wrap">
+                    {renderInlineContent(line, `q-${blockIndex}-${lineIndex}`)}
+                  </p>
+                ))}
+              </div>
+            </blockquote>
+          )
+        }
+
+        if (block.type === 'code') {
+          return (
+            <pre
+              key={blockIndex}
+              className="overflow-x-auto rounded-xl border border-neutral-200 bg-neutral-950 px-4 py-3 text-xs leading-relaxed text-neutral-100"
+            >
+              <code>{block.text}</code>
+            </pre>
+          )
+        }
+
+        return (
+          <p key={blockIndex} className="whitespace-pre-wrap">
+            {renderInlineContent(block.text, `p-${blockIndex}`)}
+          </p>
+        )
+      })}
+    </div>
+  )
+}
+
 function UserBubble({ entry }: { entry: ChatEntry }) {
+  const [highlighted, setHighlighted] = useState(entry.highlightOnMount ?? false)
+
+  useEffect(() => {
+    if (!entry.highlightOnMount) return
+    const timeoutId = window.setTimeout(() => {
+      setHighlighted(false)
+    }, 1200)
+    return () => window.clearTimeout(timeoutId)
+  }, [entry.highlightOnMount])
+
   return (
     <div className="flex justify-end">
-      <div className="max-w-[72%] rounded-2xl bg-black px-4 py-2.5 text-sm leading-relaxed text-white">
+      <div
+        className={[
+          'max-w-[72%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed transition-colors duration-[1200ms]',
+          'bg-black text-white',
+        ].join(' ')}
+        style={{
+          backgroundColor: entry.highlightOnMount && highlighted
+            ? (entry.highlightColor ?? '#2563eb')
+            : '#000000',
+        }}
+      >
         {entry.content}
       </div>
     </div>
   )
 }
 
-function AssistantBubble({ entry }: { entry: ChatEntry }) {
+const SUGGESTION_COLORS = [
+  'bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700',
+  'bg-violet-600 hover:bg-violet-500 active:bg-violet-700',
+  'bg-sky-600 hover:bg-sky-500 active:bg-sky-700',
+  'bg-teal-600 hover:bg-teal-500 active:bg-teal-700',
+  'bg-rose-600 hover:bg-rose-500 active:bg-rose-700',
+  'bg-amber-500 hover:bg-amber-400 active:bg-amber-600',
+]
+
+function AssistantBubble({
+  entry,
+  onSuggestion,
+}: {
+  entry: ChatEntry
+  onSuggestion: (entryId: string, suggestion: string) => void
+}) {
   return (
-    <div className="flex justify-start">
+    <div className="flex flex-col items-start gap-1.5">
       <div className="max-w-[72%] rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-2.5 text-sm leading-relaxed text-black">
-        {entry.content}
+        <AssistantContent content={entry.content} />
       </div>
+      {entry.suggestions && entry.suggestions.length > 0 && !entry.suggestionsHidden && (
+        <div className="flex max-w-[72%] flex-wrap gap-2">
+          {entry.suggestions.map((s, i) => {
+            const isSelected = entry.selectedSuggestion === s
+            const isDimmed = entry.selectedSuggestion !== undefined && !isSelected
+            return (
+              <button
+                key={i}
+                type="button"
+                disabled={entry.selectedSuggestion !== undefined}
+                onClick={() => {
+                  onSuggestion(entry.id, s)
+                }}
+                className={[
+                  'rounded-full px-4 py-2 text-sm text-white transition-all duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)]',
+                  SUGGESTION_COLORS[i % SUGGESTION_COLORS.length],
+                  isSelected ? 'scale-105 ring-2 ring-white ring-offset-1 brightness-110' : '',
+                  isDimmed ? 'opacity-10 saturate-50' : '',
+                  entry.suggestionsExiting ? 'pointer-events-none -translate-y-2 scale-[0.86] opacity-0 blur-[2px]' : '',
+                ].join(' ')}
+                style={
+                  entry.suggestionsExiting
+                    ? { transitionDelay: `${((entry.suggestions?.length ?? 1) - 1 - i) * SUGGESTION_EXIT_STAGGER_MS}ms` }
+                    : undefined
+                }
+              >
+                {isSelected ? '✓ ' : ''}{s}
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -206,19 +667,86 @@ function PermissionBubble({
   )
 }
 
-const HIDDEN_EVENT_TYPES = new Set(['sse_connected', 'permission_resolved'])
+const THINKING_PHRASES = [
+  'Thinking through that…',
+  'Let me check your goals…',
+  'Looking at your schedule…',
+  'Reviewing the context…',
+  'Working on a response…',
+  'Checking your progress…',
+  'Considering your options…',
+  'One moment…',
+  'Analyzing that…',
+  'Let me think about that…',
+]
+
+const SKELETON_WIDTHS = [
+  ['92%', '78%', '55%'],
+  ['85%', '93%', '40%'],
+  ['88%', '62%', '70%'],
+  ['95%', '80%', '48%'],
+]
+
+function ThinkingBubble() {
+  const [phraseIdx, setPhraseIdx] = useState(() => Math.floor(Math.random() * THINKING_PHRASES.length))
+  const [skeletonSet] = useState(() => Math.floor(Math.random() * SKELETON_WIDTHS.length))
+  const [visible, setVisible] = useState(true)
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setVisible(false)
+      setTimeout(() => {
+        setPhraseIdx((i) => (i + 1) % THINKING_PHRASES.length)
+        setVisible(true)
+      }, 320)
+    }, 2800)
+    return () => clearInterval(id)
+  }, [])
+
+  return (
+    <div className="flex justify-start">
+      <div className="max-w-[72%] rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 min-w-[220px]">
+        <p
+          className="mb-2.5 text-xs text-neutral-400 transition-opacity duration-300"
+          style={{ opacity: visible ? 1 : 0 }}
+        >
+          {THINKING_PHRASES[phraseIdx]}
+        </p>
+        <div className="flex flex-col gap-2">
+          {SKELETON_WIDTHS[skeletonSet].map((w, i) => (
+            <div
+              key={i}
+              className="think-skeleton-line"
+              style={{
+                width: w,
+                animationDelay: `${i * 0.18}s`,
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const HIDDEN_EVENT_TYPES = new Set(['sse_connected', 'permission_resolved', 'suggested_replies', 'graph_updated'])
 
 export default function ChatView() {
   const [sessionId, setSessionId] = useState('default')
   const [entries, setEntries] = useState<ChatEntry[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  const [thinking, setThinking] = useState(false)
+  const [reloading, setReloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const pendingSuggestionHighlightsRef = useRef<Array<{ text: string; color: string }>>([])
+  const suggestionHideTimeoutRef = useRef<number | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   async function loadSession(sid: string) {
     try {
+      setReloading(true)
       const url = `${SERVER_ENDPOINTS.middlewareSession}?sessionId=${encodeURIComponent(sid)}`
       const res = await fetch(url, { cache: 'no-store' })
       if (!res.ok) return
@@ -235,12 +763,30 @@ export default function ChatView() {
         loaded = applyPermissionResolution(loaded, r.content)
       }
 
+      const graphUpdates = data.events.filter((e) => e.type === 'graph_updated')
+      for (const _ of graphUpdates) {
+        loaded = applyGraphUpdateResolved(loaded)
+      }
+
+      const suggestedReplies = data.events.filter((e) => e.type === 'suggested_replies')
+      for (const reply of suggestedReplies) {
+        loaded = applySuggestedReplies(loaded, reply.content)
+      }
+
       setEntries(loaded)
-    } catch { /* silent on load failure */ }
+      setThinking(false)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+    finally {
+      setReloading(false)
+    }
   }
 
   useEffect(() => {
     setEntries([])
+    setThinking(false)
     void loadSession(sessionId)
   }, [sessionId])
 
@@ -253,14 +799,41 @@ export default function ChatView() {
         const envelope = JSON.parse(event.data) as SSEEnvelope
         const { type, data } = envelope
 
-        if (HIDDEN_EVENT_TYPES.has(type)) return
+        if (type === 'suggested_replies') {
+          setEntries((prev) => applySuggestedReplies(prev, data))
+          return
+        }
 
         if (type === 'permission_resolved') {
           setEntries((prev) => applyPermissionResolution(prev, data))
           return
         }
 
+        if (type === 'graph_updated') {
+          setEntries((prev) => applyGraphUpdateResolved(prev))
+          return
+        }
+
+        if (HIDDEN_EVENT_TYPES.has(type)) return
+
+        if (type === 'message_received') setThinking(true)
+        if (type === 'assistant_message') setThinking(false)
+
         const entry = parseEntry(`live-${Date.now()}-${Math.random()}`, type, data, Math.floor(Date.now() / 1000))
+        if (type === 'message_received') {
+          const pendingIndex = pendingSuggestionHighlightsRef.current.findIndex((item) => item.text === data)
+          const highlightedEntry = pendingIndex >= 0
+            ? {
+              ...entry,
+              highlightOnMount: true,
+              highlightColor: pendingSuggestionHighlightsRef.current[pendingIndex]?.color,
+            }
+            : entry
+          if (pendingIndex >= 0) pendingSuggestionHighlightsRef.current.splice(pendingIndex, 1)
+          setEntries((prev) => [...prev, highlightedEntry])
+          return
+        }
+
         setEntries((prev) => [...prev, entry])
       } catch { /* ignore malformed */ }
     }
@@ -272,9 +845,28 @@ export default function ChatView() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [entries.length])
 
-  async function send() {
-    const msg = input.trim()
+  useEffect(() => {
+    return () => {
+      if (suggestionHideTimeoutRef.current !== null) {
+        window.clearTimeout(suggestionHideTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  async function send(override?: string) {
+    const msg = (override ?? input).trim()
     if (!msg || sending) return
+
+    if (override === undefined) {
+      if (suggestionHideTimeoutRef.current !== null) {
+        window.clearTimeout(suggestionHideTimeoutRef.current)
+      }
+      setEntries((prev) => beginHidePendingSuggestions(prev))
+      suggestionHideTimeoutRef.current = window.setTimeout(() => {
+        setEntries((prev) => hidePendingSuggestions(prev))
+        suggestionHideTimeoutRef.current = null
+      }, SUGGESTION_EXIT_MS + 5 * SUGGESTION_EXIT_STAGGER_MS)
+    }
 
     setSending(true)
     setInput('')
@@ -295,16 +887,20 @@ export default function ChatView() {
     }
   }
 
-  async function resolvePermission(permissionId: string, approved: boolean) {
-    try {
-      await fetch(SERVER_ENDPOINTS.middlewarePermission, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ permissionId, approved }),
-      })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
+  function resolvePermission(permissionId: string, approved: boolean) {
+    /* optimistic update — show resolved state immediately */
+    setEntries((prev) =>
+      prev.map((e) =>
+        e.kind === 'permission' && e.permission?.permission_id === permissionId
+          ? { ...e, permissionResolved: true, permissionApproved: approved }
+          : e,
+      ),
+    )
+    fetch(SERVER_ENDPOINTS.middlewarePermission, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ permissionId, approved }),
+    }).catch((err) => setError(err instanceof Error ? err.message : String(err)))
   }
 
   return (
@@ -320,6 +916,26 @@ export default function ChatView() {
             onChange={(e) => setSessionId(e.target.value)}
             onBlur={(e) => { if (!e.target.value.trim()) setSessionId('default') }}
           />
+          <button
+            type="button"
+            className="rounded border border-neutral-300 px-3 py-1 text-xs font-medium text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:border-neutral-200 disabled:text-neutral-300"
+            onClick={() => void loadSession(sessionId)}
+            disabled={reloading}
+          >
+            {reloading ? (
+              <span className="inline-flex items-center gap-1">
+                {[0, 1, 2].map((dot) => (
+                  <span
+                    key={dot}
+                    className="size-1.5 rounded-full bg-neutral-500 animate-bounce"
+                    style={{ animationDelay: `${dot * 140}ms` }}
+                  />
+                ))}
+              </span>
+            ) : (
+              'Reload'
+            )}
+          </button>
         </div>
       </header>
 
@@ -331,11 +947,30 @@ export default function ChatView() {
         )}
         {entries.map((entry) => {
           if (entry.kind === 'user') return <UserBubble key={entry.id} entry={entry} />
-          if (entry.kind === 'assistant') return <AssistantBubble key={entry.id} entry={entry} />
+          if (entry.kind === 'assistant') return (
+            <AssistantBubble
+              key={entry.id}
+              entry={entry}
+              onSuggestion={(entryId, suggestion) => {
+                if (sending) return
+                const suggestionIndex = entry.suggestions?.indexOf(suggestion) ?? 0
+                pendingSuggestionHighlightsRef.current.push({
+                  text: suggestion,
+                  color: SUGGESTION_HIGHLIGHT_COLORS[suggestionIndex % SUGGESTION_HIGHLIGHT_COLORS.length],
+                })
+                setEntries((prev) => markSuggestionSelected(prev, entryId, suggestion))
+                setInput(suggestion)
+                void send(suggestion)
+              }}
+            />
+          )
           if (entry.kind === 'permission')
             return <PermissionBubble key={entry.id} entry={entry} onResolve={resolvePermission} />
+          if (entry.eventType === 'graph_update_started')
+            return <GraphUpdateBubble key={entry.id} resolved={entry.graphUpdateResolved ?? false} />
           return <ActionBubble key={entry.id} entry={entry} />
         })}
+        {thinking && <ThinkingBubble />}
         <div ref={bottomRef} />
       </div>
 
@@ -363,7 +998,19 @@ export default function ChatView() {
           onClick={() => void send()}
           disabled={!input.trim() || sending}
         >
-          {sending ? '…' : 'Send'}
+          {sending ? (
+            <span className="inline-flex items-center gap-1">
+              {[0, 1, 2].map((dot) => (
+                <span
+                  key={dot}
+                  className="size-1.5 rounded-full bg-white animate-bounce"
+                  style={{ animationDelay: `${dot * 140}ms` }}
+                />
+              ))}
+            </span>
+          ) : (
+            'Send'
+          )}
         </button>
       </div>
     </section>

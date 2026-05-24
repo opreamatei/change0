@@ -94,7 +94,7 @@ Node* FindNodeGlobal(NodeContainer *nc, char* target, uint_fast8_t length, size_
 
 Node* AddNodeEx(
 		NodeContainer *nc,
-		char* label,
+		const char* label,
 		size_t label_len,
 		double activation,
 		double weight,
@@ -118,5 +118,7 @@ double read_connection_weight(NodeContainer *nc, Connection* c);
 
 void touch_node(Node *n, double power, time_t now);
 void touch_connection(Connection *n, double power, time_t now);
+
+void SetupContextNodes(NodeContainer *nc);
 
 #endif

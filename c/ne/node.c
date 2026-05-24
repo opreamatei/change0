@@ -49,9 +49,9 @@ _Bool InitNodes(NodeContainer *nc){
 }
 
 // Parent can be Nullable
-Node* AddNodeEx(NodeContainer *nc, char* label, size_t label_len, double activation, double weight, _Bool hasParent, size_t parent, _Bool fertile, time_t now){
+Node* AddNodeEx(NodeContainer *nc, const char* label, size_t label_len, double activation, double weight, _Bool hasParent, size_t parent, _Bool fertile, time_t now){
 	if (!label || !nc->init || !nc->items) return NULL;
-	if (label_len > NODE_LABEL_CAP - 2) label[NODE_LABEL_CAP-1] = '\0';
+	if (label_len > NODE_LABEL_CAP - 2) label_len = NODE_LABEL_CAP - 2;
 
 	if (nc->count >= nc->capacity) {
 		size_t new_capacity = MAX(INIT_NODE_CAP, nc->capacity) * 2;
@@ -63,8 +63,6 @@ Node* AddNodeEx(NodeContainer *nc, char* label, size_t label_len, double activat
 		nc->items = tmp;
 		nc->capacity = new_capacity;
 	}
-
-	lowerAll(&label, label_len);
 
 	Node* node = NodeAt(nc, nc->count);
 	node->labelLength = label_len;
@@ -83,6 +81,8 @@ Node* AddNodeEx(NodeContainer *nc, char* label, size_t label_len, double activat
 
 	memcpy(node->label, label, node->labelLength);
 	node->label[node->labelLength] = '\0';
+	char *lp = node->label;
+	lowerAll(&lp, node->labelLength);
 
 	if (hasParent && NodeExists(nc, parent)){
 		dic_add(NodeAt(nc, parent)->childrenIndex, node->label, node->labelLength);
@@ -186,6 +186,15 @@ Node* FindNodeGlobal(NodeContainer *nc, char* target, uint_fast8_t length, size_
 			return NodeAt(nc, i);
 
 	return 0;
+}
+
+void SetupContextNodes(NodeContainer *nc) {
+	time_t now = change_time_now();
+	for (int i = 0; i < CONTEXT_COUNT; i++) {
+		Node *n = AddNodeEx(nc, context_labels[i], strlen(context_labels[i]), NODE_INIT_ACT, NODE_INIT_WGHT, PARENTLESS, 0, FERTILE, now);
+		change_assert(n, "Critical: couldn't initialize context node [%d]\n", i);
+		nc->contexts[i] = n->globalIndex;
+	}
 }
 
 double read_node_activation(NodeContainer *nc, Node* n){

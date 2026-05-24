@@ -4,6 +4,7 @@
 #include "util.h"
 #include "ne/node.h"
 #include "journey.h"
+#include "ne/goal/user-schedule.h"
 
 #define MAX_USERS 8
 #define USER_ID_SIZE 32
@@ -15,12 +16,24 @@ typedef char user_id_like[USER_ID_SIZE];
 typedef struct UserType {
 	String name;
 	user_id_like id;
+	int port;
 
 	// 0 is the default user journey
 	journey_id_like journeys[USER_MAX_JOURNEYS];
 	size_t journey_count;
 
 	NodeContainer nodes;
+
+	struct ScheduleEntry *schedule_table;
+	size_t schedule_len;
+	_Bool schedule_needs_refresh;
+	_Bool goal_health_needs_refresh;
+
+	/* Connection discovery: opt-in only. Description is server-side only,
+	 * never shown to other users. They see only the user's name + the reason
+	 * the central server matched them. */
+	_Bool discoverable;
+	String description;
 } User;
 
 extern User USER_TABLE[MAX_USERS];
