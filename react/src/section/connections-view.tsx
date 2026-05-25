@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CENTRAL_ENDPOINTS } from '../config/server'
+import { CENTRAL_ENDPOINTS, SERVER_ENDPOINTS } from '../config/server'
 
 interface Connection {
   id: string
   state: number  /* 0=proposed, 1=confirmed, 2=declined */
   my_approved: boolean
   their_approved: boolean
+  /* The partner's central user id. Required to attribute shared journeys
+   * to both participants; the matching system already knows it server-side
+   * and exposes it here. */
+  other_id: string
   other_name: string
   reason: string
   proposed_at: number
@@ -17,6 +21,23 @@ interface Message {
   text: string
 }
 
+interface ProposalMessage {
+  _type: 'proposal'
+  proposal_id: string
+  journey_id: string
+  title: string
+  extra_info: string
+}
+
+function parseProposal(text: string): ProposalMessage | null {
+  if (!text.startsWith('{')) return null
+  try {
+    const obj = JSON.parse(text) as Record<string, unknown>
+    if (obj._type === 'proposal') return obj as unknown as ProposalMessage
+  } catch { /* not JSON */ }
+  return null
+}
+
 const STATE_PROPOSED  = 0
 const STATE_CONFIRMED = 1
 const STATE_DECLINED  = 2
@@ -26,14 +47,162 @@ function formatTime(ts: number): string {
   return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
+/* ─── Inline proposal bubble ──────────────────────────────────── */
+
+function ProposalBubble({
+  proposal,
+  sender,
+  at,
+  userId,
+  conn,
+  onRefresh,
+}: {
+  proposal: ProposalMessage
+  sender: string
+  at: number
+  userId: string
+  conn: Connection
+  onRefresh: () => Promise<void>
+}) {
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState(false)
+  const mine = sender === userId
+
+  async function approve() {
+    setBusy(true)
+    try {
+      const res = await fetch(CENTRAL_ENDPOINTS.journeyApproveRoot(proposal.journey_id), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, proposal_id: proposal.proposal_id }),
+      })
+      const data = (await res.json()) as { ok: boolean; both_approved?: boolean; error?: string }
+      if (!res.ok || !data.ok) throw new Error(data.error ?? 'approve failed')
+
+      if (data.both_approved) {
+        await fetch(SERVER_ENDPOINTS.goalCreateSharedRoot, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            journey_id: proposal.journey_id,
+            proposal_id: proposal.proposal_id,
+            title: proposal.title,
+            extra_info: proposal.extra_info,
+          }),
+        })
+      }
+      setDone(true)
+      await onRefresh()
+    } catch (err) {
+      console.error('[proposal] approve:', err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function decline() {
+    setBusy(true)
+    try {
+      await fetch(CENTRAL_ENDPOINTS.journeyDeclineRoot(proposal.journey_id), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, proposal_id: proposal.proposal_id }),
+      })
+      setDone(true)
+      await onRefresh()
+    } catch (err) {
+      console.error('[proposal] decline:', err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+      <div className="max-w-[82%] rounded-2xl border border-neutral-200 bg-white px-4 py-3 shadow-sm">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-neutral-400 mb-1">
+          Goal proposal
+        </p>
+        <p className="text-sm font-semibold text-black">{proposal.title}</p>
+        {proposal.extra_info && (
+          <p className="mt-0.5 text-xs text-neutral-500 line-clamp-3">{proposal.extra_info}</p>
+        )}
+        <p className="text-[10px] text-neutral-400 mt-1">{formatTime(at)}</p>
+        {!mine && !done && (
+          <div className="mt-2 flex gap-2">
+            <button
+              disabled={busy}
+              onClick={() => void decline()}
+              className="rounded-lg border border-neutral-200 px-3 py-1.5 text-xs text-neutral-500 hover:border-red-300 hover:text-red-500 disabled:opacity-40"
+            >Decline</button>
+            <button
+              disabled={busy}
+              onClick={() => void approve()}
+              className="rounded-lg bg-black px-3 py-1.5 text-xs text-white hover:bg-neutral-800 disabled:opacity-40"
+            >Approve</button>
+          </div>
+        )}
+        {mine && !done && (
+          <p className="mt-1.5 text-[10px] italic text-neutral-400">Waiting for {conn.other_name} to respond…</p>
+        )}
+        {done && (
+          <p className="mt-1.5 text-[10px] text-emerald-700">Done</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /* ─── Message thread ───────────────────────────────────────────── */
+
+interface JourneyListItem { id: string; participants: { id: string }[] }
 
 function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: string; onBack: () => void }) {
   const [messages, setMessages] = useState<Message[]>([])
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
+  const [proposeOpen, setProposeOpen] = useState(false)
+  const [proposeTitle, setProposeTitle] = useState('')
+  const [proposeExtraInfo, setProposeExtraInfo] = useState('')
+  const [proposeBusy, setProposeBusy] = useState(false)
+  const [proposeError, setProposeError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const pollRef  = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  async function proposeRootGoal() {
+    const title = proposeTitle.trim()
+    if (!title) { setProposeError('Enter a goal title.'); return }
+    if (!conn.other_id) { setProposeError('Partner id is missing.'); return }
+
+    setProposeBusy(true)
+    setProposeError(null)
+    try {
+      const listRes = await fetch(CENTRAL_ENDPOINTS.journeyList(userId), { cache: 'no-store' })
+      const listData = (await listRes.json()) as { ok: boolean; journeys: JourneyListItem[] }
+      const journey = listData.journeys?.find((j) => j.participants.some((p) => p.id === conn.other_id))
+      if (!journey) {
+        setProposeError('Shared journey not found yet — it may still be setting up.')
+        return
+      }
+
+      const res = await fetch(CENTRAL_ENDPOINTS.journeyProposeRoot(journey.id), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, title, extra_info: proposeExtraInfo.trim() }),
+      })
+      const data = (await res.json()) as { ok: boolean; id?: string; error?: string }
+      if (!res.ok || !data.ok) throw new Error(data.error ?? `propose failed (${res.status})`)
+
+      setProposeOpen(false)
+      setProposeTitle('')
+      setProposeExtraInfo('')
+      await load()
+    } catch (err) {
+      setProposeError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setProposeBusy(false)
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -74,11 +243,51 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
       {/* header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-neutral-100 shrink-0">
         <button onClick={onBack} className="text-xl leading-none text-neutral-400 hover:text-black">←</button>
-        <div>
+        <div className="flex-1 min-w-0">
           <p className="font-semibold text-sm">{conn.other_name}</p>
           <p className="text-[10px] text-neutral-400">Connected {formatTime(conn.proposed_at)}</p>
         </div>
+        <button
+          type="button"
+          className="shrink-0 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+          onClick={() => { setProposeOpen((v) => !v); setProposeError(null) }}
+        >
+          {proposeOpen ? 'Cancel' : '+ Propose goal'}
+        </button>
       </div>
+
+      {/* root-goal proposal drawer */}
+      {proposeOpen && (
+        <div className="border-b border-neutral-100 bg-neutral-50 px-4 py-3 shrink-0 space-y-2">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">
+            Propose a shared root goal with {conn.other_name}
+          </p>
+          <input
+            className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-black bg-white"
+            placeholder="Goal title…"
+            value={proposeTitle}
+            onChange={(e) => setProposeTitle(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !proposeBusy) { e.preventDefault(); void proposeRootGoal() } }}
+            disabled={proposeBusy}
+            autoFocus
+          />
+          <input
+            className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-black bg-white"
+            placeholder="Extra info (optional)…"
+            value={proposeExtraInfo}
+            onChange={(e) => setProposeExtraInfo(e.target.value)}
+            disabled={proposeBusy}
+          />
+          <button
+            className="rounded-lg bg-black px-4 py-2 text-sm text-white disabled:opacity-40"
+            onClick={() => void proposeRootGoal()}
+            disabled={proposeBusy || !proposeTitle.trim()}
+          >
+            {proposeBusy ? 'Proposing…' : 'Propose'}
+          </button>
+          {proposeError && <p className="text-xs text-red-500">{proposeError}</p>}
+        </div>
+      )}
 
       {/* messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2">
@@ -86,13 +295,27 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
           <p className="text-xs text-neutral-400 text-center mt-12">No messages yet. Say hi.</p>
         )}
         {messages.map((m, i) => {
+          const proposal = parseProposal(m.text)
+          if (proposal) {
+            return (
+              <ProposalBubble
+                key={i}
+                proposal={proposal}
+                sender={m.sender}
+                at={m.at}
+                userId={userId}
+                conn={conn}
+                onRefresh={load}
+              />
+            )
+          }
           const mine = m.sender === userId
           return (
             <div key={i} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[78%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed
                 ${mine ? 'bg-black text-white rounded-br-sm' : 'bg-neutral-100 text-black rounded-bl-sm'}`}>
                 <p>{m.text}</p>
-                <p className={`text-[10px] mt-1 ${mine ? 'text-neutral-400' : 'text-neutral-400'}`}>{formatTime(m.at)}</p>
+                <p className="text-[10px] mt-1 text-neutral-400">{formatTime(m.at)}</p>
               </div>
             </div>
           )
@@ -126,12 +349,10 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
 
 function ProposalCard({
   conn,
-  userId,
   onApprove,
   onDecline,
 }: {
   conn: Connection
-  userId: string
   onApprove: () => Promise<void>
   onDecline: () => Promise<void>
 }) {
@@ -324,7 +545,6 @@ export default function ConnectionsView({ userId }: { userId: string }) {
             <ProposalCard
               key={current.id}
               conn={current}
-              userId={userId}
               onApprove={handleApprove}
               onDecline={handleDecline}
             />

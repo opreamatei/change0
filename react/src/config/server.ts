@@ -80,6 +80,8 @@ export const SERVER_ENDPOINTS = {
   get sessionGoals() { return path('/goal/session')() },
   get goalRepair() { return path('/goal/repair')() },
   get goalDrop() { return path('/goal/drop')() },
+  get goalCreateSharedRoot() { return path('/goal/create-shared-root')() },
+  get goalSharedAction() { return path('/goal/shared-action')() },
   get profile() { return path('/profile')() },
   get profileUpdate() { return path('/profile/update')() },
   get middlewareMessage() { return path('/middleware/message')() },
@@ -101,6 +103,19 @@ export const CENTRAL_ENDPOINTS = {
   connectionsDecline: `${CENTRAL_BASE_URL}/connections/decline`,
   messagesSend: `${CENTRAL_BASE_URL}/messages/send`,
   messages: (connectionId: string) => `${CENTRAL_BASE_URL}/messages?connection_id=${encodeURIComponent(connectionId)}`,
+  /*
+   * Shared journeys live on the central server (so both participants see
+   * the same source of truth without sync). /journey/create takes
+   * {name, user_ids:[...]}, /journey/list?user_id=... lists journeys the
+   * user participates in, /journey/<id> returns one with goals + users.
+   */
+  journeyCreate: `${CENTRAL_BASE_URL}/journey/create`,
+  journeyList: (userId: string) => `${CENTRAL_BASE_URL}/journey/list?user_id=${encodeURIComponent(userId)}`,
+  journey: (journeyId: string) => `${CENTRAL_BASE_URL}/journey/${encodeURIComponent(journeyId)}`,
+  journeyProposals:    (journeyId: string) => `${CENTRAL_BASE_URL}/journey/${encodeURIComponent(journeyId)}/proposals`,
+  journeyProposeRoot:  (journeyId: string) => `${CENTRAL_BASE_URL}/journey/${encodeURIComponent(journeyId)}/propose-root`,
+  journeyApproveRoot:  (journeyId: string) => `${CENTRAL_BASE_URL}/journey/${encodeURIComponent(journeyId)}/approve-root`,
+  journeyDeclineRoot:  (journeyId: string) => `${CENTRAL_BASE_URL}/journey/${encodeURIComponent(journeyId)}/decline-root`,
 }
 
 export function buildGoalDecomposeUrl(baseUrl = clientBaseUrl ?? '') {

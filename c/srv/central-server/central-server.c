@@ -127,10 +127,26 @@ static void dispatch(int fd, CentralRequest *req)
 	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/users/select") == 0)   { handle_select_user(fd, req); return; }
 
 	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/journey/create") == 0) { handle_create_shared_journey(fd, req); return; }
+	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/journey/list") == 0)   { handle_list_shared_journeys(fd, query); return; }
 	if (strncmp(clean_path, "/journey/", 9) == 0) {
-		const char *journey_id = clean_path + 9;
-		if (strcmp(req->method, "GET")  == 0) { handle_get_shared_journey(fd, journey_id); return; }
-		if (strcmp(req->method, "POST") == 0) { handle_update_shared_journey(fd, journey_id, req); return; }
+		const char *rest  = clean_path + 9;
+		const char *slash = strchr(rest, '/');
+		if (slash) {
+			char journey_id[64] = {0};
+			size_t id_len = (size_t)(slash - rest);
+			if (id_len >= sizeof(journey_id)) id_len = sizeof(journey_id) - 1;
+			memcpy(journey_id, rest, id_len);
+			const char *sub = slash + 1;
+			if (strcmp(req->method, "GET")  == 0 && strcmp(sub, "proposals")     == 0) { handle_list_root_proposals(fd, journey_id, query); return; }
+			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "propose-root")  == 0) { handle_propose_root_goal(fd, journey_id, req); return; }
+			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "approve-root")  == 0) { handle_approve_root_goal(fd, journey_id, req); return; }
+			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "decline-root")  == 0) { handle_decline_root_goal(fd, journey_id, req); return; }
+			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "finalize-root") == 0) { handle_finalize_root_goal(fd, journey_id, req); return; }
+		} else {
+			const char *journey_id = rest;
+			if (strcmp(req->method, "GET")  == 0) { handle_get_shared_journey(fd, journey_id); return; }
+			if (strcmp(req->method, "POST") == 0) { handle_update_shared_journey(fd, journey_id, req); return; }
+		}
 	}
 
 	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/connections/discoverable") == 0) { handle_conn_discoverable(fd, req); return; }

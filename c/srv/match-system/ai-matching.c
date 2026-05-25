@@ -2,6 +2,69 @@
 
 /* -------- AI-based pair matching -------- */
 
+static void shared_journey_name_fallback(const User *a, const User *b, String *out)
+{
+	const char *na = (a->name.p && a->name.len) ? a->name.p : "Someone";
+	const char *nb = (b->name.p && b->name.len) ? b->name.p : "Someone Else";
+	EmptyString(out);
+	CatTemplateString(out, "Chapter of %s and %s", na, nb);
+}
+
+void ai_generate_shared_journey_name(const User *a, const User *b, String *out)
+{
+	change_assert(a && b && out, "ai_generate_shared_journey_name: NULL argument");
+
+	const char *na = (a->name.p && a->name.len) ? a->name.p : "Person A";
+	const char *nb = (b->name.p && b->name.len) ? b->name.p : "Person B";
+	const char *da = (a->description.p && a->description.len) ? a->description.p : "(no public summary)";
+	const char *db = (b->description.p && b->description.len) ? b->description.p : "(no public summary)";
+
+	String prompt;
+	InitString(&prompt, 1024);
+	CatTemplateString(&prompt, SHARED_JOURNEY_NAME_PROMPT, na, da, nb, db);
+
+	ai_gpt_request req = {0};
+	req.prompt      = prompt;
+	req.model       = AI_OPENAI_MODEL_GPT_5_4_MINI;
+	req.schema_name = "shared_journey_name";
+	InitString(&req.schema, sizeof(SHARED_JOURNEY_NAME_SCHEMA) + 1);
+	CatFixed(&req.schema, SHARED_JOURNEY_NAME_SCHEMA);
+
+	String *raw = ai_openai_call_gpt_request(&req);
+	FreeString(&prompt);
+	FreeString(&req.schema);
+
+	if (!raw) {
+		fprintf(stderr, "[shared-journey-name] OpenAI call returned NULL — using fallback.\n");
+		shared_journey_name_fallback(a, b, out);
+		return;
+	}
+
+	json_value *doc = json_parse(raw->p, raw->len);
+	FreeString(raw);
+	free(raw);
+
+	if (!doc || doc->type != json_object) {
+		fprintf(stderr, "[shared-journey-name] response not a JSON object — using fallback.\n");
+		if (doc) json_value_free(doc);
+		shared_journey_name_fallback(a, b, out);
+		return;
+	}
+
+	json_value *title_v = json_object_get(doc, "title");
+	if (!title_v || title_v->type != json_string || title_v->u.string.length == 0) {
+		fprintf(stderr, "[shared-journey-name] title missing or empty — using fallback.\n");
+		json_value_free(doc);
+		shared_journey_name_fallback(a, b, out);
+		return;
+	}
+
+	EmptyString(out);
+	CatString(out, title_v->u.string.ptr, title_v->u.string.length);
+	json_value_free(doc);
+}
+
+
 void copy_match_result(MatchResult *dst, const MatchResult *src)
 {
 	dst->index = src->index;

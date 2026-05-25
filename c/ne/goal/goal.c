@@ -1387,7 +1387,8 @@ Goal* CreateUserGoal(String *input1, String *input2, const char *journey_id, sta
 	while (!success){
 		EmptyString(&deep_search_result);
 
-		PersonalizeGoal(input1, input2, &deep_search_result, goalId, &feedback_intervention, start_ds_session, journey_id, user);
+		BuildGoalAdaptationPrompt(input1, input2, &feedback_intervention,
+			&deep_search_result, goalId, start_ds_session, journey_id, user);
 
 		goal_emit(goalId, "deep-search-final-recomandation", deep_search_result.p, deep_search_result.len);
 
@@ -1425,7 +1426,7 @@ Goal* CreateUserGoal(String *input1, String *input2, const char *journey_id, sta
 
 // AI assisted function
 _Bool DecomposeGoal(Goal *g, User *user){
-	
+
 	if (g->subgoals_len != 0){
 		printf("Goal seems already decomposed.\n");
 		return 1;
@@ -1438,10 +1439,14 @@ _Bool DecomposeGoal(Goal *g, User *user){
 	String prompt;
 	InitString(&prompt, 2048);
 
-	SetGoalDecompositionPrompt(g, &prompt, change_time_now(), user);
+	_Bool shared = BuildDecomposePrompt(g, &prompt, change_time_now(), user);
+	Journey *journey = shared ? FindJourneyByID(g->journey_id) : NULL;
+	change_assert(!shared || journey, "DecomposeGoal: shared goal [%s] has no resolvable journey.\n", g->title.p);
 
-	String *out = CallGoalDecompositionAI(&prompt);
-	cassert(out, "Goal decomposition returned NULL.\n");
+	String *out = shared
+		? CallSharedGoalDecompositionAI(&prompt)
+		: CallGoalDecompositionAI(&prompt);
+	change_assert(out, "Goal decomposition returned NULL.\n");
 
 	json_value *doc = json_parse(c_str(out), out->len);
 	change_assert(doc && doc->type == json_object, "Goal decomposition result is not a JSON object:\n%s\n", c_str(out));
@@ -1467,8 +1472,33 @@ _Bool DecomposeGoal(Goal *g, User *user){
 		size_t estimated_time = 0;
 		time_t min_pause_to_next = 0;
 		time_t pause_to_next = 0;
+		uint8_t assigned_to = JOURNEY_USER_UNASSIGNED;
 
-		ParseDecompositionSubgoal(item, &title, &extrainfo, &estimated_time, &min_pause_to_next, &pause_to_next);
+		if (shared) {
+			ParseSharedDecompositionSubgoal(item, &title, &extrainfo, &estimated_time,
+				&min_pause_to_next, &pause_to_next, &assigned_to);
+
+			/*
+			 * Enforce the leaf-ownership invariant in the system, not just
+			 * in the prompt: anything larger than SHARED_LEAF_MAX_SECONDS
+			 * is a non-leaf and must be unassigned. Anything still in range
+			 * must reference a real participant index — otherwise we fail
+			 * loud so the AI cannot quietly produce out-of-range owners.
+			 */
+			if ((time_t)estimated_time > (time_t)SHARED_LEAF_MAX_SECONDS) {
+				if (assigned_to != JOURNEY_USER_UNASSIGNED) {
+					printf("[shared-decompose] forcing assigned_to=UNASSIGNED on oversized child [%s] (est=%zu > max=%d)\n",
+						c_str(&title), estimated_time, SHARED_LEAF_MAX_SECONDS);
+					assigned_to = JOURNEY_USER_UNASSIGNED;
+				}
+			} else if (assigned_to != JOURNEY_USER_UNASSIGNED) {
+				change_assert(assigned_to < journey->user_count,
+					"Shared decomposition assigned_to=%u out of range (journey [%s] has %zu participants).\n",
+					(unsigned)assigned_to, journey->id, journey->user_count);
+			}
+		} else {
+			ParseDecompositionSubgoal(item, &title, &extrainfo, &estimated_time, &min_pause_to_next, &pause_to_next);
+		}
 
 		char child_goal_id[33];
 		CreateSubgoalId(g, i, child_goal_id);
@@ -1484,6 +1514,7 @@ _Bool DecomposeGoal(Goal *g, User *user){
 		);
 		child->minPauseToNext = min_pause_to_next;
 		child->pauseToNext = pause_to_next;
+		child->assigned_to = assigned_to;
 
 		subgoal_indexes[i] = child->localIndex;
 
@@ -1617,6 +1648,38 @@ static _Bool can_start_leaf(Goal *g) {
 
 static Goal* first_startable_leaf(Goal *g, User *user) {
 	g = first_unstarted_leaf(g, user);
+	if (!g || !can_start_leaf(g)) return NULL;
+	return g;
+}
+
+/* Like first_unstarted_leaf but only returns leaves where assigned_to == must_own. */
+static Goal* first_unstarted_leaf_owned(Goal *g, User *user, uint8_t must_own) {
+	if (!g) return NULL;
+
+	while (g->subgoals_len == 0 &&
+	       g->required_time >= GOAL_MIN_SECONDS * 2 &&
+	       goal_is_unstarted(g)) {
+		if (!DecomposeGoal(g, user)) break;
+	}
+
+	if (g->subgoals_len == 0) {
+		if (!goal_is_unstarted(g)) return NULL;
+		if (g->assigned_to != must_own) return NULL;
+		return g;
+	}
+
+	for (size_t i = 0; i < g->subgoals_len; i++) {
+		Goal *child = FindGoalFromIndex(g->journey_id, g->subgoals[i]);
+		change_assert(child, "Broken subgoal ref in first_unstarted_leaf_owned.\n");
+		Goal *leaf = first_unstarted_leaf_owned(child, user, must_own);
+		if (leaf) return leaf;
+	}
+
+	return NULL;
+}
+
+static Goal* first_startable_leaf_owned(Goal *g, User *user, uint8_t must_own) {
+	g = first_unstarted_leaf_owned(g, user, must_own);
 	if (!g || !can_start_leaf(g)) return NULL;
 	return g;
 }

@@ -6,6 +6,7 @@
 #include <string.h>
 #include "deep-search-session.h"
 #include "goal-info.h"
+#include "srv/user/journey.h"
 
 static journey_str_func journey_get_title = NULL;
 
@@ -308,4 +309,237 @@ String *CallGoalDecompositionAI(String *prompt)
 	FreeString(&req.schema);
 
 	return result;
+}
+
+String *CallSharedGoalDecompositionAI(String *prompt)
+{
+	ai_gpt_request req = {0};
+
+	req.prompt = *prompt;
+
+	InitString(&req.schema, sizeof(OPENAI_SHARED_GOAL_DECOMPOSITION_SCHEMA_JSON) + 1);
+	CatString(&req.schema, FSTRING_SIZE_PARAMS(OPENAI_SHARED_GOAL_DECOMPOSITION_SCHEMA_JSON));
+
+	req.model = AI_OPENAI_MODEL_GPT_5_4_MINI;
+	req.schema_name = "shared_goal_decomposition";
+
+	printf("\n\n------------------\n\nCalling shared goal decomposition...\n\n------------------\n\n");
+
+	String *result = ai_openai_call_gpt_request(&req);
+	change_assert(result, "OpenAI shared goal decomposition call failed.\n");
+
+	FreeString(&req.schema);
+
+	return result;
+}
+
+void ParseSharedDecompositionSubgoal(
+	json_value *item,
+	String *title,
+	String *extrainfo,
+	size_t *estimated_time,
+	time_t *min_pause_to_next,
+	time_t *pause_to_next,
+	uint8_t *assigned_to
+) {
+	ParseDecompositionSubgoal(item, title, extrainfo, estimated_time, min_pause_to_next, pause_to_next);
+
+	json_value *assigned_json = json_object_get(item, "assigned_to");
+	change_assert(assigned_json && assigned_json->type == json_integer,
+		"Shared subgoal assigned_to missing or invalid.\n");
+	change_assert(assigned_json->u.integer >= 0 && assigned_json->u.integer <= 0xFF,
+		"Shared subgoal assigned_to out of byte range: %lld.\n",
+		(long long)assigned_json->u.integer);
+
+	*assigned_to = (uint8_t)assigned_json->u.integer;
+}
+
+static void set_shared_goal_decomposition_prompt(Goal *g, String *prompt, time_t now, User *user)
+{
+	(void)now;
+	(void)user;
+
+	change_assert(g->journey_id[0],
+		"set_shared_goal_decomposition_prompt: goal [%s] has no journey id.\n", g->title.p);
+	Journey *j = FindJourneyByID(g->journey_id);
+	change_assert(j, "set_shared_goal_decomposition_prompt: journey [%s] not found.\n", g->journey_id);
+	change_assert(j->is_shared, "set_shared_goal_decomposition_prompt: journey [%s] is not shared.\n", j->id);
+	change_assert(j->user_count > 0,
+		"set_shared_goal_decomposition_prompt: shared journey [%s] has no participants.\n", j->id);
+
+	time_t required_time = CalcGoalRequiredTime(g);
+	size_t depth = g->depth;
+	char *title = c_str(&g->title);
+	char *extra_info = c_str(&g->extra_info);
+
+	String completion;  InitString(&completion, 2048);
+	String delay;       InitString(&delay, 1024);
+	String parent_chain; InitString(&parent_chain, 2048);
+	String siblings;    InitString(&siblings, 2048);
+	String uncles;      InitString(&uncles, 2048);
+	String participants; InitString(&participants, 2048);
+
+	SerializeJourneyCompletionAttribution(&completion, 20, j->id);
+	SerializeJourneyDelayAttribution(&delay, 10, j->id);
+	SerializeGoalParentChain(g, &parent_chain);
+	SerializeSlibingGoals(g, &siblings);
+	SerializeGoalParentSlibings(g, &uncles, 1);
+	SerializeJourneyParticipants(&participants, j->id);
+
+	CatTemplateString(prompt, SHARED_DECOMPOSE_GOAL_AI_PROMPT,
+		title,
+		extra_info,
+		(size_t)required_time,
+		depth,
+		completion.p,
+		delay.p,
+		parent_chain.p,
+		siblings.p,
+		uncles.p,
+		participants.p,
+		(size_t)SHARED_LEAF_MAX_SECONDS
+	);
+
+	FreeString(&participants);
+	FreeString(&uncles);
+	FreeString(&siblings);
+	FreeString(&parent_chain);
+	FreeString(&delay);
+	FreeString(&completion);
+}
+
+_Bool BuildDecomposePrompt(Goal *g, String *prompt, time_t now, User *user)
+{
+	change_assert(g, "BuildDecomposePrompt: NULL goal.\n");
+	change_assert(prompt, "BuildDecomposePrompt: NULL prompt buffer.\n");
+
+	Journey *j = g->journey_id[0] ? FindJourneyByID(g->journey_id) : NULL;
+	if (j && j->is_shared) {
+		set_shared_goal_decomposition_prompt(g, prompt, now, user);
+		return 1;
+	}
+
+	SetGoalDecompositionPrompt(g, prompt, now, user);
+	return 0;
+}
+
+/*
+ * The shared adaptation call is the one place where we skip deep search.
+ * To keep the downstream pipeline identical, we constrain the model to the
+ * existing extract-schema JSON shape, then re-emit it as the TITLE /
+ * EXTRA_INFO / ESTIMATED_TIME / PRIORITY section block that ExtractGoalFromText
+ * already understands. That gives us strict validation here and zero
+ * downstream changes.
+ */
+static void run_shared_goal_adaptation(
+	Journey *j,
+	String *input1, String *input2, String *feedback,
+	String *out
+) {
+	String participants; InitString(&participants, 2048);
+	SerializeJourneyParticipants(&participants, j->id);
+
+	const char *jt = j->title.p ? j->title.p : DEFAULT_JOURNEY_TITLE;
+	const char *ji = j->extra_info.p ? j->extra_info.p : DEFAULT_JOURNEY_EXTRA_INFO;
+	const char *fb = (feedback && feedback->p) ? feedback->p : "";
+
+	String prompt;
+	InitString(&prompt,
+		sizeof(SHARED_GOAL_ADAPTATION_PROMPT) + strlen(jt) + strlen(ji) +
+		input1->len + (input2 ? input2->len : 0) + strlen(fb) + participants.len + 256);
+
+	CatTemplateString(&prompt, SHARED_GOAL_ADAPTATION_PROMPT,
+		jt,
+		ji,
+		c_str(input1),
+		input2 ? c_str(input2) : "",
+		fb,
+		participants.p
+	);
+
+	ai_gpt_request req = {0};
+	req.prompt = prompt;
+	req.model  = AI_OPENAI_MODEL_GPT_5_4_MINI;
+	req.schema_name = "shared_goal_adaptation";
+	InitString(&req.schema, sizeof(OPENAI_GOAL_EXTRACT_SCHEMA_JSON) + 1);
+	CatString(&req.schema, FSTRING_SIZE_PARAMS(OPENAI_GOAL_EXTRACT_SCHEMA_JSON));
+
+	printf("\n\n------------------\n\nCalling shared goal adaptation...\n\n------------------\n\n");
+
+	String *result = ai_openai_call_gpt_request(&req);
+	change_assert(result, "OpenAI shared goal adaptation call failed.\n");
+
+	json_value *doc = json_parse(result->p, result->len);
+	change_assert(doc && doc->type == json_object,
+		"Shared goal adaptation result is not a JSON object:\n%s\n", result->p);
+
+	const char *title_s = NULL, *extra_s = NULL;
+	long long est_time = 0;
+	long long priority = 0;
+
+	for (size_t i = 0; i < doc->u.object.length; i++) {
+		json_object_entry e = doc->u.object.values[i];
+		if (!strcmp(e.name, "title")) {
+			change_assert(e.value->type == json_string,
+				"Shared goal adaptation title is not a string.\n");
+			title_s = e.value->u.string.ptr;
+		} else if (!strcmp(e.name, "extrainfo")) {
+			change_assert(e.value->type == json_string,
+				"Shared goal adaptation extrainfo is not a string.\n");
+			extra_s = e.value->u.string.ptr;
+		} else if (!strcmp(e.name, "estimated_time")) {
+			change_assert(e.value->type == json_integer,
+				"Shared goal adaptation estimated_time is not an integer.\n");
+			est_time = e.value->u.integer;
+		} else if (!strcmp(e.name, "priority")) {
+			if (e.value->type == json_integer)
+				priority = e.value->u.integer;
+		}
+	}
+
+	change_assert(title_s && extra_s,
+		"Shared goal adaptation response missing title or extrainfo.\n");
+	change_assert(est_time > 0,
+		"Shared goal adaptation estimated_time must be positive (got %lld).\n", est_time);
+
+	EmptyString(out);
+	ResizeString(out, strlen(title_s) + strlen(extra_s) + 256);
+	CatTemplateString(out,
+		"TITLE: %s\n"
+		"EXTRA_INFO: %s\n"
+		"ESTIMATED_TIME: %lld\n"
+		"PRIORITY: %lld\n",
+		title_s, extra_s, est_time, priority);
+
+	json_value_free(doc);
+	FreeString(&req.schema);
+	FreeString(&prompt);
+	FreeString(&participants);
+	FreeString(result);
+	free(result);
+}
+
+void BuildGoalAdaptationPrompt(
+	String *input1, String *input2, String *feedback,
+	String *out, char *goalId,
+	start_ds_session_like_func start_ds_session,
+	const char *journey_id, User *user
+) {
+	change_assert(input1 && input1->p, "BuildGoalAdaptationPrompt: input1 is NULL.\n");
+	change_assert(out, "BuildGoalAdaptationPrompt: out is NULL.\n");
+	change_assert(goalId, "BuildGoalAdaptationPrompt: goalId is NULL.\n");
+	change_assert(user, "BuildGoalAdaptationPrompt: user is NULL.\n");
+
+	Journey *j = (journey_id && journey_id[0]) ? FindJourneyByID(journey_id) : NULL;
+
+	if (!j || !j->is_shared) {
+		PersonalizeGoal(input1, input2, out, goalId, feedback, start_ds_session, journey_id, user);
+		return;
+	}
+
+	change_assert(j->user_count >= 2,
+		"BuildGoalAdaptationPrompt: shared journey [%s] needs at least 2 participants, has %zu.\n",
+		j->id, j->user_count);
+
+	run_shared_goal_adaptation(j, input1, input2, feedback, out);
 }

@@ -49,7 +49,7 @@ void RefreshSchedule(User *user) {
 
 	for (size_t ji = 0; ji < user->journey_count; ji++) {
 		size_t due_len = 0;
-		Goal **due = GetLeafDueGoals(&due_len, user->journeys[ji]);
+		Goal **due = GetLeafDueGoals(&due_len, user->journeys[ji], user->id);
 		if (due_len == 0) { free(due); continue; }
 
 		all_due = realloc(all_due, (total_due + due_len) * sizeof(Goal *));

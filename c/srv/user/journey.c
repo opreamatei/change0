@@ -54,6 +54,37 @@ void AddGoalToJourney(Journey *j, Goal *g) {
 	j->goals[j->goals_count++] = g;
 }
 
+void AddUserToJourney(Journey *j, const char *user_id, const char *display_name, const char *context_summary) {
+	change_assert(j, "AddUserToJourney: NULL journey.\n");
+	change_assert(user_id && *user_id, "AddUserToJourney: empty user id.\n");
+	change_assert(j->user_count < MAX_JOURNEY_USERS, "AddUserToJourney: journey [%s] user table is full.\n", j->id);
+
+	JourneyUser *ju = &j->users[j->user_count];
+	memset(ju, 0, sizeof(*ju));
+
+	size_t id_len = strlen(user_id);
+	change_assert(id_len < sizeof(ju->id), "AddUserToJourney: user id too long.\n");
+	memcpy(ju->id, user_id, id_len);
+	ju->id[id_len] = '\0';
+
+	size_t name_len = display_name ? strlen(display_name) : 0;
+	InitString(&ju->display_name, name_len + 1);
+	if (name_len) CatString(&ju->display_name, (char *)display_name, name_len);
+
+	size_t ctx_len = context_summary ? strlen(context_summary) : 0;
+	InitString(&ju->context_summary, ctx_len + 1);
+	if (ctx_len) CatString(&ju->context_summary, (char *)context_summary, ctx_len);
+
+	j->user_count++;
+}
+
+size_t FindUserIndexInJourney(const Journey *j, const char *user_id) {
+	if (!j || !user_id || !*user_id) return MAX_JOURNEY_USERS;
+	for (size_t i = 0; i < j->user_count; i++)
+		if (strcmp(j->users[i].id, user_id) == 0) return i;
+	return MAX_JOURNEY_USERS;
+}
+
 void RemoveGoalFromJourneys(Goal *g) {
 	if (!g || !g->journey_id[0] || g->localIndex == 0) return;
 	Journey *j = FindJourneyByID(g->journey_id);
@@ -130,6 +161,15 @@ static const char *GetJourneyExtraInfoByID(const char *id) {
 	return j ? j->extra_info.p : "";
 }
 
+static void free_journey_users(Journey *j) {
+	for (size_t k = 0; k < j->user_count; k++) {
+		JourneyUser *ju = &j->users[k];
+		if (ju->display_name.p)   FreeString(&ju->display_name);
+		if (ju->context_summary.p) FreeString(&ju->context_summary);
+	}
+	j->user_count = 0;
+}
+
 static void FreeJourneyEntry(Journey *j) {
 	for (size_t k = 0; k < j->goals_count; k++) {
 		Goal *g = j->goals[k];
@@ -140,6 +180,7 @@ static void FreeJourneyEntry(Journey *j) {
 		free(g);
 	}
 	j->goals_count = 0;
+	free_journey_users(j);
 	FreeString(&j->title);
 	FreeString(&j->extra_info);
 }
@@ -156,6 +197,26 @@ void FreeJourneySystem(void) {
 	JourneyTableCount = 0;
 }
 
+static void serialize_journey_users(const Journey *j, String *out) {
+	CatFixed(out, "[");
+	for (size_t i = 0; i < j->user_count; i++) {
+		const JourneyUser *ju = &j->users[i];
+		char *esc_id   = json_escape_dup(ju->id);
+		char *esc_name = json_escape_dup(ju->display_name.p   ? ju->display_name.p   : "");
+		char *esc_ctx  = json_escape_dup(ju->context_summary.p ? ju->context_summary.p : "");
+
+		if (i > 0) CatFixed(out, ",");
+		CatTemplateString(out,
+			"{\"id\":\"%s\",\"display_name\":\"%s\",\"context_summary\":\"%s\"}",
+			esc_id, esc_name, esc_ctx);
+
+		free(esc_id);
+		free(esc_name);
+		free(esc_ctx);
+	}
+	CatFixed(out, "]");
+}
+
 void SerializeJourney(const Journey *j, String *out) {
 	char *esc_id    = json_escape_dup(j->id);
 	char *esc_title = json_escape_dup(j->title.p ? j->title.p : "");
@@ -164,11 +225,17 @@ void SerializeJourney(const Journey *j, String *out) {
 	String goals_buf; InitString(&goals_buf, 512);
 	SerializeGoalList((Goal **)j->goals, j->goals_count, &goals_buf);
 
-	ResizeString(out, 64 + j->title.len + j->extra_info.len + goals_buf.len);
-	CatTemplateString(out,
-		"{\"id\":\"%s\",\"title\":\"%s\",\"extra_info\":\"%s\",\"goals\":%s}",
-		esc_id, esc_title, esc_extra, goals_buf.p);
+	String users_buf; InitString(&users_buf, 256);
+	serialize_journey_users(j, &users_buf);
 
+	ResizeString(out, 128 + j->title.len + j->extra_info.len + goals_buf.len + users_buf.len);
+	CatTemplateString(out,
+		"{\"id\":\"%s\",\"title\":\"%s\",\"extra_info\":\"%s\",\"is_shared\":%s,\"users\":%s,\"goals\":%s}",
+		esc_id, esc_title, esc_extra,
+		j->is_shared ? "true" : "false",
+		users_buf.p, goals_buf.p);
+
+	FreeString(&users_buf);
 	FreeString(&goals_buf);
 	free(esc_id);
 	free(esc_title);
@@ -189,6 +256,8 @@ void LoadJourneyFromBuffer(Journey *j, const char *buf, size_t len) {
 	json_value *id_v         = json_object_get(doc, "id");
 	json_value *title_v      = json_object_get(doc, "title");
 	json_value *extra_info_v = json_object_get(doc, "extra_info");
+	json_value *is_shared_v  = json_object_get(doc, "is_shared");
+	json_value *users_v      = json_object_get(doc, "users");
 	json_value *goals_v      = json_object_get(doc, "goals");
 
 	if (id_v && id_v->type == json_string) {
@@ -202,6 +271,34 @@ void LoadJourneyFromBuffer(Journey *j, const char *buf, size_t len) {
 	if (extra_info_v && extra_info_v->type == json_string) {
 		EmptyString(&j->extra_info);
 		CatString(&j->extra_info, extra_info_v->u.string.ptr, extra_info_v->u.string.length);
+	}
+	if (is_shared_v && is_shared_v->type == json_boolean)
+		j->is_shared = is_shared_v->u.boolean ? 1 : 0;
+
+	/* Replace any previously loaded participants. */
+	free_journey_users(j);
+	if (users_v && users_v->type == json_array) {
+		change_assert(users_v->u.array.length <= MAX_JOURNEY_USERS,
+			"LoadJourneyFromBuffer: journey [%s] has too many participants (%u).\n",
+			j->id, users_v->u.array.length);
+
+		for (unsigned ui = 0; ui < users_v->u.array.length; ui++) {
+			json_value *item = users_v->u.array.values[ui];
+			change_assert(item && item->type == json_object,
+				"LoadJourneyFromBuffer: participant %u is not an object.\n", ui);
+
+			const char *uid_s = NULL, *name_s = NULL, *ctx_s = NULL;
+			for (unsigned fi = 0; fi < item->u.object.length; fi++) {
+				json_object_entry *e = &item->u.object.values[fi];
+				if (e->value->type != json_string) continue;
+				if      (!strcmp(e->name, "id"))               uid_s  = e->value->u.string.ptr;
+				else if (!strcmp(e->name, "display_name"))     name_s = e->value->u.string.ptr;
+				else if (!strcmp(e->name, "context_summary"))  ctx_s  = e->value->u.string.ptr;
+			}
+			change_assert(uid_s && *uid_s,
+				"LoadJourneyFromBuffer: participant %u is missing id.\n", ui);
+			AddUserToJourney(j, uid_s, name_s ? name_s : "", ctx_s ? ctx_s : "");
+		}
 	}
 
 	if (!goals_v || goals_v->type != json_array) {
@@ -230,6 +327,7 @@ void LoadJourneyFromBuffer(Journey *j, const char *buf, size_t len) {
 
 		Goal *g = calloc(1, sizeof(Goal));
 		change_assert(g, "Failed to allocate goal while loading journey.\n");
+		g->assigned_to = JOURNEY_USER_UNASSIGNED;
 
 		json_value *subgoals_json = NULL;
 		const char *title = NULL, *extra_info = NULL, *id = NULL;
@@ -269,6 +367,10 @@ void LoadJourneyFromBuffer(Journey *j, const char *buf, size_t len) {
 				g->retry_depth = (size_t)v->u.integer;
 			} else if (!strcmp(e->name, "priority")) {
 				g->priority = (size_t)v->u.integer;
+			} else if (!strcmp(e->name, "assigned_to")) {
+				change_assert(v->u.integer >= 0 && v->u.integer <= 0xFF,
+					"Goal assigned_to out of byte range in journey file.\n");
+				g->assigned_to = (uint8_t)v->u.integer;
 			} else if (!strcmp(e->name, "subgoals")) {
 				subgoals_json = v;
 			}

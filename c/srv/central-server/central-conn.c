@@ -100,12 +100,13 @@ void handle_conn_list(int fd, const char *query)
 		CatTemplateString(&out,
 			"%s{\"id\":\"%s\",\"state\":%d,"
 			"\"my_approved\":%s,\"their_approved\":%s,"
-			"\"other_name\":\"%s\",\"reason\":\"%s\","
+			"\"other_id\":\"%s\",\"other_name\":\"%s\",\"reason\":\"%s\","
 			"\"proposed_at\":%lld}",
 			i == 0 ? "" : ",",
 			c->id, (int)c->state,
 			(am_a ? c->a_approved : c->b_approved) ? "true" : "false",
 			(am_a ? c->b_approved : c->a_approved) ? "true" : "false",
+			other ? other->id : "",
 			other_name ? other_name : "unknown",
 			reason_esc,
 			(long long)c->proposed_at);

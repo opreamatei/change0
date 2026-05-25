@@ -4,6 +4,7 @@ import DailyBriefView from './section/daily-brief-view'
 import ProfileView from './section/profile-view'
 import ChatView from './section/chat-view'
 import ConnectionsView from './section/connections-view'
+import TogetherView from './section/together-view'
 import LoginView, { type LocalUser } from './section/login-view'
 import LoadingOrb from './components/loading-orb'
 import {
@@ -60,13 +61,14 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState('Loading goals from server...')
   const [pendingGoalIndex, setPendingGoalIndex] = useState<number | null>(null)
-  const [goalPanel, setGoalPanel] = useState<'current' | 'schedule' | 'chat' | 'profile' | 'connections'>('current')
+  const [goalPanel, setGoalPanel] = useState<'current' | 'schedule' | 'together' | 'chat' | 'profile' | 'connections'>('current')
   const [celebration, setCelebration] = useState<{ title: string } | null>(null)
   const [dropConfirm, setDropConfirm] = useState<{ goalId: string; title: string } | null>(null)
   const [devTime, setDevTime] = useState<DevTimeState | null>(null)
   const [devTimeBusy, setDevTimeBusy] = useState(false)
   const [localUser, setLocalUser] = useState<LocalUser | null>(() => readStoredLocalUser())
   const [clientBaseUrl, setClientBaseUrlState] = useState<string | null>(() => getClientBaseUrl())
+  const [devPanelOpen, setDevPanelOpen] = useState(false)
   const pendingActionRef = useRef<{ goalId: string; goalIndex: number } | null>(null)
 
   function handleLogin(user: LocalUser, baseUrl: string) {
@@ -417,42 +419,65 @@ function App() {
 
     return (
       <main className="min-h-full bg-white pb-20 px-4 py-8 text-black sm:px-6">
-        <aside className="fixed right-3 top-3 z-50 rounded-xl border border-neutral-200 bg-white/95 px-3 py-3 shadow-sm backdrop-blur sm:right-5 sm:top-5">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-neutral-400">{localUser.name}</p>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="rounded border border-neutral-200 px-2 py-0.5 text-[10px] text-neutral-500 hover:bg-neutral-50"
-            >
-              Sign out
-            </button>
-          </div>
-          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-neutral-400">Dev time</p>
-          <p className="mb-0.5 text-sm font-medium text-black">{devTimeLabel}</p>
-          {devTime && devTime.offsetSeconds !== 0 && (
-            <p className="mb-2 text-xs text-amber-600">+{devTime.offsetSeconds}s offset</p>
-          )}
-          <div className="flex flex-wrap gap-1.5">
-            {([
-              ['Now', () => void refreshDevTime()],
-              ['+10m', () => void runDevTimeAction(600)],
-              ['+1h', () => void runDevTimeAction(3600)],
-              ['+1d', () => void runDevTimeAction(86400)],
-              ['Reset', () => void runDevTimeAction('reset')],
-            ] as [string, () => void][]).map(([label, onClick]) => (
-              <button
-                key={label}
-                type="button"
-                className="rounded border border-neutral-200 px-2 py-0.5 text-xs text-neutral-600 hover:bg-neutral-50 disabled:text-neutral-300"
-                disabled={devTimeBusy}
-                onClick={onClick}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </aside>
+        {devPanelOpen ? (
+          <aside className="fixed right-3 top-3 z-50 rounded-xl border border-neutral-200 bg-white/95 px-3 py-3 shadow-sm backdrop-blur sm:right-5 sm:top-5">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-neutral-400">{localUser.name}</p>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="rounded border border-neutral-200 px-2 py-0.5 text-[10px] text-neutral-500 hover:bg-neutral-50"
+                >
+                  Sign out
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDevPanelOpen(false)}
+                  className="rounded border border-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-500 hover:bg-neutral-50"
+                  aria-label="Close dev panel"
+                  title="Close"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-neutral-400">Dev time</p>
+            <p className="mb-0.5 text-sm font-medium text-black">{devTimeLabel}</p>
+            {devTime && devTime.offsetSeconds !== 0 && (
+              <p className="mb-2 text-xs text-amber-600">+{devTime.offsetSeconds}s offset</p>
+            )}
+            <div className="flex flex-wrap gap-1.5">
+              {([
+                ['Now', () => void refreshDevTime()],
+                ['+10m', () => void runDevTimeAction(600)],
+                ['+1h', () => void runDevTimeAction(3600)],
+                ['+1d', () => void runDevTimeAction(86400)],
+                ['Reset', () => void runDevTimeAction('reset')],
+              ] as [string, () => void][]).map(([label, onClick]) => (
+                <button
+                  key={label}
+                  type="button"
+                  className="rounded border border-neutral-200 px-2 py-0.5 text-xs text-neutral-600 hover:bg-neutral-50 disabled:text-neutral-300"
+                  disabled={devTimeBusy}
+                  onClick={onClick}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </aside>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setDevPanelOpen(true)}
+            className="fixed right-3 top-3 z-50 flex h-8 w-8 items-center justify-center rounded-full border border-neutral-200 bg-white/95 text-xs font-semibold text-neutral-500 shadow-sm backdrop-blur hover:bg-neutral-50 sm:right-5 sm:top-5"
+            aria-label="Open dev panel"
+            title="Dev panel"
+          >
+            ⚙
+          </button>
+        )}
         {dropConfirm && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm">
             <div className="mx-4 w-full max-w-sm rounded-3xl border border-neutral-200 bg-white p-8 text-center shadow-2xl">
@@ -508,6 +533,8 @@ function App() {
             onEndGoal={(targetGoal) => void runGoalAction(targetGoal, 'end')}
             onRepairGoal={(targetGoal, reason) => void runRepairGoal(targetGoal, reason)}
           />
+        ) : goalPanel === 'together' ? (
+          <TogetherView userId={localUser?.id ?? ''} />
         ) : goalPanel === 'profile' ? (
           <ProfileView />
         ) : goalPanel === 'connections' ? (
@@ -519,6 +546,7 @@ function App() {
           {([
             ['current', 'Session'],
             ['schedule', 'Schedule'],
+            ['together', 'Together'],
             ['profile', 'You'],
             ['chat', 'Chat'],
             ['connections', 'People'],

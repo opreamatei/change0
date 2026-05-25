@@ -103,6 +103,7 @@ Goal *CreateGoal(char goalId[], String *input_goal, String *input_extrainfo, siz
 	g->localIndex = 0;
 	g->depth = depth;
 	g->parent = parent_index;
+	g->assigned_to = JOURNEY_USER_UNASSIGNED;
 
 	Journey *j = FindJourneyByID(journey_id);
 	change_assert(j, "CreateGoal: unknown journey. [%s]\n", journey_id);
@@ -215,6 +216,7 @@ void SerializeGoalList(Goal **goals, size_t count, String *buffer) {
 				"\"depth\":%zu,"
 				"\"retry_depth\":%zu,"
 				"\"priority\":%zu,"
+				"\"assigned_to\":%u,"
 				"\"id\":\"%s\","
 				"\"subgoals\":[",
 				esc_title,
@@ -232,6 +234,7 @@ void SerializeGoalList(Goal **goals, size_t count, String *buffer) {
 				g->depth,
 				g->retry_depth,
 				g->priority,
+				(unsigned)g->assigned_to,
 				esc_id
 					);
 
@@ -261,47 +264,59 @@ void SerializeAllGoals(String *buffer, const char *journey_id){
 	free(goals);
 }
 
-Goal** GetLeafDueGoals(size_t *size, const char *journey_id){
+Goal** GetLeafDueGoals(size_t *size, const char *journey_id, const char *user_id){
 
 	*size = 0;
 	size_t goals_len = 0;
 	Goal **goals = GetGoalsSorted(&goals_len, journey_id);
 
-	for (size_t i = 0; i < goals_len; i++){
-		Goal *g = goals[i];
-		if (!g) continue;
-		Goal *next = FindGoalFromIndex(g->journey_id, g->next);
+	Journey *journey = FindJourneyByID(journey_id);
+	_Bool apply_user_filter = 0;
+	size_t my_index = MAX_JOURNEY_USERS;
 
-		_Bool goalStartedNotEnded = (g->start_date && !g->end_date);
-		_Bool goalStartedEnded = (g->start_date && g->end_date);
-		_Bool nextNotStartedNotEnded = g->next && next && !next->start_date && !next->end_date;
-
-		if (goalStartedNotEnded || (goalStartedEnded && nextNotStartedNotEnded))
-			(*size)++;
+	if (journey && journey->is_shared && user_id) {
+		my_index = FindUserIndexInJourney(journey, user_id);
+		change_assert(my_index < journey->user_count,
+			"GetLeafDueGoals: user [%s] is not a participant of shared journey [%s].\n",
+			user_id, journey->id);
+		apply_user_filter = 1;
 	}
 
-	if (*size == 0) {
-		free(goals);
-		return NULL;
-	}
+	for (size_t pass = 0; pass < 2; pass++) {
+		Goal **out = NULL;
+		size_t w = 0;
 
-	Goal **out = malloc(*size * sizeof(Goal*));
-	change_assert(out, "Coudln't allocate memory for due leaf out.\n");
+		if (pass == 1) {
+			if (*size == 0) { free(goals); return NULL; }
+			out = malloc(*size * sizeof(Goal*));
+			change_assert(out, "Couldn't allocate memory for due leaf out.\n");
+		}
 
-	size_t w = 0;
-	for (size_t i = 0; i < goals_len; i++){
-		Goal *g = goals[i];
-		if (!g) continue;
-		Goal *next = FindGoalFromIndex(g->journey_id, g->next);
+		for (size_t i = 0; i < goals_len; i++){
+			Goal *g = goals[i];
+			if (!g) continue;
+			Goal *next = FindGoalFromIndex(g->journey_id, g->next);
 
-		_Bool goalStartedNotEnded = (g->start_date && !g->end_date);
-		_Bool goalStartedEnded = (g->start_date && g->end_date);
-		_Bool nextNotStartedNotEnded = g->next && next && !next->start_date && !next->end_date;
+			_Bool goalStartedNotEnded = (g->start_date && !g->end_date);
+			_Bool goalStartedEnded    = (g->start_date && g->end_date);
+			_Bool nextNotStartedNotEnded = g->next && next && !next->start_date && !next->end_date;
 
-		if (goalStartedNotEnded || (goalStartedEnded && nextNotStartedNotEnded))
-			out[w++] = g;
+			if (!(goalStartedNotEnded || (goalStartedEnded && nextNotStartedNotEnded)))
+				continue;
+
+			if (apply_user_filter && g->subgoals_len == 0 && g->assigned_to != my_index)
+				continue;
+
+			if (pass == 0) (*size)++;
+			else           out[w++] = g;
+		}
+
+		if (pass == 1) {
+			free(goals);
+			return out;
+		}
 	}
 
 	free(goals);
-	return out;
+	return NULL;
 }

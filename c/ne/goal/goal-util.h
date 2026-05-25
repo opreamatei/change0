@@ -2,6 +2,7 @@
 #define GOAL_UTIL_DECLARATIONS
 
 #include <stddef.h>
+#include <stdint.h>
 #include <time.h>
 #include <string.h>
 #include "config.h"
@@ -48,6 +49,15 @@ typedef struct GoalType {
 
 	goalIDType id;
 	char journey_id[33]; /* ID of the journey this root goal belongs to; empty for sub-goals */
+
+	/*
+	 * Shared-journey leaf ownership. JOURNEY_USER_UNASSIGNED (0xFF) means
+	 * either "non-leaf" or "leaf produced before assignment ran". Any other
+	 * value is an index into the parent Journey's `users` table. Solo
+	 * journeys leave this at JOURNEY_USER_UNASSIGNED — the leaf filter
+	 * treats unassigned leaves as belonging to the solo user.
+	 */
+	uint8_t assigned_to;
 } Goal;
 
 /* Second param changed from string goal_id to Goal* so callers pass the pointer directly. */
@@ -105,6 +115,18 @@ Goal *FindGoalByID(goalIDType id, const char *journey_id);
 void SerializeGoalList(Goal **goals, size_t count, String *buffer);
 void SerializeAllGoals(String *buffer, const char *journey_id);
 
-Goal** GetLeafDueGoals(size_t *size, const char *journey_id);
+/*
+ * Returns the due goals for a journey. In solo journeys, behavior is
+ * unchanged (every due goal is returned).
+ *
+ * In shared journeys, `user_id` filters to only those due goals assigned
+ * to that participant. Pass NULL for `user_id` to opt out of the filter
+ * (used by tooling that needs the global view, e.g. central-server export).
+ *
+ * The function asserts when a user_id is supplied for a shared journey
+ * that does not list that user as a participant — silent fallthrough
+ * would mask data-model bugs.
+ */
+Goal** GetLeafDueGoals(size_t *size, const char *journey_id, const char *user_id);
 
 #endif

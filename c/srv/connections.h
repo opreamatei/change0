@@ -123,6 +123,7 @@ void RunMatchingPass(void);
 
 /* per-user queries */
 UserConn *FindUserConn(const char *connection_id);
+UserConn *find_pair(const char *a, const char *b);
 size_t ListConnsForUser(const char *user_id, UserConn **out, size_t out_max);
 
 /* decisions. Both must approve for CONFIRMED. */
@@ -135,5 +136,34 @@ size_t ListConnMessages(const char *connection_id, UserConnMessage **out, size_t
 
 /* lookup other party of a confirmed connection */
 User *OtherUserInConn(const UserConn *c, const char *me);
+
+/*
+ * Synthesize a poetic shared-journey title from two users' public
+ * descriptions and names. Output is short — at most a single line, no
+ * surrounding quotes or punctuation. Falls back to a deterministic
+ * "<name_a> and <name_b>" if the AI call cannot produce a usable line.
+ *
+ * Used when a connection becomes CONFIRMED so the journey appears
+ * without the users having to think of a name themselves.
+ */
+void ai_generate_shared_journey_name(const User *a, const User *b, String *out);
+
+#define SHARED_JOURNEY_NAME_SCHEMA \
+	"{\"type\":\"object\"," \
+	"\"properties\":{\"title\":{\"type\":\"string\"}}," \
+	"\"required\":[\"title\"]," \
+	"\"additionalProperties\":false}"
+
+#define SHARED_JOURNEY_NAME_PROMPT \
+	"You are naming a journey shared between two people who just connected. " \
+	"The title must read like a chapter or arc, not a project. " \
+	"Examples of the right register: 'The Chapter of Luke and Jonas', 'Evolution of Mathew and Jake', " \
+	"'The Year of Anna and Mira', 'How Sam and Theo learn to build'. " \
+	"Person 1 name: %s. Person 1 public summary: %s.\n" \
+	"Person 2 name: %s. Person 2 public summary: %s.\n" \
+	"Pick a single noun-phrase that hints at their shared themes without naming a specific project. " \
+	"Always include both names verbatim. Do not invent new names. " \
+	"Keep it under 60 characters. No surrounding quotes. " \
+	"Return JSON only: {\"title\":\"...\"}."
 
 #endif

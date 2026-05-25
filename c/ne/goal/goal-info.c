@@ -1,4 +1,5 @@
 #include "goal-info.h"
+#include "srv/user/journey.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -263,4 +264,116 @@ void SerializeLeafDueGoals(String *buffer, size_t max, const char *journey_id){
 	}
 
 	free(goals);
+}
+
+/* -------- shared-journey level views -------- */
+
+static const char *journey_user_label(const Journey *j, uint8_t assigned_to)
+{
+	if (assigned_to == JOURNEY_USER_UNASSIGNED) return "unassigned";
+	if (assigned_to >= j->user_count)           return "out-of-range";
+	const String *name = &j->users[assigned_to].display_name;
+	return (name->p && name->len) ? name->p : "unnamed";
+}
+
+void SerializeJourneyCompletionAttribution(String *buffer, size_t max, const char *journey_id)
+{
+	change_assert(buffer, "SerializeJourneyCompletionAttribution: NULL buffer.\n");
+
+	Journey *j = FindJourneyByID(journey_id);
+	if (!j) {
+		CatFixed(buffer, "No journey found for completion attribution.\n");
+		return;
+	}
+
+	size_t total = 0;
+	Goal **goals = GetGoalsSorted(&total, journey_id);
+	size_t emitted = 0;
+
+	for (size_t idx = total; idx-- > 0 && emitted < max;) {
+		Goal *g = goals[idx];
+		if (!g) continue;
+		if (g->subgoals_len != 0) continue;
+		if (!g->start_date || !g->end_date) continue;
+
+		long long actual    = (long long)(g->end_date - g->start_date);
+		long long estimated = (long long)CalcGoalRequiredTime(g);
+
+		CatTemplateString(buffer,
+			"{\"goal_title\":\"%s\",\"assigned_to_index\":%u,\"assigned_to_name\":\"%s\","
+			"\"estimated_time\":%lld,\"actual_duration\":%lld}\n",
+			g->title.p ? g->title.p : "",
+			(unsigned)g->assigned_to,
+			journey_user_label(j, g->assigned_to),
+			estimated, actual);
+		emitted++;
+	}
+
+	if (emitted == 0)
+		CatFixed(buffer, "No completed leaves yet in this shared journey.\n");
+
+	free(goals);
+}
+
+void SerializeJourneyDelayAttribution(String *buffer, size_t max, const char *journey_id)
+{
+	change_assert(buffer, "SerializeJourneyDelayAttribution: NULL buffer.\n");
+
+	Journey *j = FindJourneyByID(journey_id);
+	if (!j) {
+		CatFixed(buffer, "No journey found for delay attribution.\n");
+		return;
+	}
+
+	size_t total = 0;
+	Goal **goals = GetGoalsSorted(&total, journey_id);
+	time_t now = change_time_now();
+	size_t emitted = 0;
+
+	for (size_t idx = 0; idx < total && emitted < max; idx++) {
+		Goal *g = goals[idx];
+		if (!g) continue;
+		if (g->subgoals_len != 0) continue;
+		if (!g->start_date || g->end_date) continue;
+
+		time_t required = CalcGoalRequiredTime(g);
+		time_t elapsed  = now - g->start_date;
+		if (elapsed <= required) continue;
+
+		long long overdue = (long long)(elapsed - required);
+		CatTemplateString(buffer,
+			"{\"goal_title\":\"%s\",\"assigned_to_index\":%u,\"assigned_to_name\":\"%s\","
+			"\"estimated_time\":%lld,\"elapsed_time\":%lld,\"overdue_by\":%lld}\n",
+			g->title.p ? g->title.p : "",
+			(unsigned)g->assigned_to,
+			journey_user_label(j, g->assigned_to),
+			(long long)required, (long long)elapsed, overdue);
+		emitted++;
+	}
+
+	if (emitted == 0)
+		CatFixed(buffer, "No participant is currently late on a shared leaf.\n");
+
+	free(goals);
+}
+
+void SerializeJourneyParticipants(String *buffer, const char *journey_id)
+{
+	change_assert(buffer, "SerializeJourneyParticipants: NULL buffer.\n");
+
+	Journey *j = FindJourneyByID(journey_id);
+	if (!j || j->user_count == 0) {
+		CatFixed(buffer, "No participants registered.\n");
+		return;
+	}
+
+	for (size_t i = 0; i < j->user_count; i++) {
+		const JourneyUser *ju = &j->users[i];
+		const char *name = (ju->display_name.p && ju->display_name.len) ? ju->display_name.p : "unnamed";
+		const char *ctx  = (ju->context_summary.p && ju->context_summary.len) ? ju->context_summary.p : "";
+		if (*ctx)
+			CatTemplateString(buffer, "User %zu (%s): %s\n", i, name, ctx);
+		else
+			CatTemplateString(buffer, "User %zu (%s): (no public summary available)\n", i, name);
+	}
 }

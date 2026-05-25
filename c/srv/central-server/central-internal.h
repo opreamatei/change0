@@ -20,6 +20,23 @@ void free_shared_journeys(void);
 void handle_get_shared_journey(int fd, const char *journey_id);
 void handle_create_shared_journey(int fd, CentralRequest *req);
 void handle_update_shared_journey(int fd, const char *journey_id, CentralRequest *req);
+/* List shared journeys for the user passed as ?user_id=... in the query string. */
+void handle_list_shared_journeys(int fd, const char *query);
+
+/*
+ * Auto-create a shared journey for a pair of users once their connection is
+ * approved by both. Idempotent: if a journey already lists both users, the
+ * existing one is returned. The journey title is AI-generated from the two
+ * public profiles. Returns the journey id (caller must not free).
+ */
+const char *EnsureSharedJourneyForPair(const char *user_a_id, const char *user_b_id);
+
+/* Root-goal proposal endpoints — propose_root_goal.c (or shared-journey.c). */
+void handle_propose_root_goal(int fd, const char *journey_id, CentralRequest *req);
+void handle_approve_root_goal(int fd, const char *journey_id, CentralRequest *req);
+void handle_decline_root_goal(int fd, const char *journey_id, CentralRequest *req);
+void handle_finalize_root_goal(int fd, const char *journey_id, CentralRequest *req);
+void handle_list_root_proposals(int fd, const char *journey_id, const char *query);
 
 /* user handlers — central-users.c */
 void handle_list_users(int fd);

@@ -47,6 +47,8 @@ void handle_post_goal_repair(int fd, const HttpRequest *req, User *user);
 void handle_get_goal_events(int fd, const char *full_path);
 void handle_get_session_goals(int fd, User *user);
 void handle_get_schedule(int fd, User *user);
+void handle_post_goal_shared_action(int fd, const HttpRequest *req, User *user);
+void handle_post_goal_create_shared_root(int fd, const HttpRequest *req, User *user);
 
 /* ── middleware + research handlers (middleware-handlers.c) ── */
 void handle_post_research_start(int fd, const HttpRequest *req, User *user);

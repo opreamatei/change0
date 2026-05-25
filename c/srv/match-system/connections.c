@@ -1,5 +1,9 @@
 #include "internal.h"
 
+/* Defined in central-server/shared-journey.c; forward-declared here to break
+ * the circular header dependency (central-server links connections). */
+const char *EnsureSharedJourneyForPair(const char *user_a_id, const char *user_b_id);
+
 UserConn ConnectionTable[MAX_CONNECTIONS];
 size_t ConnectionCount = 0;
 UserConnMessage MessageTable[MAX_MESSAGES];
@@ -75,9 +79,28 @@ _Bool ApproveConn(const char *connection_id, const char *user_id)
 		return 0;
 	}
 
+	ConnState previous = c->state;
 	recompute_state(c);
 	persist_connection(c);
+
+	/*
+	 * On the transition into CONFIRMED we materialize the shared journey.
+	 * Idempotent — EnsureSharedJourneyForPair returns the existing id if
+	 * the pair already has one. Done while holding conn_lock to avoid two
+	 * approvals racing into duplicate journeys.
+	 */
+	_Bool just_confirmed = (previous != CONN_CONFIRMED && c->state == CONN_CONFIRMED);
+	char a_copy[USER_ID_SIZE], b_copy[USER_ID_SIZE];
+	if (just_confirmed) {
+		strncpy(a_copy, c->a, sizeof(a_copy) - 1); a_copy[sizeof(a_copy) - 1] = '\0';
+		strncpy(b_copy, c->b, sizeof(b_copy) - 1); b_copy[sizeof(b_copy) - 1] = '\0';
+	}
+
 	pthread_mutex_unlock(&conn_lock);
+
+	if (just_confirmed)
+		(void)EnsureSharedJourneyForPair(a_copy, b_copy);
+
 	return 1;
 }
 

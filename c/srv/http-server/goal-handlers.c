@@ -52,6 +52,27 @@ static Goal *find_goal_by_id_string(const char *goal_id, const char *journey_id)
 	return found;
 }
 
+/* Search all user journeys for a goal by id. Sets *out_journey to the owning journey.
+ * Shared journeys are fetched from central first so state is current. */
+static Goal *find_goal_any_journey(const char *goal_id, User *user, Journey **out_journey)
+{
+	if (out_journey) *out_journey = NULL;
+	if (!goal_id || !goal_id[0] || !user) return NULL;
+
+	for (size_t ji = 0; ji < user->journey_count; ji++) {
+		const char *jid = user->journeys[ji];
+		Journey *j = FindJourneyByID(jid);
+		if (!j) continue;
+		if (j->is_shared) FetchSharedJourney(jid);
+		Goal *g = find_goal_by_id_string(goal_id, jid);
+		if (g) {
+			if (out_journey) *out_journey = j;
+			return g;
+		}
+	}
+	return NULL;
+}
+
 static Goal *find_goal_from_request_body(const HttpRequest *req, char out_goal_id[GOAL_ID_LEN + 1], const char *journey_id)
 {
 	int   goal_index = 0;
@@ -360,7 +381,17 @@ static void handle_post_goal_status_action(
 		return;
 	}
 
+	/* Try personal journey first; fall back to all user journeys for shared leaves. */
+	Journey *owning_journey = NULL;
+	char raw_id[256] = {0};
+	if (!json_get_string_field(req->body, "goal-id", raw_id, sizeof(raw_id)))
+		if (!json_get_string_field(req->body, "goalId",  raw_id, sizeof(raw_id)))
+			json_get_string_field(req->body, "id",      raw_id, sizeof(raw_id));
 	goal = find_goal_from_request_body(req, goal_id, user->journeys[0]);
+	if (!goal && raw_id[0])
+		goal = find_goal_any_journey(raw_id, user, &owning_journey);
+	if (goal && goal_id[0] == '\0')
+		goal_id_to_cstr(goal, goal_id);
 	if (!goal) {
 		http_send_json(fd, 404, "Not Found",
 			"{\"ok\":false,\"error\":\"goal_not_found\"}");
@@ -384,6 +415,8 @@ static void handle_post_goal_status_action(
 	time_t root_end_before = root ? root->end_date : 0;
 
 	action_time = action_fn(goal, user);
+	if (owning_journey && owning_journey->is_shared)
+		PushJourneyToCentral(owning_journey);
 	SaveUser(user);
 
 	event_len = snprintf(event_body, sizeof(event_body),
@@ -534,7 +567,6 @@ void handle_post_goal_create(int fd, const HttpRequest *req, User *user)
 
 void handle_post_goal_start(int fd, const HttpRequest *req, User *user)
 {
-	char  orig_goal_id[GOAL_ID_LEN + 1];
 	char  leaf_id[GOAL_ID_LEN + 1];
 	char  event_body[256];
 	char  response_body[256];
@@ -547,7 +579,34 @@ void handle_post_goal_start(int fd, const HttpRequest *req, User *user)
 		return;
 	}
 
-	Goal *orig = find_goal_from_request_body(req, orig_goal_id, user->journeys[0]);
+	char  raw_goal_id[256] = {0};
+	Journey *owning_journey = NULL;
+
+	if (!(json_get_string_field(req->body, "goal-id", raw_goal_id, sizeof(raw_goal_id)) ||
+	      json_get_string_field(req->body, "goalId",  raw_goal_id, sizeof(raw_goal_id)) ||
+	      json_get_string_field(req->body, "id",      raw_goal_id, sizeof(raw_goal_id)))) {
+		/* Fall back to index-based lookup in personal journey */
+		int goal_index = 0;
+		if (json_get_int_field(req->body, "goalIndex",  &goal_index) ||
+		    json_get_int_field(req->body, "localIndex", &goal_index) ||
+		    json_get_int_field(req->body, "goal-index", &goal_index)) {
+			if (goal_index <= 0) {
+				http_send_json(fd, 400, "Bad Request",
+					"{\"ok\":false,\"error\":\"invalid_goal_index\"}");
+				return;
+			}
+			Goal *g = FindGoalFromIndex(user->journeys[0], (size_t)goal_index);
+			if (g) goal_id_to_cstr(g, raw_goal_id);
+		}
+	}
+
+	if (!raw_goal_id[0]) {
+		http_send_json(fd, 400, "Bad Request",
+			"{\"ok\":false,\"error\":\"missing_goal_identifier\"}");
+		return;
+	}
+
+	Goal *orig = find_goal_any_journey(raw_goal_id, user, &owning_journey);
 	if (!orig) {
 		http_send_json(fd, 404, "Not Found",
 			"{\"ok\":false,\"error\":\"goal_not_found\"}");
@@ -560,6 +619,9 @@ void handle_post_goal_start(int fd, const HttpRequest *req, User *user)
 			"{\"ok\":false,\"error\":\"goal_not_startable\"}");
 		return;
 	}
+
+	if (owning_journey && owning_journey->is_shared)
+		PushJourneyToCentral(owning_journey);
 
 	goal_id_to_cstr(leaf, leaf_id);
 
@@ -692,6 +754,175 @@ void handle_post_goal_repair(int fd, const HttpRequest *req, User *user)
 
 	http_send_json(fd, 200, "OK", out.p);
 	FreeString(&out);
+}
+
+void handle_post_goal_shared_action(int fd, const HttpRequest *req, User *user)
+{
+	char journey_id[64] = {0};
+	char goal_id[256]   = {0};
+	char action[16]     = {0};
+
+	if (!req->body) {
+		http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_body\"}");
+		return;
+	}
+
+	if (!json_get_string_field(req->body, "journey_id", journey_id, sizeof(journey_id)) || !journey_id[0] ||
+	    !json_get_string_field(req->body, "action",     action,     sizeof(action))     || !action[0]     ||
+	    !json_get_string_field(req->body, "goal_id",    goal_id,    sizeof(goal_id))    || !goal_id[0]) {
+		http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_fields\"}");
+		return;
+	}
+
+	Journey *j = FetchSharedJourney(journey_id);
+	if (!j) {
+		http_send_json(fd, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"journey_fetch_failed\"}");
+		return;
+	}
+
+	Goal *goal = find_goal_by_id_string(goal_id, journey_id);
+	if (!goal) {
+		http_send_json(fd, 404, "Not Found", "{\"ok\":false,\"error\":\"goal_not_found\"}");
+		return;
+	}
+
+	char out_id[GOAL_ID_LEN + 1];
+	time_t at = 0;
+
+	if (strcmp(action, "start") == 0) {
+		Goal *leaf = StartGoalDeepFromGoal(goal, user);
+		if (!leaf) {
+			http_send_json(fd, 409, "Conflict", "{\"ok\":false,\"error\":\"goal_not_startable\"}");
+			return;
+		}
+		goal_id_to_cstr(leaf, out_id);
+		at = leaf->start_date;
+	} else if (strcmp(action, "end") == 0) {
+		if (!goal->start_date || goal->end_date) {
+			http_send_json(fd, 409, "Conflict", "{\"ok\":false,\"error\":\"goal_not_endable\"}");
+			return;
+		}
+		goal_id_to_cstr(goal, out_id);
+		at = EndGoalFromGoal(goal, user);
+	} else if (strcmp(action, "reassign") == 0) {
+		if (goal->start_date) {
+			http_send_json(fd, 409, "Conflict", "{\"ok\":false,\"error\":\"cannot_reassign_started_goal\"}");
+			return;
+		}
+		char target_user_id[64] = {0};
+		if (!json_get_string_field(req->body, "target_user_id", target_user_id, sizeof(target_user_id)) || !target_user_id[0]) {
+			http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_target_user_id\"}");
+			return;
+		}
+		size_t target_idx = FindUserIndexInJourney(j, target_user_id);
+		if (target_idx >= j->user_count) {
+			http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"target_not_a_participant\"}");
+			return;
+		}
+		goal->assigned_to = (uint8_t)target_idx;
+		goal_id_to_cstr(goal, out_id);
+	} else {
+		http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"unknown_action\"}");
+		return;
+	}
+
+	PushJourneyToCentral(j);
+	SaveUser(user);
+
+	char response[128];
+	snprintf(response, sizeof(response), "{\"ok\":true,\"goal-id\":\"%s\",\"at\":%lld}", out_id, (long long)at);
+	http_send_json(fd, 200, "OK", response);
+}
+
+void handle_post_goal_create_shared_root(int fd, const HttpRequest *req, User *user)
+{
+	char journey_id[64]   = {0};
+	char proposal_id[64]  = {0};
+	char title[256]       = {0};
+	char extra_info[2048] = {0};
+
+	if (!req->body) {
+		http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_body\"}");
+		return;
+	}
+
+	if (!json_get_string_field(req->body, "journey_id",  journey_id,  sizeof(journey_id))  || !journey_id[0] ||
+	    !json_get_string_field(req->body, "proposal_id", proposal_id, sizeof(proposal_id)) || !proposal_id[0] ||
+	    !json_get_string_field(req->body, "title",       title,       sizeof(title))       || !title[0]) {
+		http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_fields\"}");
+		return;
+	}
+	json_get_string_field(req->body, "extra_info", extra_info, sizeof(extra_info));
+
+	Journey *j = FetchSharedJourney(journey_id);
+	if (!j) {
+		http_send_json(fd, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"journey_fetch_failed\"}");
+		return;
+	}
+
+	String title_s, extra_info_s;
+	InitString(&title_s,      strlen(title)      + 1);
+	InitString(&extra_info_s, strlen(extra_info) + 1);
+	CatString(&title_s,      title,      strlen(title));
+	CatString(&extra_info_s, extra_info, strlen(extra_info));
+
+	Goal *goal = CreateUserGoal(&title_s, &extra_info_s, journey_id, start_ds_session, user);
+
+	FreeString(&extra_info_s);
+	FreeString(&title_s);
+
+	if (!goal) {
+		http_send_json(fd, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"goal_create_failed\"}");
+		return;
+	}
+
+	/* Decompose immediately so participants see their leaf assignments right away.
+	 * Failure is non-fatal — the root goal still exists and can be decomposed later. */
+	if (!DecomposeGoal(goal, user))
+		fprintf(stderr, "[create-shared-root] decomposition failed — root goal exists but has no leaves.\n");
+
+	/* Assign any leaf the AI left unassigned round-robin across participants. */
+	if (j->user_count >= 2) {
+		size_t slot = 0;
+		for (size_t i = 0; i < j->goals_count; i++) {
+			Goal *g = j->goals[i];
+			if (!g || g->subgoals_len > 0) continue;
+			if (g->assigned_to == JOURNEY_USER_UNASSIGNED)
+				g->assigned_to = (uint8_t)(slot % j->user_count);
+			slot++;
+		}
+	}
+
+	PushJourneyToCentral(j);
+	SaveUser(user);
+
+	char goal_id_str[GOAL_ID_LEN + 1];
+	goal_id_to_cstr(goal, goal_id_str);
+
+	/* Notify central that the proposal is finalized */
+	char finalize_body[256];
+	snprintf(finalize_body, sizeof(finalize_body),
+		"{\"proposal_id\":\"%s\",\"goal_id\":\"%s\"}", proposal_id, goal_id_str);
+	size_t fb_len = strlen(finalize_body);
+
+	int cfd = central_connect();
+	if (cfd >= 0) {
+		char hdr[512];
+		int hlen = snprintf(hdr, sizeof(hdr),
+			"POST /journey/%s/finalize-root HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+			"Content-Type: application/json\r\nContent-Length: %zu\r\n"
+			"Connection: close\r\n\r\n",
+			journey_id, fb_len);
+		http_send_all(cfd, hdr, (size_t)hlen);
+		http_send_all(cfd, finalize_body, fb_len);
+		close(cfd);
+	} else {
+		fprintf(stderr, "[create-shared-root] central finalize call failed — proposal not marked.\n");
+	}
+
+	char response[128];
+	snprintf(response, sizeof(response), "{\"ok\":true,\"goal-id\":\"%s\"}", goal_id_str);
+	http_send_json(fd, 200, "OK", response);
 }
 
 void handle_get_session_goals(int fd, User *user)

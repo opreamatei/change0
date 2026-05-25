@@ -11,6 +11,22 @@
 #define DEFAULT_JOURNEY_TITLE     "Journey"
 #define DEFAULT_JOURNEY_EXTRA_INFO "default journey"
 
+/*
+ * Shared-journey leaf normalization.
+ *
+ * SHARED_LEAF_MAX_SECONDS is the upper bound on a leaf goal in a shared
+ * journey. Goals above this size are treated as non-leaves: they must be
+ * decomposed further before being assigned to a specific user. The AI is
+ * told the same threshold so it self-limits leaf-level assignments.
+ *
+ * MAX_JOURNEY_USERS caps the size of the per-journey user table. Two is the
+ * usual case (matched pair); the slack is intentional so the system can
+ * accept future small-group journeys without re-allocating.
+ */
+#define SHARED_LEAF_MAX_SECONDS (60 * 30)
+#define MAX_JOURNEY_USERS 4
+#define JOURNEY_USER_UNASSIGNED 0xFF
+
 /* Modify the project root directory to yours, here is mine */
 #define PROJECT_ROOT "/home/nita/dev/c/change2/"
 
@@ -699,6 +715,97 @@
 "Example invalid endings: ESTIMATED_TIME: about two weeks ; ESTIMATED_TIME: 1209600 seconds ; missing ESTIMATED_TIME ; putting the duration only inside EXTRA_INFO. " \
 "Do not mix sections. Keep each section explicit, clean, and unambiguous. " \
 "Do not place labels such as Main findings, Relevant contexts, Strongest graph structures, or similar text inside TITLE."
+
+/*
+ * Shared-journey variant of GOAL_ADAPTATION_PROMPT.
+ *
+ * Placeholder mapping (in order):
+ *  1) journey_title
+ *  2) journey_extra_info
+ *  3) goal_title             (user-suggested title for the shared goal)
+ *  4) goal_extra_info        (user-suggested extra info)
+ *  5) server_retry_feedback
+ *  6) participants_block     (already-rendered "User 0: ... \n User 1: ..." block,
+ *                             one line per participant, drawn from each user's
+ *                             stored central profile description)
+ *
+ * The participants block is the *only* user-personalization source for shared
+ * journeys: there is no second deep-search pass. The AI must pick a subject
+ * that fits both participants without forcing it.
+ */
+#define SHARED_GOAL_ADAPTATION_PROMPT \
+"This goal is being created within the SHARED journey titled [%s], described as: [%s]. " \
+"A shared journey is a thematic collection of goals worked on jointly by two or more participants. " \
+"Adapt the proposed goal [%s], with extrainfo [%s], so it fits ALL listed participants. " \
+"Server retry feedback and hard constraints for this regeneration: [%s]. Treat this feedback as mandatory correction guidance, not optional context. " \
+"Participants and their public profile summaries:\n[%s]\n" \
+"Selection rule: pick a concrete subject where every listed participant can contribute meaningfully without forcing the fit. " \
+"If one participant's profile would have to be stretched or ignored to make the subject work, narrow the subject instead. " \
+"Do not pick a subject only one participant cares about. Do not pick a vague subject just because it covers everyone. " \
+"Prefer subjects with naturally distinct contribution areas, so later leaf goals can be split between participants without artificial assignment. " \
+"Do not name participants in TITLE or EXTRA_INFO. EXTRA_INFO should describe the project, the intended outcome, why it fits the group as a whole, and the main scope limits. " \
+"Estimate the total elapsed time required to reach the goal jointly. ESTIMATED_TIME must be a positive integer in seconds, calendar-like elapsed duration. " \
+"PRIORITY is a plain integer 0-5 for the root goal only. " \
+"Your final answer is consumed by a strict downstream extractor. " \
+"Do not output an essay, investigation report headings, bullet lists, or any sections other than the 4 fields below. " \
+"Produce exactly these sections in this exact order, and nothing else before or after:\n" \
+"TITLE: <concise, specific shared goal title; name the exact project>\n" \
+"EXTRA_INFO: <compact practical context: exact project shape, intended outcome, why it fits the group, and major scope limits>\n" \
+"ESTIMATED_TIME: <integer number of seconds>\n" \
+"PRIORITY: <integer from 0 to 5>"
+
+/*
+ * Shared-journey variant of DECOMPOSE_GOAL_AI_PROMPT.
+ *
+ * Placeholder mapping (in order):
+ *  1) goal_title
+ *  2) goal_extra_info
+ *  3) goal_required_time_seconds      (zu)
+ *  4) current_depth                    (zu)
+ *  5) journey_completion_attribution   (who completed which leaves so far)
+ *  6) journey_delay_attribution        (who is currently late, on which leaves)
+ *  7) parent_goal_chain
+ *  8) current_goal_siblings
+ *  9) parent_sibling_goals
+ * 10) participants_block               ("User 0: ... \n User 1: ..." )
+ * 11) shared_leaf_max_seconds          (zu)
+ *
+ * No per-user deep-search context is passed: shared decomposition relies on
+ * the participants block plus the journey-level history serializers in
+ * goal-info.c. This keeps prompt size bounded and avoids confusing the model
+ * with two long personalization reports.
+ */
+#define SHARED_DECOMPOSE_GOAL_AI_PROMPT \
+"You are a SHARED-journey goal-decomposition agent. Your job is to split one existing shared goal into a clear ordered sequence of child goals worked on jointly by the listed participants. " \
+"The goal to decompose is titled [%s], with extrainfo [%s]. " \
+"The goal estimated time is [%zu] seconds. Treat this as an approximate scale signal, not an exact budget. " \
+"The current depth is [%zu]. Generated child goals will be one level deeper. " \
+"Journey-level completion attribution (who finished which leaves so far): [%s]. " \
+"Journey-level delay attribution (who is currently late, on which leaves): [%s]. Use this to recalibrate pacing: if one participant has been delaying, prefer smaller leaves on their side. " \
+"Parent goal chain with extrainfo: [%s]. " \
+"Sibling goals of the current goal: [%s]. " \
+"Sibling goals of the parent goal (uncle goals): [%s]. " \
+"Participants (index : public summary):\n[%s]\n" \
+"Decompose the current goal into child goals as a strictly linear sequence of steps. " \
+"Dependencies are strictly sequential: child 2 depends on child 1, and so on. The array order defines execution order. " \
+"Do NOT create branching, parallel, optional, conditional, or circular dependencies. " \
+"Each child goal must reduce scope compared to the parent goal while remaining meaningful. " \
+"Estimated_time values are required, must be positive integers, and represent approximate real-world elapsed seconds. " \
+"As a strong default, avoid child goals above roughly 3 to 5 hours of elapsed effort. " \
+"min_pause_to_next and pause_to_next are required non-negative integers; min_pause_to_next must be <= pause_to_next. " \
+"Use these on the first n-1 child goals; the last child goal should usually use 0 for both. " \
+"Leaf assignment rules (assigned_to field): " \
+"- assigned_to is an integer index into the participants list (0 for User 0, 1 for User 1, ...). " \
+"- The unassigned sentinel is 255. " \
+"- Set assigned_to to a participant index ONLY when estimated_time is at or below [%zu] seconds (the shared-journey leaf threshold) AND the child goal is concrete enough to be a single-user atomic task. " \
+"- For any larger or composite child, set assigned_to to 255 — it will be decomposed further before being assigned. " \
+"- When assigning, pick the participant whose public summary best fits the specific task. Balance assignments across the full set of leaves so no participant is consistently idle or overloaded. " \
+"- Never force an assignment that ignores the participant fit just to balance counts. If the balance and the fit conflict, prefer fit and let the next decomposition correct the balance. " \
+"All child goals together must fully cover the parent goal intent without introducing unrelated work. " \
+"Each title must be concise and action-oriented. " \
+"Each extrainfo must include: scope, success condition, boundary relative to siblings, and handoff to next child. " \
+"Return JSON only with exactly this structure and no extra text: " \
+"{\"subgoals\":[{\"title\":\"string\",\"extrainfo\":\"string\",\"estimated_time\":1,\"min_pause_to_next\":0,\"pause_to_next\":0,\"assigned_to\":255}]}"
 
 // This model is responsible for extracting what the above model produces, I don't think it need to be modified.
 #define GOAL_JSON_EXTRACT_PROMPT \

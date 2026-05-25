@@ -42,7 +42,9 @@ static int handle_request(int fd, const HttpRequest *req, User *user)
 	if (GET("/middleware/session"))     { handle_get_middleware_session(fd, req->path, user);return 0; }
 	if (GET("/chat/sessions"))          { handle_get_chat_sessions(fd, user);                return 0; }
 
-	if (POST("/goal/create"))           { handle_post_goal_create(fd, req, user);            return 0; }
+	if (POST("/goal/create"))               { handle_post_goal_create(fd, req, user);                  return 0; }
+	if (POST("/goal/create-shared-root"))   { handle_post_goal_create_shared_root(fd, req, user);      return 0; }
+	if (POST("/goal/shared-action"))        { handle_post_goal_shared_action(fd, req, user);            return 0; }
 	if (POST("/goal/start"))            { handle_post_goal_start(fd, req, user);             return 0; }
 	if (POST("/goal/end"))              { handle_post_goal_end(fd, req, user);               return 0; }
 	if (POST("/goal/decompose"))        { handle_post_goal_decompose(fd, req, user);         return 0; }

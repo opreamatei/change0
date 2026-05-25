@@ -1,0 +1,169 @@
+%% CHANGE architecture and endpoint map
+flowchart LR
+    subgraph ROOT["Repository Root"]
+        MAIN["c/main.c<br/>process entry"]
+        DOCS["docs.md<br/>technical documentation"]
+        APP["react/src/App.tsx<br/>tab routing"]
+    end
+
+    subgraph CLI_DIR["c/cli"]
+        UI["ui.c / ui.h<br/>interactive operator shell"]
+    end
+
+    subgraph USER_DIR["c/srv/user"]
+        USER_MGMT["user-management.c / .h<br/>user table, disk paths, save/load"]
+        JOURNEY["journey.c / .h<br/>solo + shared journeys"]
+        USER_IO["user-io.c<br/>meta file persistence"]
+    end
+
+    subgraph NE_DIR["c/ne"]
+        NODE["node.c / node.h<br/>graph primitives"]
+        GRAPH_ENGINE["graph/graph-engine.c<br/>activation + weight refresh"]
+        GRAPH_EXPORT["graph/graph-export.c<br/>graph JSON export"]
+        INPUT_PROC["input/input-processor.c<br/>text -> graph ingestion"]
+        JSON_TO_GRAPH["input/json-to-graph.c<br/>merge AI graph output"]
+        SEARCH["search/*.c<br/>deep search + graph traversal"]
+        GOAL["goal/*.c<br/>goal tree, scheduling, repair"]
+        PROFILE["profile/user-profile.c<br/>profile history + derived memory"]
+    end
+
+    subgraph SRV_DIR["c/srv"]
+        HTTP_UTIL["http-util.c<br/>HTTP parsing + JSON helpers"]
+        HTTP_SERVER["http-server/*.c<br/>per-user server + SSE"]
+        CENTRAL_SERVER["central-server/*.c<br/>central API + shared journeys"]
+        MATCH["match-system/*.c<br/>connection matching + chat"]
+    end
+
+    subgraph LIB_DIR["c/lib"]
+        JSONP["jsonp/json.c<br/>JSON parser"]
+        OPENAI["openai/openai.c<br/>Responses API client"]
+        MOCKOPENAI["openai/mockopenai.c<br/>fixture generator"]
+        UTIL["util/util.c<br/>strings, files, helpers"]
+        TIME["util/time-util.c<br/>logical time offset"]
+        HASHDICT["hd/hashdict.c<br/>small dictionary"]
+    end
+
+    subgraph REACT_DIR["react/src"]
+        REACT_APP["App.tsx<br/>navigation and tabs"]
+        CONFIG["config/server.ts<br/>endpoint constants"]
+        CONN_VIEW["section/connections-view.tsx<br/>proposals + chat"]
+        TOGETHER_VIEW["section/together-view.tsx<br/>shared journeys"]
+    end
+
+    subgraph USER_ENDPOINTS["Per-user server endpoints"]
+        U1["GET /graph<br/>serialize graph"]
+        U2["POST /graph/export<br/>save graph-copy.json"]
+        U3["GET /graph/load<br/>reload graph-copy.json"]
+        U4["POST /message<br/>ingest text into graph"]
+        U5["POST /research/start<br/>start deep search"]
+        U6["GET /research/events<br/>SSE stream"]
+        U7["POST /middleware/message<br/>run middleware AI"]
+        U8["POST /middleware/permission<br/>resolve permission"]
+        U9["GET /middleware/events<br/>SSE stream"]
+        U10["GET /middleware/session<br/>session snapshot"]
+        U11["GET /chat/sessions<br/>saved sessions"]
+        U12["GET /profile<br/>profile summary"]
+        U13["POST /profile/update<br/>edit profile/matching fields"]
+        U14["GET /goal/list<br/>goals"]
+        U15["POST /goal/create<br/>create goal"]
+        U16["POST /goal/start<br/>start goal"]
+        U17["POST /goal/end<br/>end goal"]
+        U18["POST /goal/decompose<br/>decompose goal"]
+        U19["POST /goal/repair<br/>repair branch"]
+        U20["POST /goal/drop<br/>drop tree"]
+        U21["POST /goal/export<br/>save goals"]
+        U22["GET /goal/load<br/>load goals"]
+        U23["GET /goal/session<br/>session goals"]
+        U24["GET /goal/events<br/>SSE stream"]
+        U25["GET /schedule<br/>derived schedule"]
+        U26["GET /dev/time<br/>inspect logical time"]
+        U27["POST /dev/time/advance<br/>advance logical time"]
+        U28["POST /dev/time/reset<br/>reset logical time"]
+    end
+
+    subgraph CENTRAL_ENDPOINTS["Central server endpoints"]
+        C1["GET /users<br/>list users"]
+        C2["POST /users/create<br/>create user"]
+        C3["POST /users/select<br/>select user + launch client server"]
+        C4["POST /journey/create<br/>create shared journey"]
+        C5["GET /journey/list?user_id=...<br/>list shared journeys"]
+        C6["GET /journey/<id><br/>fetch shared journey"]
+        C7["POST /journey/<id><br/>update shared journey"]
+        C8["POST /connections/discoverable<br/>opt in to matching"]
+        C9["POST /connections/private<br/>opt out of matching"]
+        C10["POST /connections/description<br/>update match description"]
+        C11["GET /connections?user_id=...<br/>list connections"]
+        C12["POST /connections/approve<br/>approve proposal"]
+        C13["POST /connections/decline<br/>decline proposal"]
+        C14["POST /messages/send<br/>send connection message"]
+        C15["GET /messages?connection_id=...<br/>list messages"]
+    end
+
+    MAIN --> CLI_DIR
+    MAIN --> SRV_DIR
+    MAIN --> NE_DIR
+    MAIN --> REACT_DIR
+
+    UI --> USER_MGMT
+    UI --> JOURNEY
+    UI --> GRAPH_ENGINE
+    UI --> INPUT_PROC
+    UI --> SEARCH
+    UI --> GOAL
+    UI --> HTTP_SERVER
+    UI --> CENTRAL_SERVER
+
+    USER_MGMT --> USER_IO
+    USER_MGMT --> GRAPH_EXPORT
+    USER_MGMT --> JSON_TO_GRAPH
+    JOURNEY --> USER_IO
+    JOURNEY --> GOAL
+    JOURNEY --> CENTRAL_SERVER
+
+    NODE --> UTIL
+    GRAPH_ENGINE --> NODE
+    GRAPH_EXPORT --> NODE
+    INPUT_PROC --> OPENAI
+    INPUT_PROC --> JSONP
+    JSON_TO_GRAPH --> JSONP
+    SEARCH --> NODE
+    SEARCH --> OPENAI
+    GOAL --> SEARCH
+    GOAL --> PROFILE
+    GOAL --> OPENAI
+    PROFILE --> UTIL
+    PROFILE --> JSONP
+
+    HTTP_SERVER --> HTTP_UTIL
+    HTTP_SERVER --> GOAL
+    HTTP_SERVER --> GRAPH_EXPORT
+    HTTP_SERVER --> INPUT_PROC
+    HTTP_SERVER --> PROFILE
+    HTTP_SERVER --> SEARCH
+    HTTP_SERVER --> JSONP
+    HTTP_SERVER --> TIME
+
+    CENTRAL_SERVER --> HTTP_UTIL
+    CENTRAL_SERVER --> USER_MGMT
+    CENTRAL_SERVER --> JOURNEY
+    CENTRAL_SERVER --> MATCH
+    CENTRAL_SERVER --> GOAL
+    CENTRAL_SERVER --> JSONP
+    CENTRAL_SERVER --> UTIL
+
+    MATCH --> OPENAI
+    MATCH --> JSONP
+    MATCH --> UTIL
+
+    CONFIG --> CENTRAL_ENDPOINTS
+    CONFIG --> USER_ENDPOINTS
+    REACT_APP --> CONFIG
+    REACT_APP --> CONN_VIEW
+    REACT_APP --> TOGETHER_VIEW
+
+    HTTP_UTIL --> JSONP
+    HTTP_UTIL --> UTIL
+    OPENAI --> UTIL
+    MOCKOPENAI --> OPENAI
+    TIME --> UTIL
+    HASHDICT --> UTIL
