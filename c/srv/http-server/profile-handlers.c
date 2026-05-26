@@ -108,5 +108,7 @@ void handle_post_profile_update(int fd, const HttpRequest *req, User *user)
 
 	json_get_string_field(req->body, "value", value, sizeof(value));
 	UserProfileSetDerivedField(user, key, value);
+	if (strcmp(key, "work_day_start") == 0 || strcmp(key, "daily_work_hours") == 0)
+		user->schedule_needs_refresh = 1;
 	http_send_json(fd, 200, "OK", "{\"ok\":true}");
 }

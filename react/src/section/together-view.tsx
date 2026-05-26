@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { CENTRAL_ENDPOINTS, SERVER_ENDPOINTS } from '../config/server'
+import ChatView from './chat-view'
+import ConnectionsView from './connections-view'
 
 /*
  * "Together" — the shared-journey companion to the solo Session tab.
@@ -539,7 +541,7 @@ function JourneyCard({ summary, userId }: { summary: JourneyListItem; userId: st
   )
 }
 
-export default function TogetherView({ userId }: { userId: string }) {
+function JourneysContent({ userId }: { userId: string }) {
   const [journeys, setJourneys] = useState<JourneyListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -623,5 +625,44 @@ export default function TogetherView({ userId }: { userId: string }) {
 
       {error && <p className="mt-4 text-xs text-red-400">{error}</p>}
     </section>
+  )
+}
+
+const TAB_LABELS = { together: 'Together', chat: 'Chat', people: 'People' } as const
+type Tab = keyof typeof TAB_LABELS
+
+export default function TogetherView({ userId }: { userId: string }) {
+  const [tab, setTab] = useState<Tab>('together')
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex flex-shrink-0 border-b border-white/[0.06]">
+        {(Object.keys(TAB_LABELS) as Tab[]).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={`flex-1 py-3 text-sm font-medium transition-colors ${
+              tab === t
+                ? 'text-white border-b-2 border-white'
+                : 'text-white/35 border-b-2 border-transparent'
+            }`}
+          >
+            {TAB_LABELS[t]}
+          </button>
+        ))}
+      </div>
+      {tab === 'chat' ? (
+        <ChatView key={userId} />
+      ) : tab === 'people' ? (
+        <div className="flex-1 overflow-y-auto no-scrollbar">
+          <ConnectionsView userId={userId} />
+        </div>
+      ) : (
+        <div className="flex-1 overflow-y-auto no-scrollbar">
+          <JourneysContent userId={userId} />
+        </div>
+      )}
+    </div>
   )
 }

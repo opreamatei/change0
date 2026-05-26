@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import CurrentGoalsView from './section/current-goals-view'
 import DailyBriefView from './section/daily-brief-view'
-import ProfileView from './section/profile-view'
-import ChatView from './section/chat-view'
-import ConnectionsView from './section/connections-view'
+import SettingsView from './section/settings-view'
 import TogetherView from './section/together-view'
 import LoginView, { type LocalUser } from './section/login-view'
 import LoadingOrb from './components/loading-orb'
@@ -61,7 +59,7 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState('Loading goals from server...')
   const [pendingGoalIndex, setPendingGoalIndex] = useState<number | null>(null)
-  const [goalPanel, setGoalPanel] = useState<'current' | 'schedule' | 'together' | 'chat' | 'profile' | 'connections'>('current')
+  const [goalPanel, setGoalPanel] = useState<'current' | 'schedule' | 'together' | 'settings'>('current')
   const [celebration, setCelebration] = useState<{ title: string } | null>(null)
   const [dropConfirm, setDropConfirm] = useState<{ goalId: string; title: string } | null>(null)
   const [devTime, setDevTime] = useState<DevTimeState | null>(null)
@@ -542,21 +540,15 @@ function App() {
           />
         ) : goalPanel === 'together' ? (
           <TogetherView userId={localUser?.id ?? ''} />
-        ) : goalPanel === 'profile' ? (
-          <ProfileView />
-        ) : goalPanel === 'connections' ? (
-          <ConnectionsView userId={localUser?.id ?? ''} />
-        ) : (
-          <ChatView key={localUser?.id ?? 'default'} />
-        )}
+        ) : goalPanel === 'settings' ? (
+          <SettingsView />
+        ) : null}
         <nav className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-[#2a2a2a] bg-[#111]/95 backdrop-blur">
           {([
             ['current', 'Session'],
             ['schedule', 'Schedule'],
             ['together', 'Together'],
-            ['profile', 'You'],
-            ['chat', 'Chat'],
-            ['connections', 'People'],
+            ['settings', 'Settings'],
           ] as [typeof goalPanel, string][]).map(([panel, label]) => (
             <button
               key={panel}
