@@ -68,16 +68,16 @@ function FieldCard({ field }: { field: ProfileField }) {
   const isLong = field.value.length > 120
 
   return (
-    <div className="rounded-2xl border border-neutral-100 bg-white px-4 py-3">
-      <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-neutral-400">{label}</p>
-      <p className={`text-sm text-black leading-relaxed ${!expanded && isLong ? 'line-clamp-2' : ''}`}>
+    <div className="rounded-2xl border border-white/10 bg-[#111] px-4 py-3">
+      <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-white/40">{label}</p>
+      <p className={`text-sm text-white leading-relaxed ${!expanded && isLong ? 'line-clamp-2' : ''}`}>
         {field.value}
       </p>
       {isLong && (
         <button
           type="button"
           onClick={() => setExpanded((x) => !x)}
-          className="mt-1 text-[11px] text-neutral-400 hover:text-neutral-600"
+          className="mt-1 text-[11px] text-white/40 hover:text-white/55"
         >
           {expanded ? 'Show less' : 'Show more'}
         </button>
@@ -125,9 +125,9 @@ function EditRow({
 
   return (
     <div className="flex items-center gap-3">
-      <label className="w-36 shrink-0 text-xs text-neutral-500">{label}</label>
+      <label className="w-36 shrink-0 text-xs text-white/55">{label}</label>
       <input
-        className="flex-1 rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-black"
+        className="flex-1 rounded-xl border border-[#2a2a2a] px-3 py-2 text-sm outline-none focus:border-white"
         type={inputType}
         value={value}
         placeholder={placeholder}
@@ -136,9 +136,9 @@ function EditRow({
       />
       <button
         className={`shrink-0 rounded-xl px-3 py-2 text-xs font-medium transition-colors ${
-          saved ? 'bg-green-50 text-green-600' :
-          dirty ? 'bg-black text-white' :
-          'bg-neutral-100 text-neutral-400 cursor-default'
+          saved ? 'bg-green-950/30 text-green-400' :
+          dirty ? 'bg-[#111] text-white' :
+          'bg-[#222] text-white/40 cursor-default'
         }`}
         onClick={() => void save()}
         disabled={saving || !dirty}
@@ -202,11 +202,11 @@ export default function ProfileView() {
   const dsSummary = fields.find((f) => f.key === 'last_ds_summary')
 
   if (loading) return (
-    <div className="flex items-center justify-center py-20 text-sm text-neutral-400">Loading…</div>
+    <div className="flex items-center justify-center py-20 text-sm text-white/40">Loading…</div>
   )
 
   if (error) return (
-    <div className="py-8 text-center text-sm text-red-500">{error}</div>
+    <div className="py-8 text-center text-sm text-red-400">{error}</div>
   )
 
   return (
@@ -215,21 +215,21 @@ export default function ProfileView() {
       {/* header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-black">{userName || 'You'}</h2>
-          <p className="text-xs text-neutral-400">Settings & what the AI knows about you</p>
+          <h2 className="text-lg font-semibold text-white">{userName || 'You'}</h2>
+          <p className="text-xs text-white/40">Settings & what the AI knows about you</p>
         </div>
         <button
           type="button"
           onClick={() => void refresh()}
-          className="rounded border border-neutral-200 px-2.5 py-1 text-xs text-neutral-500 hover:bg-neutral-50"
+          className="rounded border border-[#2a2a2a] px-2.5 py-1 text-xs text-white/55 hover:bg-[#1a1a1a]"
         >
           Refresh
         </button>
       </div>
 
       {/* identity settings */}
-      <section className="rounded-2xl border border-neutral-100 bg-white px-5 py-4 space-y-3">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-neutral-400">Identity</p>
+      <section className="rounded-2xl border border-white/10 bg-[#111] px-5 py-4 space-y-3">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40">Identity</p>
         <EditRow
           label="Name"
           value={userName}
@@ -246,8 +246,8 @@ export default function ProfileView() {
       </section>
 
       {/* schedule settings */}
-      <section className="rounded-2xl border border-neutral-100 bg-white px-5 py-4 space-y-3">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-neutral-400">Work schedule</p>
+      <section className="rounded-2xl border border-white/10 bg-[#111] px-5 py-4 space-y-3">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40">Work schedule</p>
         <EditRow
           label="Day start"
           value={fieldVal('work_day_start')}
@@ -264,12 +264,12 @@ export default function ProfileView() {
       </section>
 
       {/* connection discoverability */}
-      <section className="rounded-2xl border border-neutral-100 bg-white px-5 py-4 space-y-3">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-neutral-400">Connections</p>
+      <section className="rounded-2xl border border-white/10 bg-[#111] px-5 py-4 space-y-3">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40">Connections</p>
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm font-medium">Open to meeting people</p>
-            <p className="text-[11px] text-neutral-400 mt-0.5">
+            <p className="text-[11px] text-white/40 mt-0.5">
               The server looks for compatible people. Who you are stays private — they only see why you might get along.
             </p>
           </div>
@@ -281,7 +281,7 @@ export default function ProfileView() {
               setDiscoverable(next)
             }}
             className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${
-              discoverable ? 'bg-black' : 'bg-neutral-200'
+              discoverable ? 'bg-[#34c759]' : 'bg-[#333]'
             }`}
           >
             <span
@@ -302,7 +302,7 @@ export default function ProfileView() {
       {/* AI-observed profile fields */}
       {profileFields.length > 0 && (
         <section>
-          <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-neutral-400 px-1">
+          <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-white/40 px-1">
             Observed by AI
           </p>
           <div className="space-y-2">
@@ -315,12 +315,12 @@ export default function ProfileView() {
 
       {/* last AI research */}
       {(dsTask || dsSummary) && (
-        <section className="rounded-2xl border border-neutral-100 bg-neutral-50 px-4 py-4">
-          <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-neutral-400">
+        <section className="rounded-2xl border border-white/10 bg-[#1a1a1a] px-4 py-4">
+          <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-white/40">
             Last AI research
           </p>
           {dsTask && (
-            <p className="mb-2 text-xs font-medium text-neutral-500">Q: {dsTask.value}</p>
+            <p className="mb-2 text-xs font-medium text-white/55">Q: {dsTask.value}</p>
           )}
           {dsSummary && <FieldCard field={{ key: 'last_ds_summary', value: dsSummary.value }} />}
         </section>
@@ -359,12 +359,12 @@ function DescriptionEditor({
 
   return (
     <div className="space-y-2">
-      <p className="text-xs text-neutral-500">
+      <p className="text-xs text-white/55">
         A short portrait of who you are — how you think, what you care about, what draws you.
         Only the server sees this text. The other person only ever sees a reason you might get along.
       </p>
       <textarea
-        className="w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-black resize-none"
+        className="w-full rounded-xl border border-[#2a2a2a] px-3 py-2 text-sm outline-none focus:border-white resize-none"
         rows={3}
         value={value}
         onChange={(e) => setValue(e.target.value)}
@@ -372,9 +372,9 @@ function DescriptionEditor({
       />
       <button
         className={`rounded-xl px-4 py-2 text-xs font-medium transition-colors ${
-          saved ? 'bg-green-50 text-green-600' :
-          dirty ? 'bg-black text-white' :
-          'bg-neutral-100 text-neutral-400 cursor-default'
+          saved ? 'bg-green-950/30 text-green-400' :
+          dirty ? 'bg-[#111] text-white' :
+          'bg-[#222] text-white/40 cursor-default'
         }`}
         onClick={() => void save()}
         disabled={saving || !dirty}

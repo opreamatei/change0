@@ -24,9 +24,9 @@ function StateBadge({ goal }: { goal: Goal }) {
   const state = inferGoalState(goal)
 
   const styles: Record<string, string> = {
-    started: 'bg-green-50 text-green-700 border-green-200',
-    finished: 'bg-neutral-100 text-neutral-400 border-neutral-200',
-    idle: 'bg-neutral-50 text-neutral-500 border-neutral-200',
+    started: 'bg-green-950/30 text-green-400 border-green-900',
+    finished: 'bg-[#222] text-white/40 border-[#2a2a2a]',
+    idle: 'bg-[#1a1a1a] text-white/55 border-[#2a2a2a]',
   }
 
   const labels: Record<string, string> = {
@@ -36,7 +36,7 @@ function StateBadge({ goal }: { goal: Goal }) {
   }
 
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${styles[state] ?? 'bg-neutral-100 text-neutral-500'}`}>
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${styles[state] ?? 'bg-[#222] text-white/55'}`}>
       {state === 'started' && <span className="size-1.5 rounded-full bg-green-500" />}
       {labels[state] ?? state}
     </span>
@@ -77,14 +77,14 @@ function ActionButtons({
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50"
+          className="rounded border border-[#333] px-3 py-1.5 text-sm text-white/70 hover:bg-[#1a1a1a]"
           onClick={() => onNavigate(goal.id)}
         >
           Open
         </button>
         <button
           type="button"
-          className="rounded border border-green-300 bg-green-50 px-3 py-1.5 text-sm text-green-700 hover:bg-green-100 disabled:border-neutral-200 disabled:bg-transparent disabled:text-neutral-300"
+          className="rounded border border-green-800 bg-green-950/30 px-3 py-1.5 text-sm text-green-400 hover:bg-green-900/30 disabled:border-[#2a2a2a] disabled:bg-transparent disabled:text-white/30"
           onClick={() => onStartGoal(goal)}
           disabled={isPending || state !== 'idle' || !canStart}
         >
@@ -92,7 +92,7 @@ function ActionButtons({
         </button>
         <button
           type="button"
-          className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50 disabled:border-neutral-200 disabled:text-neutral-300"
+          className="rounded border border-[#333] px-3 py-1.5 text-sm text-white/70 hover:bg-[#1a1a1a] disabled:border-[#2a2a2a] disabled:text-white/30"
           onClick={() => onEndGoal(goal)}
           disabled={isPending || state !== 'started'}
         >
@@ -100,7 +100,7 @@ function ActionButtons({
         </button>
         <button
           type="button"
-          className="rounded border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm text-amber-700 hover:bg-amber-100 disabled:border-neutral-200 disabled:bg-transparent disabled:text-neutral-300"
+          className="rounded border border-amber-800 bg-amber-950/30 px-3 py-1.5 text-sm text-amber-400 hover:bg-amber-900/30 disabled:border-[#2a2a2a] disabled:bg-transparent disabled:text-white/30"
           onClick={() => setRepairOpen((v) => !v)}
           disabled={isPending}
         >
@@ -111,7 +111,7 @@ function ActionButtons({
         <div className="flex gap-2">
           <input
             type="text"
-            className="flex-1 rounded border border-neutral-300 px-3 py-1.5 text-sm text-black placeholder-neutral-400 focus:border-amber-400 focus:outline-none"
+            className="flex-1 rounded border border-[#333] px-3 py-1.5 text-sm text-white placeholder-white/40 focus:border-amber-700 focus:outline-none"
             placeholder="Describe what needs to change..."
             value={repairReason}
             onChange={(e) => setRepairReason(e.target.value)}
@@ -120,7 +120,7 @@ function ActionButtons({
           />
           <button
             type="button"
-            className="rounded border border-amber-400 bg-amber-50 px-3 py-1.5 text-sm text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+            className="rounded border border-amber-700 bg-amber-950/30 px-3 py-1.5 text-sm text-amber-400 hover:bg-amber-900/30 disabled:opacity-50"
             onClick={submitRepair}
             disabled={!repairReason.trim()}
           >
@@ -128,7 +128,7 @@ function ActionButtons({
           </button>
           <button
             type="button"
-            className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50"
+            className="rounded border border-[#333] px-3 py-1.5 text-sm text-white/55 hover:bg-[#1a1a1a]"
             onClick={() => { setRepairOpen(false); setRepairReason('') }}
           >
             Cancel
@@ -161,20 +161,20 @@ function GoalCard({
   const state = inferGoalState(goal)
 
   return (
-    <article className={`rounded-xl border px-5 py-4 ${highlight ? 'border-neutral-300 bg-neutral-50' : 'border-neutral-200 bg-white'}`}>
+    <article className={`rounded-xl border px-5 py-4 ${highlight ? 'border-[#333] bg-[#1a1a1a]' : 'border-[#2a2a2a] bg-[#111]'}`}>
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="mb-1 text-xs font-medium uppercase tracking-widest text-neutral-400">{label}</p>
-          <h3 className="text-base font-semibold leading-snug text-black">{goal.title}</h3>
+          <p className="mb-1 text-xs font-medium uppercase tracking-widest text-white/40">{label}</p>
+          <h3 className="text-base font-semibold leading-snug text-white">{goal.title}</h3>
         </div>
         <StateBadge goal={goal} />
       </div>
 
       {goal.extraInfo && (
-        <p className="mb-3 text-sm leading-relaxed text-neutral-600">{goal.extraInfo}</p>
+        <p className="mb-3 text-sm leading-relaxed text-white/55">{goal.extraInfo}</p>
       )}
 
-      <div className="mb-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500">
+      <div className="mb-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/55">
         <span>Duration: {formatGoalDuration(goal.requiredTime)}</span>
         {state === 'started' && goal.startDate
           ? <span>Started: {formatGoalDate(goal.startDate)}</span>
@@ -218,16 +218,16 @@ export default function GoalViewer(props: GoalViewerProps) {
       <header>
         <button
           type="button"
-          className="mb-2 flex items-center gap-1 text-sm text-neutral-400 hover:text-neutral-700"
+          className="mb-2 flex items-center gap-1 text-sm text-white/40 hover:text-white/70"
           onClick={() => onNavigate(outerParentGoal ? outerParentGoal.id : ROOT_GOAL_ID)}
         >
           ← {parentGoal ? 'Parent' : 'Root'}
         </button>
-        <h1 className="text-2xl font-bold text-black">
+        <h1 className="text-2xl font-bold text-white">
           {parentGoal ? parentGoal.title : 'All goals'}
         </h1>
         {statusMessage && (
-          <p className="mt-1 text-sm text-neutral-500">{statusMessage}</p>
+          <p className="mt-1 text-sm text-white/55">{statusMessage}</p>
         )}
       </header>
 
@@ -246,14 +246,14 @@ export default function GoalViewer(props: GoalViewerProps) {
 
       <div>
         <div className="mb-3 flex items-baseline gap-2">
-          <h2 className="text-lg font-semibold text-black">
+          <h2 className="text-lg font-semibold text-white">
             {parentGoal ? 'Subgoals' : 'Goals'}
           </h2>
-          <span className="text-sm text-neutral-400">{childrenGoals.length}</span>
+          <span className="text-sm text-white/40">{childrenGoals.length}</span>
         </div>
 
         {childrenGoals.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-neutral-200 px-5 py-8 text-center text-sm text-neutral-400">
+          <p className="rounded-xl border border-dashed border-[#2a2a2a] px-5 py-8 text-center text-sm text-white/40">
             No subgoals.
           </p>
         ) : (

@@ -168,6 +168,7 @@ function App() {
         refreshGoals(),
         refreshDevTime(),
       ])
+      fetch(SERVER_ENDPOINTS.sessionGoals, { cache: 'no-store' }).catch(() => {})
 
       if (cancelled) {
         return
@@ -229,6 +230,11 @@ function App() {
         return
       }
 
+      if (envelope.type === 'goal_created') {
+        void refreshGoals({ silent: true })
+        return
+      }
+
       if (envelope.type === 'goal_started' || envelope.type === 'goal_ended') {
         setGoals((currentGoals) => applyGoalEvent(currentGoals, goalIdFromEvent, payload))
       }
@@ -280,6 +286,7 @@ function App() {
       } else {
         await endGoalOnServer(targetGoal)
         await refreshGoals({ silent: true })
+        fetch(SERVER_ENDPOINTS.sessionGoals, { cache: 'no-store' }).catch(() => {})
         setMessage('Goal ended.')
       }
 
@@ -382,15 +389,15 @@ function App() {
 
   if (loading) {
     return (
-      <main className="relative min-h-full overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(0,0,0,0.05),_transparent_42%),linear-gradient(180deg,_#ffffff_0%,_#f7f7f5_100%)] px-4 py-8 text-black sm:px-6">
+      <main className="relative min-h-full overflow-hidden bg-[#0a0a0a] px-4 py-8 text-white sm:px-6">
         <div className="pointer-events-none absolute inset-0 opacity-70">
-          <div className="absolute left-1/2 top-16 h-72 w-72 -translate-x-1/2 rounded-full bg-neutral-200/40 blur-3xl" />
-          <div className="absolute bottom-12 right-16 h-56 w-56 rounded-full bg-neutral-300/35 blur-3xl" />
+          <div className="absolute left-1/2 top-16 h-72 w-72 -translate-x-1/2 rounded-full bg-white/5 blur-3xl" />
+          <div className="absolute bottom-12 right-16 h-56 w-56 rounded-full bg-white/5 blur-3xl" />
         </div>
         <section className="relative mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-5xl items-center justify-center p-2">
-          <div className="w-full max-w-md rounded-3xl border border-neutral-200 bg-white/80 p-8 shadow-[0_20px_70px_rgba(0,0,0,0.08)] backdrop-blur">
+          <div className="w-full max-w-md rounded-3xl border border-[#2a2a2a] bg-[#111]/80 p-8 shadow-[0_20px_70px_rgba(0,0,0,0.08)] backdrop-blur">
             <LoadingOrb label={message} />
-            <p className="mt-4 text-center text-sm text-neutral-500">
+            <p className="mt-4 text-center text-sm text-white/55">
               Syncing goals, session history, and live events.
             </p>
           </div>
@@ -402,12 +409,12 @@ function App() {
   if (route === 'goal') {
     if (goalId !== ROOT_GOAL_ID && !selectedParentGoal) {
       return (
-        <main className="min-h-full bg-white px-4 py-8 text-black sm:px-6">
+        <main className="min-h-full px-4 py-8 text-white sm:px-6">
           <section className="mx-auto w-full max-w-5xl p-2">
-            <p className="text-sm text-neutral-600">Goal "{goalId}" was not found on the server.</p>
+            <p className="text-sm text-white/55">Goal "{goalId}" was not found on the server.</p>
             <button
               type="button"
-              className="mt-4 rounded px-3 py-2 text-sm font-medium text-white bg-black"
+              className="mt-4 rounded px-3 py-2 text-sm font-medium text-black bg-white"
               onClick={viewRootGoal}
             >
               View root goals
@@ -418,23 +425,23 @@ function App() {
     }
 
     return (
-      <main className="min-h-full bg-white pb-20 px-4 py-8 text-black sm:px-6">
+      <main className="min-h-full pb-20 px-4 py-8 text-white sm:px-6">
         {devPanelOpen ? (
-          <aside className="fixed right-3 top-3 z-50 rounded-xl border border-neutral-200 bg-white/95 px-3 py-3 shadow-sm backdrop-blur sm:right-5 sm:top-5">
+          <aside className="fixed right-3 top-3 z-50 rounded-xl border border-[#2a2a2a] bg-[#111]/95 px-3 py-3 shadow-sm backdrop-blur sm:right-5 sm:top-5">
             <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-neutral-400">{localUser.name}</p>
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40">{localUser.name}</p>
               <div className="flex items-center gap-1">
                 <button
                   type="button"
                   onClick={handleLogout}
-                  className="rounded border border-neutral-200 px-2 py-0.5 text-[10px] text-neutral-500 hover:bg-neutral-50"
+                  className="rounded border border-[#2a2a2a] px-2 py-0.5 text-[10px] text-white/55 hover:bg-[#1a1a1a]"
                 >
                   Sign out
                 </button>
                 <button
                   type="button"
                   onClick={() => setDevPanelOpen(false)}
-                  className="rounded border border-neutral-200 px-1.5 py-0.5 text-[10px] text-neutral-500 hover:bg-neutral-50"
+                  className="rounded border border-[#2a2a2a] px-1.5 py-0.5 text-[10px] text-white/55 hover:bg-[#1a1a1a]"
                   aria-label="Close dev panel"
                   title="Close"
                 >
@@ -442,10 +449,10 @@ function App() {
                 </button>
               </div>
             </div>
-            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-neutral-400">Dev time</p>
-            <p className="mb-0.5 text-sm font-medium text-black">{devTimeLabel}</p>
+            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-white/40">Dev time</p>
+            <p className="mb-0.5 text-sm font-medium text-white">{devTimeLabel}</p>
             {devTime && devTime.offsetSeconds !== 0 && (
-              <p className="mb-2 text-xs text-amber-600">+{devTime.offsetSeconds}s offset</p>
+              <p className="mb-2 text-xs text-amber-400">+{devTime.offsetSeconds}s offset</p>
             )}
             <div className="flex flex-wrap gap-1.5">
               {([
@@ -458,7 +465,7 @@ function App() {
                 <button
                   key={label}
                   type="button"
-                  className="rounded border border-neutral-200 px-2 py-0.5 text-xs text-neutral-600 hover:bg-neutral-50 disabled:text-neutral-300"
+                  className="rounded border border-[#2a2a2a] px-2 py-0.5 text-xs text-white/55 hover:bg-[#1a1a1a] disabled:text-white/30"
                   disabled={devTimeBusy}
                   onClick={onClick}
                 >
@@ -471,7 +478,7 @@ function App() {
           <button
             type="button"
             onClick={() => setDevPanelOpen(true)}
-            className="fixed right-3 top-3 z-50 flex h-8 w-8 items-center justify-center rounded-full border border-neutral-200 bg-white/95 text-xs font-semibold text-neutral-500 shadow-sm backdrop-blur hover:bg-neutral-50 sm:right-5 sm:top-5"
+            className="fixed right-3 top-3 z-50 flex h-8 w-8 items-center justify-center rounded-full border border-[#2a2a2a] bg-[#111]/95 text-xs font-semibold text-white/55 shadow-sm backdrop-blur hover:bg-[#1a1a1a] sm:right-5 sm:top-5"
             aria-label="Open dev panel"
             title="Dev panel"
           >
@@ -480,16 +487,16 @@ function App() {
         )}
         {dropConfirm && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm">
-            <div className="mx-4 w-full max-w-sm rounded-3xl border border-neutral-200 bg-white p-8 text-center shadow-2xl">
-              <h2 className="mb-2 text-lg font-bold text-black">Drop this goal?</h2>
-              <p className="mb-1 text-sm text-neutral-600">
-                <span className="font-medium text-black">{dropConfirm.title}</span>
+            <div className="mx-4 w-full max-w-sm rounded-3xl border border-[#2a2a2a] bg-[#111] p-8 text-center shadow-2xl">
+              <h2 className="mb-2 text-lg font-bold text-white">Drop this goal?</h2>
+              <p className="mb-1 text-sm text-white/55">
+                <span className="font-medium text-white">{dropConfirm.title}</span>
               </p>
-              <p className="mb-6 text-xs text-neutral-400">This will remove the goal and all its tasks. This cannot be undone.</p>
+              <p className="mb-6 text-xs text-white/40">This will remove the goal and all its tasks. This cannot be undone.</p>
               <div className="flex gap-3">
                 <button
                   type="button"
-                  className="flex-1 rounded-xl border border-neutral-200 py-3 text-sm font-medium text-neutral-600 hover:bg-neutral-50"
+                  className="flex-1 rounded-xl border border-[#2a2a2a] py-3 text-sm font-medium text-white/55 hover:bg-[#1a1a1a]"
                   onClick={() => setDropConfirm(null)}
                 >
                   Cancel
@@ -507,13 +514,13 @@ function App() {
         )}
         {celebration && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm">
-            <div className="mx-4 w-full max-w-sm rounded-3xl border border-neutral-200 bg-white p-8 text-center shadow-2xl">
+            <div className="mx-4 w-full max-w-sm rounded-3xl border border-[#2a2a2a] bg-[#111] p-8 text-center shadow-2xl">
               <div className="mb-4 text-5xl">🎉</div>
-              <h2 className="mb-2 text-xl font-bold text-black">Goal complete!</h2>
-              <p className="mb-6 text-sm text-neutral-500">You finished <span className="font-medium text-black">{celebration.title}</span>.</p>
+              <h2 className="mb-2 text-xl font-bold text-white">Goal complete!</h2>
+              <p className="mb-6 text-sm text-white/55">You finished <span className="font-medium text-white">{celebration.title}</span>.</p>
               <button
                 type="button"
-                className="w-full rounded-xl bg-black py-3 text-sm font-semibold text-white"
+                className="w-full rounded-xl bg-[#111] py-3 text-sm font-semibold text-white"
                 onClick={() => setCelebration(null)}
               >
                 Continue
@@ -542,7 +549,7 @@ function App() {
         ) : (
           <ChatView key={localUser?.id ?? 'default'} />
         )}
-        <nav className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-neutral-200 bg-white/95 backdrop-blur">
+        <nav className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-[#2a2a2a] bg-[#111]/95 backdrop-blur">
           {([
             ['current', 'Session'],
             ['schedule', 'Schedule'],
@@ -556,8 +563,8 @@ function App() {
               type="button"
               className={`flex-1 py-4 text-sm transition-colors ${
                 goalPanel === panel
-                  ? 'border-t-2 border-black font-semibold text-black'
-                  : 'border-t-2 border-transparent text-neutral-400'
+                  ? 'border-t-2 border-black font-semibold text-white'
+                  : 'border-t-2 border-transparent text-white/40'
               }`}
               onClick={() => setGoalPanel(panel)}
             >
@@ -570,12 +577,12 @@ function App() {
   }
 
   return (
-    <main className="min-h-full bg-white px-4 py-8 text-black sm:px-6">
+    <main className="min-h-full px-4 py-8 text-white sm:px-6">
       <section className="mx-auto w-full max-w-5xl p-2">
-        <p className="text-sm text-neutral-600">{error ?? message}</p>
+        <p className="text-sm text-white/55">{error ?? message}</p>
         <button
           type="button"
-          className="mt-4 rounded px-3 py-2 text-sm font-medium text-white bg-black"
+          className="mt-4 rounded px-3 py-2 text-sm font-medium text-black bg-white"
           onClick={viewRootGoal}
         >
           View root goals

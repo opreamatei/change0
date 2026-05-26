@@ -175,7 +175,7 @@ function SharedLeafCard({
   const ownerBadge = (
     <span className={[
       'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold',
-      mine ? 'bg-black text-white' : 'bg-neutral-200 text-neutral-600',
+      mine ? 'bg-[#111] text-white' : 'bg-[#2a2a2a] text-white/55',
     ].join(' ')}>
       {owner?.display_name ?? '?'}{mine && ' (you)'}
     </span>
@@ -183,34 +183,34 @@ function SharedLeafCard({
 
   if (state === 'finished') {
     return (
-      <article className="rounded-xl border border-neutral-100 bg-neutral-50 px-5 py-4">
+      <article className="rounded-xl border border-white/10 bg-[#1a1a1a] px-5 py-4">
         <div className="mb-2 flex items-center gap-2">
           <span className="size-2 rounded-full bg-neutral-300" />
-          <span className="text-xs font-semibold uppercase tracking-widest text-neutral-400">Done</span>
+          <span className="text-xs font-semibold uppercase tracking-widest text-white/40">Done</span>
           {ownerBadge}
         </div>
-        <h3 className="text-base font-semibold text-neutral-400 line-through">{goal.title}</h3>
-        <p className="mt-1 text-xs text-neutral-400">{formatDuration(goal.required_time)} estimated</p>
+        <h3 className="text-base font-semibold text-white/40 line-through">{goal.title}</h3>
+        <p className="mt-1 text-xs text-white/40">{formatDuration(goal.required_time)} estimated</p>
       </article>
     )
   }
 
   if (state === 'started') {
     return (
-      <article className="rounded-xl border border-green-200 bg-green-50 px-5 py-4">
+      <article className="rounded-xl border border-green-900 bg-green-950/30 px-5 py-4">
         <div className="mb-2 flex items-center gap-2">
           <span className="size-2 animate-pulse rounded-full bg-green-500" />
-          <span className="text-xs font-semibold uppercase tracking-widest text-green-700">Running</span>
+          <span className="text-xs font-semibold uppercase tracking-widest text-green-400">Running</span>
           {ownerBadge}
         </div>
-        <h3 className="mb-1 text-base font-semibold text-black">{goal.title}</h3>
-        {goal.extra_info && <p className="mb-3 text-sm leading-relaxed text-neutral-700">{goal.extra_info}</p>}
-        <p className="mb-3 text-xs text-neutral-500">{formatDuration(goal.required_time)} estimated</p>
+        <h3 className="mb-1 text-base font-semibold text-white">{goal.title}</h3>
+        {goal.extra_info && <p className="mb-3 text-sm leading-relaxed text-white/70">{goal.extra_info}</p>}
+        <p className="mb-3 text-xs text-white/55">{formatDuration(goal.required_time)} estimated</p>
         {mine && (
           <button
             disabled={actionBusy}
             onClick={() => void onAction(goal.id, 'end')}
-            className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
+            className="rounded border border-[#333] px-3 py-1.5 text-sm text-white/70 hover:bg-[#1a1a1a] disabled:opacity-40"
           >End</button>
         )}
       </article>
@@ -223,14 +223,14 @@ function SharedLeafCard({
         <button
           disabled={actionBusy}
           onClick={() => setPassing(others[0]!.id)}
-          className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50 disabled:opacity-40"
+          className="rounded border border-[#333] px-3 py-1.5 text-sm text-white/55 hover:bg-[#1a1a1a] disabled:opacity-40"
         >Pass</button>
       ) : (
         <div className="flex items-center gap-2">
           <select
             value={passingTo}
             onChange={(e) => setPassing(e.target.value)}
-            className="rounded border border-neutral-300 px-2 py-1.5 text-sm text-black outline-none"
+            className="rounded border border-[#333] px-2 py-1.5 text-sm text-white outline-none"
           >
             {others.map((u) => (
               <option key={u.id} value={u.id}>{u.display_name}</option>
@@ -239,11 +239,11 @@ function SharedLeafCard({
           <button
             disabled={actionBusy}
             onClick={() => { void onReassign(goal.id, passingTo); setPassing(null) }}
-            className="rounded border border-neutral-300 bg-neutral-900 px-3 py-1.5 text-sm text-white hover:bg-neutral-700 disabled:opacity-40"
+            className="rounded border border-[#333] bg-white px-3 py-1.5 text-sm text-black hover:bg-[#e5e5e5] disabled:opacity-40"
           >Confirm</button>
           <button
             onClick={() => setPassing(null)}
-            className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-50"
+            className="rounded border border-[#333] px-3 py-1.5 text-sm text-white/55 hover:bg-[#1a1a1a]"
           >Cancel</button>
         </div>
       )}
@@ -252,23 +252,23 @@ function SharedLeafCard({
 
   if (canStart) {
     return (
-      <article className="rounded-xl border border-neutral-200 bg-white px-5 py-4">
+      <article className="rounded-xl border border-[#2a2a2a] bg-[#111] px-5 py-4">
         <div className="mb-2 flex items-center gap-2">
           {ownerBadge}
         </div>
-        <h3 className="mb-1 text-base font-semibold text-black">{goal.title}</h3>
-        {goal.extra_info && <p className="mb-3 text-sm leading-relaxed text-neutral-600">{goal.extra_info}</p>}
-        <p className="mb-3 text-xs text-neutral-500">{formatDuration(goal.required_time)} estimated</p>
+        <h3 className="mb-1 text-base font-semibold text-white">{goal.title}</h3>
+        {goal.extra_info && <p className="mb-3 text-sm leading-relaxed text-white/55">{goal.extra_info}</p>}
+        <p className="mb-3 text-xs text-white/55">{formatDuration(goal.required_time)} estimated</p>
         <div className="flex flex-wrap gap-2">
           {mine && (
             <button
               disabled={actionBusy}
               onClick={() => void onAction(goal.id, 'start')}
-              className="rounded border border-green-300 bg-green-50 px-3 py-1.5 text-sm text-green-700 hover:bg-green-100 disabled:opacity-40"
+              className="rounded border border-green-800 bg-green-950/30 px-3 py-1.5 text-sm text-green-400 hover:bg-green-900/30 disabled:opacity-40"
             >Start</button>
           )}
           {!mine && (
-            <p className="text-xs text-neutral-400 italic self-center">Waiting for {owner?.display_name ?? 'partner'}</p>
+            <p className="text-xs text-white/40 italic self-center">Waiting for {owner?.display_name ?? 'partner'}</p>
           )}
         </div>
         {passControls}
@@ -278,10 +278,10 @@ function SharedLeafCard({
 
   /* Future — not yet reachable */
   return (
-    <article className="rounded-xl border border-neutral-100 bg-neutral-50 px-5 py-4">
+    <article className="rounded-xl border border-white/10 bg-[#1a1a1a] px-5 py-4">
       <div className="mb-1 flex items-center gap-2 opacity-50">{ownerBadge}</div>
-      <h3 className="text-base font-semibold text-neutral-400">{goal.title}</h3>
-      <p className="mt-1 text-xs text-neutral-400">{formatDuration(goal.required_time)} estimated</p>
+      <h3 className="text-base font-semibold text-white/40">{goal.title}</h3>
+      <p className="mt-1 text-xs text-white/40">{formatDuration(goal.required_time)} estimated</p>
       {passControls}
     </article>
   )
@@ -422,15 +422,15 @@ function JourneyCard({ summary, userId }: { summary: JourneyListItem; userId: st
   const myParticipantIndex = summary.participants.findIndex((p) => p.id === userId)
 
   return (
-    <section className="rounded-3xl border border-neutral-200 bg-white shadow-sm">
+    <section className="rounded-3xl border border-[#2a2a2a] bg-[#111] shadow-sm">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
         className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left"
       >
         <div className="min-w-0 flex-1">
-          <p className="truncate text-base font-semibold text-black">{summary.title}</p>
-          <p className="mt-0.5 text-xs text-neutral-500">
+          <p className="truncate text-base font-semibold text-white">{summary.title}</p>
+          <p className="mt-0.5 text-xs text-white/55">
             {summary.user_count} participant{summary.user_count === 1 ? '' : 's'} · {summary.goal_count} goal{summary.goal_count === 1 ? '' : 's'}
           </p>
         </div>
@@ -442,34 +442,34 @@ function JourneyCard({ summary, userId }: { summary: JourneyListItem; userId: st
                 title={p.display_name}
                 className={[
                   'flex h-7 w-7 items-center justify-center rounded-full border-2 border-white text-[10px] font-semibold',
-                  p.id === userId ? 'bg-black text-white' : 'bg-neutral-200 text-neutral-700',
+                  p.id === userId ? 'bg-[#111] text-white' : 'bg-[#2a2a2a] text-white/70',
                 ].join(' ')}
               >
                 {(p.display_name || '?').slice(0, 1).toUpperCase()}
               </div>
             ))}
           </div>
-          <span className="text-neutral-300">{expanded ? '▾' : '▸'}</span>
+          <span className="text-white/30">{expanded ? '▾' : '▸'}</span>
         </div>
       </button>
 
       {expanded && (
-        <div className="border-t border-neutral-100 px-5 py-4">
+        <div className="border-t border-white/10 px-5 py-4">
           {loading && !detail && (
-            <p className="py-6 text-center text-xs text-neutral-400">Loading journey…</p>
+            <p className="py-6 text-center text-xs text-white/40">Loading journey…</p>
           )}
-          {error && <p className="text-xs text-red-500">{error}</p>}
+          {error && <p className="text-xs text-red-400">{error}</p>}
 
           {detail && (
             <>
               {detail.extra_info && (
-                <p className="mb-4 text-xs leading-relaxed text-neutral-600">{detail.extra_info}</p>
+                <p className="mb-4 text-xs leading-relaxed text-white/55">{detail.extra_info}</p>
               )}
 
               {/* Proposals */}
               {proposals.length > 0 && (
                 <div className="mb-4 space-y-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-widest text-neutral-400">
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40">
                     Root goal proposals
                   </p>
                   {proposals.map((p) => {
@@ -478,17 +478,17 @@ function JourneyCard({ summary, userId }: { summary: JourneyListItem; userId: st
                     const isMine = p.proposed_by === userId
 
                     return (
-                      <div key={p.id} className="rounded-xl border border-neutral-200 px-4 py-3 bg-neutral-50">
+                      <div key={p.id} className="rounded-xl border border-[#2a2a2a] px-4 py-3 bg-[#1a1a1a]">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold text-black">{p.title}</p>
-                            {p.extra_info && <p className="mt-0.5 text-xs text-neutral-500 line-clamp-2">{p.extra_info}</p>}
-                            <p className="mt-1 text-[10px] text-neutral-400">
+                            <p className="text-sm font-semibold text-white">{p.title}</p>
+                            {p.extra_info && <p className="mt-0.5 text-xs text-white/55 line-clamp-2">{p.extra_info}</p>}
+                            <p className="mt-1 text-[10px] text-white/40">
                               {isMine ? 'You proposed' : 'Partner proposed'} ·{' '}
-                              {p.finalized ? <span className="text-emerald-700">finalized</span>
-                                : bothApproved ? <span className="text-emerald-700">both approved</span>
-                                : myApproved  ? <span className="text-amber-700">waiting for partner</span>
-                                :               <span className="text-neutral-500">awaiting your vote</span>}
+                              {p.finalized ? <span className="text-emerald-400">finalized</span>
+                                : bothApproved ? <span className="text-emerald-400">both approved</span>
+                                : myApproved  ? <span className="text-amber-400">waiting for partner</span>
+                                :               <span className="text-white/55">awaiting your vote</span>}
                             </p>
                           </div>
                           {!p.finalized && !myApproved && (
@@ -496,14 +496,14 @@ function JourneyCard({ summary, userId }: { summary: JourneyListItem; userId: st
                               <button
                                 disabled={proposalBusy}
                                 onClick={() => void declineProposal(p)}
-                                className="rounded-lg border border-neutral-200 px-3 py-1.5 text-xs text-neutral-500
-                                  hover:border-red-300 hover:text-red-500 disabled:opacity-40"
+                                className="rounded-lg border border-[#2a2a2a] px-3 py-1.5 text-xs text-white/55
+                                  hover:border-red-700 hover:text-red-400 disabled:opacity-40"
                               >Decline</button>
                               <button
                                 disabled={proposalBusy}
                                 onClick={() => void approveProposal(p)}
-                                className="rounded-lg bg-black px-3 py-1.5 text-xs text-white
-                                  hover:bg-neutral-800 disabled:opacity-40"
+                                className="rounded-lg bg-[#111] px-3 py-1.5 text-xs text-white
+                                  hover:bg-[#e0e0e0] disabled:opacity-40"
                               >Approve</button>
                             </div>
                           )}
@@ -515,7 +515,7 @@ function JourneyCard({ summary, userId }: { summary: JourneyListItem; userId: st
               )}
 
               {orderedLeaves.length === 0 && (
-                <p className="py-6 text-center text-xs text-neutral-400">No tasks yet — propose a goal to get started.</p>
+                <p className="py-6 text-center text-xs text-white/40">No tasks yet — propose a goal to get started.</p>
               )}
               <div className="space-y-3">
                 {orderedLeaves.map((entry) => (
@@ -571,7 +571,7 @@ export default function TogetherView({ userId }: { userId: string }) {
 
   if (loading && journeys.length === 0) {
     return (
-      <div className="flex items-center justify-center py-20 text-sm text-neutral-400">
+      <div className="flex items-center justify-center py-20 text-sm text-white/40">
         Loading shared journeys…
       </div>
     )
@@ -581,17 +581,17 @@ export default function TogetherView({ userId }: { userId: string }) {
     return (
       <section className="mx-auto w-full max-w-2xl px-4 py-10">
         <header className="mb-6">
-          <h1 className="text-2xl font-bold text-black">Together</h1>
-          <p className="mt-1 text-sm text-neutral-500">Journeys you're working on with someone else.</p>
+          <h1 className="text-2xl font-bold text-white">Together</h1>
+          <p className="mt-1 text-sm text-white/55">Journeys you're working on with someone else.</p>
         </header>
 
-        <div className="rounded-3xl border border-dashed border-neutral-200 bg-neutral-50 px-6 py-10 text-center">
+        <div className="rounded-3xl border border-dashed border-[#2a2a2a] bg-[#1a1a1a] px-6 py-10 text-center">
           <p className="text-3xl">🤝</p>
-          <p className="mt-3 text-sm font-semibold text-black">No shared journeys yet</p>
-          <p className="mt-2 text-xs text-neutral-500">
+          <p className="mt-3 text-sm font-semibold text-white">No shared journeys yet</p>
+          <p className="mt-2 text-xs text-white/55">
             Connect with someone, then open the chat and tap <span className="font-semibold">+ Propose goal</span> to start a shared journey.
           </p>
-          {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
+          {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
         </div>
       </section>
     )
@@ -601,15 +601,15 @@ export default function TogetherView({ userId }: { userId: string }) {
     <section className="mx-auto w-full max-w-3xl px-4 py-8">
       <header className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-black">Together</h1>
-          <p className="mt-1 text-sm text-neutral-500">
+          <h1 className="text-2xl font-bold text-white">Together</h1>
+          <p className="mt-1 text-sm text-white/55">
             {journeys.length} shared journey{journeys.length === 1 ? '' : 's'} · each leaf is owned by one person.
           </p>
         </div>
         <button
           type="button"
           onClick={() => void load()}
-          className="rounded-full border border-neutral-200 px-3 py-1.5 text-xs text-neutral-600 hover:bg-neutral-50"
+          className="rounded-full border border-[#2a2a2a] px-3 py-1.5 text-xs text-white/55 hover:bg-[#1a1a1a]"
         >
           Refresh
         </button>
@@ -621,7 +621,7 @@ export default function TogetherView({ userId }: { userId: string }) {
         ))}
       </div>
 
-      {error && <p className="mt-4 text-xs text-red-500">{error}</p>}
+      {error && <p className="mt-4 text-xs text-red-400">{error}</p>}
     </section>
   )
 }

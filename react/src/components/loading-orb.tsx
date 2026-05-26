@@ -21,14 +21,14 @@ export default function LoadingOrb({
   return (
     <div className={`flex flex-col items-center gap-3 ${className}`}>
       <div className={`relative ${sizeClass}`}>
-        <div className="absolute inset-0 rounded-full border border-neutral-200 bg-white/80 shadow-[0_24px_70px_rgba(0,0,0,0.08)]" />
-        <div className="absolute inset-2 rounded-full border border-dashed border-neutral-300 loading-orbit" />
-        <div className="absolute inset-[28%] rounded-full bg-neutral-950 shadow-[0_0_0_6px_rgba(0,0,0,0.04)] loading-bob" />
+        <div className="absolute inset-0 rounded-full border border-[#2a2a2a] bg-[#111]/80 shadow-[0_24px_70px_rgba(0,0,0,0.08)]" />
+        <div className="absolute inset-2 rounded-full border border-dashed border-[#333] loading-orbit" />
+        <div className="absolute inset-[28%] rounded-full bg-white shadow-[0_0_0_6px_rgba(255,255,255,0.08)] loading-bob" />
         <div className="absolute inset-0 loading-orbit">
           {DOT_POSITIONS.map((position, index) => (
             <span
               key={position}
-              className={`absolute ${position} ${dotClass} rounded-full bg-neutral-900 shadow-[0_0_12px_rgba(0,0,0,0.18)] loading-bob`}
+              className={`absolute ${position} ${dotClass} rounded-full bg-white shadow-[0_0_12px_rgba(255,255,255,0.2)] loading-bob`}
               style={{ animationDelay: `${index * 180}ms` }}
             />
           ))}
@@ -36,7 +36,7 @@ export default function LoadingOrb({
       </div>
       {label && (
         <p
-          className={`text-center font-medium tracking-wide text-neutral-500 ${
+          className={`text-center font-medium tracking-wide text-white/55 ${
             compact ? 'text-xs' : 'text-sm'
           }`}
         >

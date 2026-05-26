@@ -236,7 +236,7 @@ function renderInlineContent(text: string, keyPrefix: string): ReactNode[] {
         nodes.push(
           <code
             key={`${keyPrefix}-c-${key++}`}
-            className="rounded bg-neutral-100 px-1 py-0.5 font-mono text-[0.85em] text-neutral-800"
+            className="rounded bg-[#222] px-1 py-0.5 font-mono text-[0.85em] text-white/80"
           >
             {text.slice(index + 1, end)}
           </code>,
@@ -251,7 +251,7 @@ function renderInlineContent(text: string, keyPrefix: string): ReactNode[] {
       const end = text.indexOf(marker, index + 2)
       if (end > index + 2) {
         nodes.push(
-          <strong key={`${keyPrefix}-s-${key++}`} className="font-semibold text-black">
+          <strong key={`${keyPrefix}-s-${key++}`} className="font-semibold text-white">
             {renderInlineContent(text.slice(index + 2, end), `${keyPrefix}-s${key}`)}
           </strong>,
         )
@@ -272,7 +272,7 @@ function renderInlineContent(text: string, keyPrefix: string): ReactNode[] {
             href={url}
             target="_blank"
             rel="noreferrer"
-            className="text-black underline decoration-neutral-300 underline-offset-2 hover:decoration-neutral-600"
+            className="text-white underline decoration-neutral-300 underline-offset-2 hover:decoration-neutral-600"
           >
             {renderInlineContent(label, `${keyPrefix}-l${key}`)}
           </a>,
@@ -467,7 +467,7 @@ function AssistantContent({ content }: { content: string }) {
           return (
             <blockquote
               key={blockIndex}
-              className="border-l-2 border-neutral-200 pl-3 text-neutral-600"
+              className="border-l-2 border-[#2a2a2a] pl-3 text-white/55"
             >
               <div className="space-y-1">
                 {block.text.split('\n').map((line, lineIndex) => (
@@ -484,7 +484,7 @@ function AssistantContent({ content }: { content: string }) {
           return (
             <pre
               key={blockIndex}
-              className="overflow-x-auto rounded-xl border border-neutral-200 bg-neutral-950 px-4 py-3 text-xs leading-relaxed text-neutral-100"
+              className="overflow-x-auto rounded-xl border border-[#2a2a2a] bg-[#0d0d0d] px-4 py-3 text-xs leading-relaxed text-white/80"
             >
               <code>{block.text}</code>
             </pre>
@@ -517,12 +517,12 @@ function UserBubble({ entry }: { entry: ChatEntry }) {
       <div
         className={[
           'max-w-[72%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed transition-colors duration-[1200ms]',
-          'bg-black text-white',
+          'bg-white text-black',
         ].join(' ')}
         style={{
           backgroundColor: entry.highlightOnMount && highlighted
             ? (entry.highlightColor ?? '#2563eb')
-            : '#000000',
+            : '#ffffff',
         }}
       >
         {entry.content}
@@ -549,7 +549,7 @@ function AssistantBubble({
 }) {
   return (
     <div className="flex flex-col items-start gap-1.5">
-      <div className="max-w-[72%] rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-2.5 text-sm leading-relaxed text-black">
+      <div className="max-w-[72%] rounded-2xl border border-[#2a2a2a] bg-[#1a1a1a] px-4 py-2.5 text-sm leading-relaxed text-white">
         <AssistantContent content={entry.content} />
       </div>
       {entry.suggestions && entry.suggestions.length > 0 && !entry.suggestionsHidden && (
@@ -592,7 +592,7 @@ function ActionBubble({ entry }: { entry: ChatEntry }) {
   const loading = isLoadingAction(entry.eventType)
   return (
     <div className="flex justify-start">
-      <div className="flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs text-neutral-500">
+      <div className="flex items-center gap-1.5 rounded-full border border-[#2a2a2a] bg-[#111] px-3 py-1 text-xs text-white/55">
         {loading && <span className="size-1.5 animate-pulse rounded-full bg-neutral-400" />}
         {!loading && <span className="size-1.5 rounded-full bg-neutral-300" />}
         <span>{actionSummary(entry)}</span>
@@ -617,8 +617,8 @@ function PermissionBubble({
         <div
           className={`rounded-xl border px-4 py-2.5 text-sm ${
             entry.permissionApproved
-              ? 'border-green-200 bg-green-50 text-green-800'
-              : 'border-neutral-200 bg-neutral-50 text-neutral-500'
+              ? 'border-green-900 bg-green-950/30 text-green-300'
+              : 'border-[#2a2a2a] bg-[#1a1a1a] text-white/55'
           }`}
         >
           <span className="font-medium">{entry.permissionApproved ? 'Approved' : 'Denied'}:</span>{' '}
@@ -637,26 +637,26 @@ function PermissionBubble({
 
   return (
     <div className="flex justify-start">
-      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-        <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-amber-600">
+      <div className="rounded-xl border border-amber-900 bg-amber-950/30 px-4 py-3">
+        <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-amber-400">
           Permission request
         </p>
-        <p className="mb-0.5 text-sm font-medium text-black">
-          Store <span className="rounded bg-amber-100 px-1 font-mono text-xs">{p.key}</span> ={' '}
-          <span className="rounded bg-amber-100 px-1 font-mono text-xs">{p.value}</span>
+        <p className="mb-0.5 text-sm font-medium text-white">
+          Store <span className="rounded bg-amber-900/30 px-1 font-mono text-xs">{p.key}</span> ={' '}
+          <span className="rounded bg-amber-900/30 px-1 font-mono text-xs">{p.value}</span>
         </p>
-        {p.reason && <p className="mb-3 text-xs text-neutral-600">{p.reason}</p>}
+        {p.reason && <p className="mb-3 text-xs text-white/55">{p.reason}</p>}
         <div className="flex gap-2">
           <button
             type="button"
-            className="rounded border border-green-400 bg-green-50 px-3 py-1 text-xs font-medium text-green-700 hover:bg-green-100"
+            className="rounded border border-green-700 bg-green-950/30 px-3 py-1 text-xs font-medium text-green-400 hover:bg-green-900/30"
             onClick={() => onResolve(p.permission_id, true)}
           >
             Approve
           </button>
           <button
             type="button"
-            className="rounded border border-neutral-300 px-3 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-50"
+            className="rounded border border-[#333] px-3 py-1 text-xs font-medium text-white/55 hover:bg-[#1a1a1a]"
             onClick={() => onResolve(p.permission_id, false)}
           >
             Deny
@@ -705,9 +705,9 @@ function ThinkingBubble() {
 
   return (
     <div className="flex justify-start">
-      <div className="max-w-[72%] rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 min-w-[220px]">
+      <div className="max-w-[72%] rounded-2xl border border-[#2a2a2a] bg-[#1a1a1a] px-4 py-3 min-w-[220px]">
         <p
-          className="mb-2.5 text-xs text-neutral-400 transition-opacity duration-300"
+          className="mb-2.5 text-xs text-white/40 transition-opacity duration-300"
           style={{ opacity: visible ? 1 : 0 }}
         >
           {THINKING_PHRASES[phraseIdx]}
@@ -906,19 +906,19 @@ export default function ChatView() {
   return (
     <section className="mx-auto flex w-full max-w-3xl flex-col" style={{ height: 'calc(100vh - 9rem)' }}>
       <header className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-black">Chat</h1>
+        <h1 className="text-2xl font-bold text-white">Chat</h1>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-neutral-400">session</span>
+          <span className="text-xs text-white/40">session</span>
           <input
             type="text"
-            className="w-32 rounded border border-neutral-300 px-2 py-1 text-xs text-neutral-700 focus:border-neutral-500 focus:outline-none"
+            className="w-32 rounded border border-[#333] px-2 py-1 text-xs text-white/70 focus:border-white/50 focus:outline-none"
             value={sessionId}
             onChange={(e) => setSessionId(e.target.value)}
             onBlur={(e) => { if (!e.target.value.trim()) setSessionId('default') }}
           />
           <button
             type="button"
-            className="rounded border border-neutral-300 px-3 py-1 text-xs font-medium text-neutral-700 hover:border-neutral-500 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:border-neutral-200 disabled:text-neutral-300"
+            className="rounded border border-[#333] px-3 py-1 text-xs font-medium text-white/70 hover:border-white/50 hover:bg-[#1a1a1a] disabled:cursor-not-allowed disabled:border-[#2a2a2a] disabled:text-white/30"
             onClick={() => void loadSession(sessionId)}
             disabled={reloading}
           >
@@ -941,7 +941,7 @@ export default function ChatView() {
 
       <div className="flex-1 space-y-3 overflow-y-auto pb-4">
         {entries.length === 0 && (
-          <p className="mt-12 text-center text-sm text-neutral-400">
+          <p className="mt-12 text-center text-sm text-white/40">
             No messages yet. Say something.
           </p>
         )}
@@ -974,13 +974,13 @@ export default function ChatView() {
         <div ref={bottomRef} />
       </div>
 
-      {error && <p className="mb-2 text-xs text-red-500">{error}</p>}
+      {error && <p className="mb-2 text-xs text-red-400">{error}</p>}
 
-      <div className="flex gap-2 border-t border-neutral-200 pt-3">
+      <div className="flex gap-2 border-t border-[#2a2a2a] pt-3">
         <input
           ref={inputRef}
           type="text"
-          className="flex-1 rounded-xl border border-neutral-300 px-4 py-2.5 text-sm text-black placeholder-neutral-400 focus:border-neutral-500 focus:outline-none disabled:bg-neutral-50 disabled:text-neutral-400"
+          className="flex-1 rounded-xl border border-[#333] px-4 py-2.5 text-sm text-white placeholder-white/40 focus:border-white/50 focus:outline-none disabled:bg-[#1a1a1a] disabled:text-white/40"
           placeholder={sending ? 'Waiting for response...' : 'Message...'}
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -994,7 +994,7 @@ export default function ChatView() {
         />
         <button
           type="button"
-          className="rounded-xl bg-black px-4 py-2.5 text-sm font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-200 disabled:text-neutral-400"
+          className="rounded-xl bg-[#111] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#e0e0e0] disabled:cursor-not-allowed disabled:bg-[#2a2a2a] disabled:text-white/40"
           onClick={() => void send()}
           disabled={!input.trim() || sending}
         >
@@ -1003,7 +1003,7 @@ export default function ChatView() {
               {[0, 1, 2].map((dot) => (
                 <span
                   key={dot}
-                  className="size-1.5 rounded-full bg-white animate-bounce"
+                  className="size-1.5 rounded-full bg-[#111] animate-bounce"
                   style={{ animationDelay: `${dot * 140}ms` }}
                 />
               ))}

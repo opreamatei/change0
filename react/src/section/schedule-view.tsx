@@ -93,10 +93,10 @@ export default function ScheduleView() {
   return (
     <section className="mx-auto w-full max-w-3xl">
       <header className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-black">Schedule</h1>
+        <h1 className="text-2xl font-bold text-white">Schedule</h1>
         <button
           type="button"
-          className="rounded border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50 disabled:text-neutral-300"
+          className="rounded border border-[#333] px-3 py-1.5 text-sm text-white/70 hover:bg-[#1a1a1a] disabled:text-white/30"
           onClick={() => void refresh()}
           disabled={loading}
         >
@@ -105,17 +105,17 @@ export default function ScheduleView() {
       </header>
 
       {error && (
-        <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <p className="mb-4 rounded-lg border border-red-900 bg-red-950/30 px-4 py-3 text-sm text-red-400">
           {error}
         </p>
       )}
 
       {loading && entries === null && (
-        <p className="text-sm text-neutral-400">Loading schedule…</p>
+        <p className="text-sm text-white/40">Loading schedule…</p>
       )}
 
       {!loading && entries !== null && entries.length === 0 && (
-        <p className="rounded-xl border border-dashed border-neutral-200 px-5 py-10 text-center text-sm text-neutral-400">
+        <p className="rounded-xl border border-dashed border-[#2a2a2a] px-5 py-10 text-center text-sm text-white/40">
           No scheduled entries.
         </p>
       )}
@@ -124,24 +124,24 @@ export default function ScheduleView() {
         <div className="space-y-8">
           {groups.map(({ dayLabel, items }) => (
             <div key={dayLabel}>
-              <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-neutral-400">
+              <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-white/40">
                 {dayLabel}
               </h2>
-              <ul className="divide-y divide-neutral-100 rounded-xl border border-neutral-200 bg-white">
+              <ul className="divide-y divide-white/10 rounded-xl border border-[#2a2a2a] bg-[#111]">
                 {items.map((entry, i) => {
                   const { time } = formatScheduleTime(entry.time)
                   const isFirst = i === 0 && dayLabel === groups[0].dayLabel
 
                   return (
                     <li key={entry.goal_index} className="flex items-start gap-4 px-5 py-3">
-                      <span className={`mt-0.5 w-12 shrink-0 text-right text-sm tabular-nums ${isFirst ? 'font-semibold text-black' : 'text-neutral-500'}`}>
+                      <span className={`mt-0.5 w-12 shrink-0 text-right text-sm tabular-nums ${isFirst ? 'font-semibold text-white' : 'text-white/55'}`}>
                         {time}
                       </span>
                       <div className="min-w-0 flex-1">
-                        <p className={`truncate text-sm ${isFirst ? 'font-semibold text-black' : 'text-neutral-700'}`}>
+                        <p className={`truncate text-sm ${isFirst ? 'font-semibold text-white' : 'text-white/70'}`}>
                           {entry.title || '(no title)'}
                         </p>
-                        <p className="mt-0.5 text-xs text-neutral-400">#{entry.goal_index}</p>
+                        <p className="mt-0.5 text-xs text-white/40">#{entry.goal_index}</p>
                       </div>
                     </li>
                   )

@@ -1,5 +1,6 @@
 build/
 debug/
+ui-2
 dumps/*
 user-data/
 compile_commands.json

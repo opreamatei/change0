@@ -89,14 +89,14 @@ export default function GraphUpdateBubble({ resolved }: { resolved: boolean }) {
   if (phase === 'done') {
     return (
       <div className="flex justify-start" style={{ animation: 'gu-pill-in 0.2s ease-out both' }}>
-        <div className="flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1 text-xs text-neutral-500">
+        <div className="flex items-center gap-1.5 rounded-full border border-[#2a2a2a] bg-[#111] px-3 py-1 text-xs text-white/55">
           <svg viewBox="0 0 10 10" className="size-2.5 shrink-0">
             {ICON_E.map(([a,b],i) => (
               <line key={i} x1={ICON_N[a].x} y1={ICON_N[a].y} x2={ICON_N[b].x} y2={ICON_N[b].y}
-                stroke="#737373" strokeWidth="1" />
+                stroke="rgba(255,255,255,0.4)" strokeWidth="1" />
             ))}
             {ICON_N.map((n,i) => (
-              <circle key={i} cx={n.x} cy={n.y} r="1.5" fill="#404040" />
+              <circle key={i} cx={n.x} cy={n.y} r="1.5" fill="rgba(255,255,255,0.6)" />
             ))}
           </svg>
           <span>Graph updated</span>
@@ -110,7 +110,7 @@ export default function GraphUpdateBubble({ resolved }: { resolved: boolean }) {
   return (
     <div className="flex justify-start">
       <div
-        className="rounded-xl border border-neutral-200 bg-white px-4 py-3"
+        className="rounded-xl border border-[#2a2a2a] bg-[#111] px-4 py-3"
         style={assembled ? { animation: 'gu-bubble-exit 0.7s ease-in both' } : undefined}
         onAnimationEnd={assembled ? (e) => { if (e.animationName === 'gu-bubble-exit') setPhase('done') } : undefined}
       >
@@ -120,7 +120,7 @@ export default function GraphUpdateBubble({ resolved }: { resolved: boolean }) {
           {!assembled && (
             <circle
               cx={SCAN_CX} cy={SCAN_CY} r="5"
-              fill="none" stroke="#e5e5e5" strokeWidth="1"
+              fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="1"
               style={{
                 transformOrigin: `${SCAN_CX}px ${SCAN_CY}px`,
                 animation: 'gu-scan 2.4s ease-out 0.8s infinite',
@@ -134,7 +134,7 @@ export default function GraphUpdateBubble({ resolved }: { resolved: boolean }) {
             if (assembled) {
               return (
                 <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                  stroke="#171717" strokeWidth="1.2"
+                  stroke="rgba(255,255,255,0.7)" strokeWidth="1.2"
                   style={{ animation: 'gu-edge-solid 0.3s ease-out both' }}
                 />
               )
@@ -142,7 +142,7 @@ export default function GraphUpdateBubble({ resolved }: { resolved: boolean }) {
             return (
               <line key={i} className="ge"
                 x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                stroke="#d4d4d4" strokeWidth="1"
+                stroke="rgba(255,255,255,0.25)" strokeWidth="1"
                 strokeDasharray="3 5" strokeDashoffset="0"
                 style={{
                   opacity: 0,
@@ -157,7 +157,7 @@ export default function GraphUpdateBubble({ resolved }: { resolved: boolean }) {
             if (assembled) {
               return (
                 <circle key={i} cx={n.x} cy={n.y} r="4"
-                  fill="#171717" stroke="#171717" strokeWidth="1.5"
+                  fill="#fff" stroke="#fff" strokeWidth="1.5"
                   style={{
                     transformOrigin: `${n.x}px ${n.y}px`,
                     animation: `gu-node-flash 0.5s ease-out ${i * 0.04}s both`,
@@ -168,7 +168,7 @@ export default function GraphUpdateBubble({ resolved }: { resolved: boolean }) {
             return (
               <circle key={i} className="gn"
                 cx={n.x} cy={n.y} r="4"
-                fill="#fff" stroke="#525252" strokeWidth="1.5"
+                fill="#0a0a0a" stroke="rgba(255,255,255,0.45)" strokeWidth="1.5"
                 style={{
                   opacity: 0,
                   transformOrigin: `${n.x}px ${n.y}px`,
@@ -179,7 +179,7 @@ export default function GraphUpdateBubble({ resolved }: { resolved: boolean }) {
           })}
         </svg>
 
-        <p className="mt-1 text-center text-[10px] tracking-widest text-neutral-400">
+        <p className="mt-1 text-center text-[10px] tracking-widest text-white/40">
           {assembled ? 'assembled' : 'updating graph'}
         </p>
       </div>

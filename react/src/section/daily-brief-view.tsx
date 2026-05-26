@@ -104,54 +104,54 @@ export default function DailyBriefView() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20 text-sm text-neutral-400">Loading brief…</div>
+      <div className="flex items-center justify-center py-20 text-sm text-white/40">Loading brief…</div>
     )
   }
 
   if (error) {
     return (
-      <div className="py-8 text-center text-sm text-red-500">{error}</div>
+      <div className="py-8 text-center text-sm text-red-400">{error}</div>
     )
   }
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 pb-24 pt-6">
       <div className="mb-6 flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-black">Daily Brief</h2>
+        <h2 className="text-lg font-semibold text-white">Daily Brief</h2>
         <button
           type="button"
           onClick={() => void refresh()}
-          className="rounded border border-neutral-200 px-2.5 py-1 text-xs text-neutral-500 hover:bg-neutral-50"
+          className="rounded border border-[#2a2a2a] px-2.5 py-1 text-xs text-white/55 hover:bg-[#1a1a1a]"
         >
           Refresh
         </button>
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-3">
-        <div className="rounded-2xl border border-neutral-100 bg-neutral-50 p-4">
-          <p className="text-xs font-medium uppercase tracking-widest text-neutral-400">Today</p>
-          <p className="mt-1 text-2xl font-bold text-black">{todayEntries.length}</p>
-          <p className="text-xs text-neutral-500">{todayEntries.length === 1 ? 'task' : 'tasks'} scheduled</p>
+        <div className="rounded-2xl border border-white/10 bg-[#1a1a1a] p-4">
+          <p className="text-xs font-medium uppercase tracking-widest text-white/40">Today</p>
+          <p className="mt-1 text-2xl font-bold text-white">{todayEntries.length}</p>
+          <p className="text-xs text-white/55">{todayEntries.length === 1 ? 'task' : 'tasks'} scheduled</p>
         </div>
-        <div className="rounded-2xl border border-neutral-100 bg-neutral-50 p-4">
-          <p className="text-xs font-medium uppercase tracking-widest text-neutral-400">This week</p>
-          <p className="mt-1 text-2xl font-bold text-black">{weekCount}</p>
-          <p className="text-xs text-neutral-500">{weekCount === 1 ? 'task' : 'tasks'} ahead</p>
+        <div className="rounded-2xl border border-white/10 bg-[#1a1a1a] p-4">
+          <p className="text-xs font-medium uppercase tracking-widest text-white/40">This week</p>
+          <p className="mt-1 text-2xl font-bold text-white">{weekCount}</p>
+          <p className="text-xs text-white/55">{weekCount === 1 ? 'task' : 'tasks'} ahead</p>
         </div>
       </div>
 
       {groups.length === 0 ? (
-        <p className="py-8 text-center text-sm text-neutral-400">No upcoming tasks — you're clear.</p>
+        <p className="py-8 text-center text-sm text-white/40">No upcoming tasks — you're clear.</p>
       ) : (
         <div className="space-y-6">
           {groups.slice(0, 7).map((group) => (
             <div key={group.day}>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-neutral-400">{group.day}</p>
-              <div className="divide-y divide-neutral-100 rounded-2xl border border-neutral-100 bg-white overflow-hidden">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-white/40">{group.day}</p>
+              <div className="divide-y divide-white/10 rounded-2xl border border-white/10 bg-[#111] overflow-hidden">
                 {group.items.map((entry) => (
                   <div key={entry.goal_index} className="flex items-center gap-3 px-4 py-3">
-                    <span className="w-12 shrink-0 text-right text-xs tabular-nums text-neutral-400">{fmt(entry.time)}</span>
-                    <span className="flex-1 text-sm text-black">{entry.title}</span>
+                    <span className="w-12 shrink-0 text-right text-xs tabular-nums text-white/40">{fmt(entry.time)}</span>
+                    <span className="flex-1 text-sm text-white">{entry.title}</span>
                   </div>
                 ))}
               </div>

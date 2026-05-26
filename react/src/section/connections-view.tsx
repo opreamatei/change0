@@ -119,34 +119,34 @@ function ProposalBubble({
 
   return (
     <div className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-      <div className="max-w-[82%] rounded-2xl border border-neutral-200 bg-white px-4 py-3 shadow-sm">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-neutral-400 mb-1">
+      <div className="max-w-[82%] rounded-2xl border border-[#2a2a2a] bg-[#111] px-4 py-3 shadow-sm">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-1">
           Goal proposal
         </p>
-        <p className="text-sm font-semibold text-black">{proposal.title}</p>
+        <p className="text-sm font-semibold text-white">{proposal.title}</p>
         {proposal.extra_info && (
-          <p className="mt-0.5 text-xs text-neutral-500 line-clamp-3">{proposal.extra_info}</p>
+          <p className="mt-0.5 text-xs text-white/55 line-clamp-3">{proposal.extra_info}</p>
         )}
-        <p className="text-[10px] text-neutral-400 mt-1">{formatTime(at)}</p>
+        <p className="text-[10px] text-white/40 mt-1">{formatTime(at)}</p>
         {!mine && !done && (
           <div className="mt-2 flex gap-2">
             <button
               disabled={busy}
               onClick={() => void decline()}
-              className="rounded-lg border border-neutral-200 px-3 py-1.5 text-xs text-neutral-500 hover:border-red-300 hover:text-red-500 disabled:opacity-40"
+              className="rounded-lg border border-[#2a2a2a] px-3 py-1.5 text-xs text-white/55 hover:border-red-700 hover:text-red-400 disabled:opacity-40"
             >Decline</button>
             <button
               disabled={busy}
               onClick={() => void approve()}
-              className="rounded-lg bg-black px-3 py-1.5 text-xs text-white hover:bg-neutral-800 disabled:opacity-40"
+              className="rounded-lg bg-[#111] px-3 py-1.5 text-xs text-white hover:bg-[#e0e0e0] disabled:opacity-40"
             >Approve</button>
           </div>
         )}
         {mine && !done && (
-          <p className="mt-1.5 text-[10px] italic text-neutral-400">Waiting for {conn.other_name} to respond…</p>
+          <p className="mt-1.5 text-[10px] italic text-white/40">Waiting for {conn.other_name} to respond…</p>
         )}
         {done && (
-          <p className="mt-1.5 text-[10px] text-emerald-700">Done</p>
+          <p className="mt-1.5 text-[10px] text-emerald-400">Done</p>
         )}
       </div>
     </div>
@@ -239,17 +239,17 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
   }
 
   return (
-    <div className="flex flex-col h-full bg-white">
+    <div className="flex flex-col h-full bg-[#111]">
       {/* header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-neutral-100 shrink-0">
-        <button onClick={onBack} className="text-xl leading-none text-neutral-400 hover:text-black">←</button>
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10 shrink-0">
+        <button onClick={onBack} className="text-xl leading-none text-white/40 hover:text-white">←</button>
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-sm">{conn.other_name}</p>
-          <p className="text-[10px] text-neutral-400">Connected {formatTime(conn.proposed_at)}</p>
+          <p className="text-[10px] text-white/40">Connected {formatTime(conn.proposed_at)}</p>
         </div>
         <button
           type="button"
-          className="shrink-0 rounded-full border border-neutral-200 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+          className="shrink-0 rounded-full border border-[#2a2a2a] px-3 py-1.5 text-xs font-medium text-white/70 hover:bg-[#1a1a1a]"
           onClick={() => { setProposeOpen((v) => !v); setProposeError(null) }}
         >
           {proposeOpen ? 'Cancel' : '+ Propose goal'}
@@ -258,12 +258,12 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
 
       {/* root-goal proposal drawer */}
       {proposeOpen && (
-        <div className="border-b border-neutral-100 bg-neutral-50 px-4 py-3 shrink-0 space-y-2">
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-neutral-500">
+        <div className="border-b border-white/10 bg-[#1a1a1a] px-4 py-3 shrink-0 space-y-2">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-white/55">
             Propose a shared root goal with {conn.other_name}
           </p>
           <input
-            className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-black bg-white"
+            className="w-full rounded-lg border border-[#2a2a2a] px-3 py-2 text-sm outline-none focus:border-white bg-[#111]"
             placeholder="Goal title…"
             value={proposeTitle}
             onChange={(e) => setProposeTitle(e.target.value)}
@@ -272,27 +272,27 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
             autoFocus
           />
           <input
-            className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-sm outline-none focus:border-black bg-white"
+            className="w-full rounded-lg border border-[#2a2a2a] px-3 py-2 text-sm outline-none focus:border-white bg-[#111]"
             placeholder="Extra info (optional)…"
             value={proposeExtraInfo}
             onChange={(e) => setProposeExtraInfo(e.target.value)}
             disabled={proposeBusy}
           />
           <button
-            className="rounded-lg bg-black px-4 py-2 text-sm text-white disabled:opacity-40"
+            className="rounded-lg bg-[#111] px-4 py-2 text-sm text-white disabled:opacity-40"
             onClick={() => void proposeRootGoal()}
             disabled={proposeBusy || !proposeTitle.trim()}
           >
             {proposeBusy ? 'Proposing…' : 'Propose'}
           </button>
-          {proposeError && <p className="text-xs text-red-500">{proposeError}</p>}
+          {proposeError && <p className="text-xs text-red-400">{proposeError}</p>}
         </div>
       )}
 
       {/* messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2">
         {messages.length === 0 && (
-          <p className="text-xs text-neutral-400 text-center mt-12">No messages yet. Say hi.</p>
+          <p className="text-xs text-white/40 text-center mt-12">No messages yet. Say hi.</p>
         )}
         {messages.map((m, i) => {
           const proposal = parseProposal(m.text)
@@ -313,9 +313,9 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
           return (
             <div key={i} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[78%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed
-                ${mine ? 'bg-black text-white rounded-br-sm' : 'bg-neutral-100 text-black rounded-bl-sm'}`}>
+                ${mine ? 'bg-[#111] text-white rounded-br-sm' : 'bg-[#222] text-white rounded-bl-sm'}`}>
                 <p>{m.text}</p>
-                <p className="text-[10px] mt-1 text-neutral-400">{formatTime(m.at)}</p>
+                <p className="text-[10px] mt-1 text-white/40">{formatTime(m.at)}</p>
               </div>
             </div>
           )
@@ -324,9 +324,9 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
       </div>
 
       {/* input */}
-      <div className="shrink-0 border-t border-neutral-100 px-4 py-3 flex gap-2 bg-white">
+      <div className="shrink-0 border-t border-white/10 px-4 py-3 flex gap-2 bg-[#111]">
         <input
-          className="flex-1 rounded-full border border-neutral-200 px-4 py-2.5 text-sm outline-none focus:border-black bg-neutral-50"
+          className="flex-1 rounded-full border border-[#2a2a2a] px-4 py-2.5 text-sm outline-none focus:border-white bg-[#1a1a1a]"
           placeholder="Message…"
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -334,7 +334,7 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
           disabled={sending}
         />
         <button
-          className="rounded-full bg-black text-white text-sm px-5 py-2.5 disabled:opacity-40 shrink-0"
+          className="rounded-full bg-[#111] text-white text-sm px-5 py-2.5 disabled:opacity-40 shrink-0"
           onClick={send}
           disabled={sending || !text.trim()}
         >
@@ -373,44 +373,44 @@ function ProposalCard({
   return (
     <div className="mx-auto w-full max-w-sm">
       {/* card */}
-      <div className="rounded-3xl bg-white border border-neutral-100 shadow-sm overflow-hidden">
+      <div className="rounded-3xl bg-[#111] border border-white/10 shadow-sm overflow-hidden">
         {/* name bar */}
         <div className="px-6 pt-6 pb-4">
           <p className="text-xl font-semibold tracking-tight">{conn.other_name}</p>
-          <p className="text-xs text-neutral-400 mt-0.5">{formatTime(conn.proposed_at)}</p>
+          <p className="text-xs text-white/40 mt-0.5">{formatTime(conn.proposed_at)}</p>
         </div>
 
         {/* reason */}
         <div className="px-6 pb-6">
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-neutral-400 mb-2">Why you might click</p>
-          <p className="text-sm text-neutral-700 leading-relaxed">{conn.reason}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-white/40 mb-2">Why you might click</p>
+          <p className="text-sm text-white/70 leading-relaxed">{conn.reason}</p>
         </div>
 
         {/* divider */}
-        <div className="border-t border-neutral-100" />
+        <div className="border-t border-white/10" />
 
         {/* actions */}
         <div className="px-6 py-5">
           {waitingForThem ? (
             <div className="text-center py-2">
-              <p className="text-sm font-medium text-black">Request sent</p>
-              <p className="text-xs text-neutral-400 mt-1">Waiting for {conn.other_name} to respond.</p>
+              <p className="text-sm font-medium text-white">Request sent</p>
+              <p className="text-xs text-white/40 mt-1">Waiting for {conn.other_name} to respond.</p>
             </div>
           ) : (
             <div className="flex gap-3">
               <button
                 onClick={() => { void decline() }}
                 disabled={busy}
-                className="flex-1 rounded-2xl border-2 border-neutral-200 text-sm font-semibold py-3.5 text-neutral-500
-                  hover:border-red-300 hover:text-red-500 transition-colors disabled:opacity-40"
+                className="flex-1 rounded-2xl border-2 border-[#2a2a2a] text-sm font-semibold py-3.5 text-white/55
+                  hover:border-red-700 hover:text-red-400 transition-colors disabled:opacity-40"
               >
                 Pass
               </button>
               <button
                 onClick={() => { void approve() }}
                 disabled={busy}
-                className="flex-1 rounded-2xl bg-black text-white text-sm font-semibold py-3.5
-                  hover:bg-neutral-800 transition-colors disabled:opacity-40"
+                className="flex-1 rounded-2xl bg-[#111] text-white text-sm font-semibold py-3.5
+                  hover:bg-[#e0e0e0] transition-colors disabled:opacity-40"
               >
                 Connect
               </button>
@@ -434,19 +434,19 @@ function ConnectedRow({
   return (
     <button
       onClick={onOpen}
-      className="w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl bg-white border border-neutral-100
-        hover:border-neutral-300 transition-colors text-left"
+      className="w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl bg-[#111] border border-white/10
+        hover:border-[#333] transition-colors text-left"
     >
       {/* avatar placeholder */}
-      <div className="w-10 h-10 rounded-full bg-neutral-900 text-white flex items-center justify-center
+      <div className="w-10 h-10 rounded-full bg-[#2a2a2a] text-white flex items-center justify-center
         text-sm font-semibold shrink-0">
         {conn.other_name.charAt(0).toUpperCase()}
       </div>
       <div className="flex-1 min-w-0">
         <p className="font-semibold text-sm">{conn.other_name}</p>
-        <p className="text-xs text-neutral-400 truncate">{conn.reason}</p>
+        <p className="text-xs text-white/40 truncate">{conn.reason}</p>
       </div>
-      <span className="text-neutral-300 text-lg">›</span>
+      <span className="text-white/30 text-lg">›</span>
     </button>
   )
 }
@@ -489,7 +489,7 @@ export default function ConnectionsView({ userId }: { userId: string }) {
   const declined   = connections.filter((c) => c.state === STATE_DECLINED)
 
   if (loading) {
-    return <div className="flex items-center justify-center h-full text-sm text-neutral-400">Loading…</div>
+    return <div className="flex items-center justify-center h-full text-sm text-white/40">Loading…</div>
   }
 
   const empty = proposals.length === 0 && confirmed.length === 0
@@ -501,7 +501,7 @@ export default function ConnectionsView({ userId }: { userId: string }) {
         <div className="flex flex-col items-center justify-center py-20 text-center space-y-3">
           <p className="text-2xl">👋</p>
           <p className="text-sm font-semibold">No connections yet</p>
-          <p className="text-xs text-neutral-400 max-w-xs leading-relaxed">
+          <p className="text-xs text-white/40 max-w-xs leading-relaxed">
             Tell the assistant you're open to meeting people — it will build a short profile and search for a match.
           </p>
         </div>
@@ -539,7 +539,7 @@ export default function ConnectionsView({ userId }: { userId: string }) {
 
         return (
           <section className="space-y-4">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-neutral-400 px-1">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-white/40 px-1">
               {proposals.length === 1 ? '1 proposal' : `1 of ${proposals.length} proposals`}
             </p>
             <ProposalCard
@@ -555,7 +555,7 @@ export default function ConnectionsView({ userId }: { userId: string }) {
       {/* confirmed */}
       {confirmed.length > 0 && (
         <section className="space-y-2">
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-neutral-400 px-1">Connected</p>
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-white/40 px-1">Connected</p>
           {confirmed.map((c) => (
             <ConnectedRow key={c.id} conn={c} onOpen={() => setThread(c)} />
           ))}
@@ -565,15 +565,15 @@ export default function ConnectionsView({ userId }: { userId: string }) {
       {/* declined — collapsed */}
       {declined.length > 0 && (
         <details className="px-1">
-          <summary className="text-[11px] text-neutral-400 cursor-pointer select-none list-none flex items-center gap-1">
-            <span className="text-neutral-300">▸</span>
+          <summary className="text-[11px] text-white/40 cursor-pointer select-none list-none flex items-center gap-1">
+            <span className="text-white/30">▸</span>
             {declined.length} passed
           </summary>
           <div className="mt-3 space-y-2">
             {declined.map((c) => (
-              <div key={c.id} className="px-4 py-3 rounded-2xl border border-neutral-100 bg-neutral-50">
-                <p className="text-sm font-medium text-neutral-400">{c.other_name}</p>
-                <p className="text-xs text-neutral-300 mt-0.5">{c.reason}</p>
+              <div key={c.id} className="px-4 py-3 rounded-2xl border border-white/10 bg-[#1a1a1a]">
+                <p className="text-sm font-medium text-white/40">{c.other_name}</p>
+                <p className="text-xs text-white/30 mt-0.5">{c.reason}</p>
               </div>
             ))}
           </div>
