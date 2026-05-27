@@ -947,6 +947,14 @@ void handle_get_session_goals(int fd, User *user)
 	free(out.p);
 }
 
+/* Force a full recompute (health-check + schedule rebuild) then return results. */
+void handle_post_schedule_refresh(int fd, User *user)
+{
+	user->goal_health_needs_refresh = 1;
+	user->schedule_needs_refresh    = 1;
+	handle_get_schedule(fd, user);
+}
+
 void handle_get_schedule(int fd, User *user)
 {
 	size_t len = 0;

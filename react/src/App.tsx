@@ -3,8 +3,10 @@ import CurrentGoalsView from './section/current-goals-view'
 import DailyBriefView from './section/daily-brief-view'
 import SettingsView from './section/settings-view'
 import TogetherView from './section/together-view'
+import JournalView from './section/journal-view'
 import LoginView, { type LocalUser } from './section/login-view'
 import LoadingOrb from './components/loading-orb'
+import NavBar, { type NavPanel } from './components/nav-bar'
 import {
   applyGoalEvent,
   endGoalOnServer,
@@ -59,7 +61,7 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState('Loading goals from server...')
   const [pendingGoalIndex, setPendingGoalIndex] = useState<number | null>(null)
-  const [goalPanel, setGoalPanel] = useState<'current' | 'schedule' | 'together' | 'settings'>('current')
+  const [goalPanel, setGoalPanel] = useState<NavPanel>('journey')
   const [celebration, setCelebration] = useState<{ title: string } | null>(null)
   const [dropConfirm, setDropConfirm] = useState<{ goalId: string; title: string } | null>(null)
   const [devTime, setDevTime] = useState<DevTimeState | null>(null)
@@ -423,7 +425,7 @@ function App() {
     }
 
     return (
-      <main className="min-h-full pb-20 px-4 py-8 text-white sm:px-6">
+      <main className="fixed inset-0 flex flex-col text-white overflow-hidden">
         {devPanelOpen ? (
           <aside className="fixed right-3 top-3 z-50 rounded-xl border border-[#2a2a2a] bg-[#111]/95 px-3 py-3 shadow-sm backdrop-blur sm:right-5 sm:top-5">
             <div className="mb-2 flex items-center justify-between gap-2">
@@ -526,44 +528,28 @@ function App() {
             </div>
           </div>
         )}
-        {goalPanel === 'schedule' ? (
-          <DailyBriefView />
-        ) : goalPanel === 'current' ? (
-          <CurrentGoalsView
-            goals={goals}
-            statusMessage={error ?? message}
-            pendingGoalIndex={pendingGoalIndex}
-            onNavigate={navigateToGoal}
-            onStartGoal={(targetGoal) => void runGoalAction(targetGoal, 'start')}
-            onEndGoal={(targetGoal) => void runGoalAction(targetGoal, 'end')}
-            onRepairGoal={(targetGoal, reason) => void runRepairGoal(targetGoal, reason)}
-          />
-        ) : goalPanel === 'together' ? (
-          <TogetherView userId={localUser?.id ?? ''} />
-        ) : goalPanel === 'settings' ? (
-          <SettingsView />
-        ) : null}
-        <nav className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-[#2a2a2a] bg-[#111]/95 backdrop-blur">
-          {([
-            ['current', 'Session'],
-            ['schedule', 'Schedule'],
-            ['together', 'Together'],
-            ['settings', 'Settings'],
-          ] as [typeof goalPanel, string][]).map(([panel, label]) => (
-            <button
-              key={panel}
-              type="button"
-              className={`flex-1 py-4 text-sm transition-colors ${
-                goalPanel === panel
-                  ? 'border-t-2 border-black font-semibold text-white'
-                  : 'border-t-2 border-transparent text-white/40'
-              }`}
-              onClick={() => setGoalPanel(panel)}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
+        <div className="absolute inset-0 overflow-hidden">
+          {goalPanel === 'journey' ? (
+            <CurrentGoalsView
+              goals={goals}
+              statusMessage={error ?? message}
+              pendingGoalIndex={pendingGoalIndex}
+              onNavigate={navigateToGoal}
+              onStartGoal={(targetGoal) => void runGoalAction(targetGoal, 'start')}
+              onEndGoal={(targetGoal) => void runGoalAction(targetGoal, 'end')}
+              onRepairGoal={(targetGoal, reason) => void runRepairGoal(targetGoal, reason)}
+            />
+          ) : goalPanel === 'collab' ? (
+            <TogetherView userId={localUser?.id ?? ''} />
+          ) : goalPanel === 'schedule' ? (
+            <DailyBriefView />
+          ) : goalPanel === 'profile' ? (
+            <SettingsView />
+          ) : (
+            <JournalView />
+          )}
+        </div>
+        <NavBar panel={goalPanel} onSetPanel={setGoalPanel} />
       </main>
     )
   }

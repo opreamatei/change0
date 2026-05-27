@@ -739,10 +739,19 @@ export default function ChatView() {
   const [thinking, setThinking] = useState(false)
   const [reloading, setReloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
   const pendingSuggestionHighlightsRef = useRef<Array<{ text: string; color: string }>>([])
   const suggestionHideTimeoutRef = useRef<number | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  function handleAttach(file: File, kind: 'image' | 'file') {
+    const prefix = kind === 'image' ? '📷' : '📎'
+    setInput((prev) => (prev ? prev + ' ' : '') + `${prefix} ${file.name}`)
+    inputRef.current?.focus()
+  }
 
   async function loadSession(sid: string) {
     try {
@@ -976,7 +985,110 @@ export default function ChatView() {
 
       {error && <p className="mb-2 text-xs text-red-400">{error}</p>}
 
-      <div className="flex gap-2 border-t border-[#2a2a2a] pt-3">
+      {/* Options menu — slides up above the input bar */}
+      <div
+        className="overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)]"
+        style={{ maxHeight: menuOpen ? 220 : 0, opacity: menuOpen ? 1 : 0 }}
+      >
+        <div className="pb-2 pt-1 grid grid-cols-4 gap-2">
+          {/* Propose Goal — green */}
+          <button
+            type="button"
+            className="flex flex-col items-center gap-1.5 rounded-2xl py-3 px-2 text-[11px] font-semibold text-white transition-transform active:scale-95"
+            style={{ background: 'rgba(22,163,74,0.18)', border: '1px solid rgba(22,163,74,0.35)' }}
+            onClick={() => {
+              setInput((prev) => (prev ? prev + ' ' : '') + '/propose ')
+              setMenuOpen(false)
+              inputRef.current?.focus()
+            }}
+          >
+            <span className="text-2xl leading-none">🎯</span>
+            <span style={{ color: '#4ade80' }}>Propose</span>
+          </button>
+
+          {/* Photo — blue */}
+          <button
+            type="button"
+            className="flex flex-col items-center gap-1.5 rounded-2xl py-3 px-2 text-[11px] font-semibold text-white transition-transform active:scale-95"
+            style={{ background: 'rgba(37,99,235,0.18)', border: '1px solid rgba(37,99,235,0.35)' }}
+            onClick={() => { imageInputRef.current?.click(); setMenuOpen(false) }}
+          >
+            <span className="text-2xl leading-none">📷</span>
+            <span style={{ color: '#60a5fa' }}>Photo</span>
+          </button>
+
+          {/* File — orange */}
+          <button
+            type="button"
+            className="flex flex-col items-center gap-1.5 rounded-2xl py-3 px-2 text-[11px] font-semibold text-white transition-transform active:scale-95"
+            style={{ background: 'rgba(234,88,12,0.18)', border: '1px solid rgba(234,88,12,0.35)' }}
+            onClick={() => { fileInputRef.current?.click(); setMenuOpen(false) }}
+          >
+            <span className="text-2xl leading-none">📎</span>
+            <span style={{ color: '#fb923c' }}>File</span>
+          </button>
+
+          {/* Reminder — violet */}
+          <button
+            type="button"
+            className="flex flex-col items-center gap-1.5 rounded-2xl py-3 px-2 text-[11px] font-semibold text-white transition-transform active:scale-95"
+            style={{ background: 'rgba(124,58,237,0.18)', border: '1px solid rgba(124,58,237,0.35)' }}
+            onClick={() => {
+              setInput((prev) => (prev ? prev + ' ' : '') + '/remind ')
+              setMenuOpen(false)
+              inputRef.current?.focus()
+            }}
+          >
+            <span className="text-2xl leading-none">⏰</span>
+            <span style={{ color: '#a78bfa' }}>Remind</span>
+          </button>
+        </div>
+      </div>
+
+      {/* hidden file inputs */}
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          if (f) handleAttach(f, 'image')
+          e.target.value = ''
+        }}
+      />
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          if (f) handleAttach(f, 'file')
+          e.target.value = ''
+        }}
+      />
+
+      <div className="flex items-center gap-2 border-t border-[#2a2a2a] pt-3">
+        {/* + button */}
+        <button
+          type="button"
+          onClick={() => setMenuOpen((v) => !v)}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#333] text-white/55 transition-all hover:bg-[#1a1a1a] hover:text-white/80"
+          style={menuOpen ? { borderColor: 'rgba(255,255,255,0.3)', color: 'rgba(255,255,255,0.9)', background: '#1a1a1a' } : {}}
+        >
+          <svg
+            width="16" height="16" viewBox="0 0 16 16" fill="none"
+            stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+            style={{
+              transition: 'transform 0.25s ease',
+              transform: menuOpen ? 'rotate(45deg)' : 'rotate(0deg)',
+            }}
+          >
+            <line x1="8" y1="2" x2="8" y2="14" />
+            <line x1="2" y1="8" x2="14" y2="8" />
+          </svg>
+        </button>
+
         <input
           ref={inputRef}
           type="text"

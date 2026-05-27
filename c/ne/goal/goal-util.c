@@ -301,7 +301,17 @@ Goal** GetLeafDueGoals(size_t *size, const char *journey_id, const char *user_id
 			_Bool goalStartedEnded    = (g->start_date && g->end_date);
 			_Bool nextNotStartedNotEnded = g->next && next && !next->start_date && !next->end_date;
 
-			if (!(goalStartedNotEnded || (goalStartedEnded && nextNotStartedNotEnded)))
+			/*
+			 * Also catch the first leaf of a completely fresh chain:
+			 * a leaf with no previous sibling and no start_date is the
+			 * entry point for journeys where nothing has been started yet.
+			 * RefreshSchedule will anchor such chains at "now".
+			 */
+			_Bool freshChainStart = (g->subgoals_len == 0) &&
+			                        (g->start_date == 0) &&
+			                        (g->prev == 0);
+
+			if (!(goalStartedNotEnded || (goalStartedEnded && nextNotStartedNotEnded) || freshChainStart))
 				continue;
 
 			if (apply_user_filter && g->subgoals_len == 0 && g->assigned_to != my_index)

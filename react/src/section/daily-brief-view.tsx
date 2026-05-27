@@ -127,8 +127,8 @@ export default function DailyBriefView() {
     bodyRef.current.scrollTop = Math.max(0, (nowMin * HOUR_H) / 60 - 120)
   }, [now])
 
-  /* fetch */
-  const refresh = useCallback(async () => {
+  /* silent GET — used on mount to load whatever the server has cached */
+  const load = useCallback(async () => {
     try {
       setLoading(true)
       const res = await fetch(SERVER_ENDPOINTS.schedule, { cache: 'no-store' })
@@ -143,7 +143,26 @@ export default function DailyBriefView() {
     }
   }, [])
 
-  useEffect(() => { void refresh() }, [refresh])
+  /* POST /schedule/refresh — forces health-check + full rebuild on the server */
+  const refresh = useCallback(async () => {
+    try {
+      setLoading(true)
+      const res = await fetch(SERVER_ENDPOINTS.scheduleRefresh, {
+        method: 'POST',
+        cache: 'no-store',
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = (await res.json()) as ScheduleResponse
+      setEntries(data.entries ?? [])
+      setError(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { void load() }, [load])
 
   /* build blocks for selected day */
   const dayEntries = entries.filter((e) => isSameDay(new Date(e.time * 1000), selDate))

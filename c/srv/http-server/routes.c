@@ -65,6 +65,7 @@ static int handle_request(int fd, const HttpRequest *req, User *user)
 
 	if (POST("/message"))               { handle_post_message(fd, req, user);                return 0; }
 	if (GET("/schedule"))               { handle_get_schedule(fd, user);                     return 0; }
+	if (POST("/schedule/refresh"))      { handle_post_schedule_refresh(fd, user);            return 0; }
 
 #undef GET
 #undef POST

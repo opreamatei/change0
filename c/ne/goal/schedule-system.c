@@ -76,16 +76,45 @@ void RefreshSchedule(User *user) {
 	for (size_t i = 0; i < total_due; i++) {
 		Goal *g = all_due[i];
 
+		/* Skip if already covered by an earlier chain walk in all_due */
+		_Bool covered = 0;
+		for (size_t s = 0; s < user->schedule_len; s++) {
+			if (user->schedule_table[s].goalIndex == g->localIndex &&
+				strcmp(user->schedule_table[s].journey_id, g->journey_id) == 0) {
+				covered = 1;
+				break;
+			}
+		}
+		if (covered) continue;
+
 		time_t start_time;
-		if (g->start_date) {
+		if (g->start_date && g->end_date) {
+			/*
+			 * GetLeafDueGoals returned a finished goal because its immediate
+			 * next sibling is pending.  Don't re-schedule the finished goal —
+			 * jump straight to the next leaf and use the actual end time as
+			 * the base for the rest of the chain.
+			 */
+			start_time = g->end_date + g->pauseToNext;
+			g = next_leaf(g);
+			if (!g) continue;
+		} else if (g->start_date) {
+			/* Active (started, not yet ended). */
 			start_time = g->start_date;
+		} else if (g->prev == 0) {
+			/*
+			 * Fresh chain: no previous leaf, nothing started.
+			 * Anchor to the current time; pauseToNext values on subsequent
+			 * goals (set by RunGoalHealthCheck) encode the correct gaps.
+			 */
+			start_time = change_time_now();
 		} else {
+			/* Not started yet — use the previous leaf's end date. */
 			Goal *prev = FindGoalFromIndex(g->journey_id, g->prev);
 			change_assert(prev, "Due goal [%zu] has broken prev reference [%zu].\n", g->localIndex, g->prev);
 			start_time = prev->end_date + prev->pauseToNext;
 		}
 
-		// TODO make sure you come back to understand this deeply
 		while (g) {
 			user->schedule_table[user->schedule_len].time = start_time;
 			user->schedule_table[user->schedule_len].goalIndex = g->localIndex;

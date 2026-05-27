@@ -1,23 +1,19 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CENTRAL_ENDPOINTS, SERVER_ENDPOINTS } from '../config/server'
+import { PathCanvas } from '../components/path-canvas'
+import type { PathNodeData, NodeState } from '../components/path-canvas'
 import ChatView from './chat-view'
 import ConnectionsView from './connections-view'
 
-/*
- * "Together" — the shared-journey companion to the solo Session tab.
- *
- * The data source is the central server, not the local client server, so
- * both participants always see the same source of truth without sync. The
- * Goal shape mirrors the C-side journey JSON: subgoals are sibling
- * localIndex references inside the same journey, and assigned_to is a byte
- * (255 = unassigned, otherwise a participant index in this journey's
- * users[] table).
- *
- * Non-leaf goals are intentionally left visible but greyed; only leaves
- * carry a real owner.
- */
-
 const UNASSIGNED = 255
+
+// Per-participant colour palette for the collab canvas
+const PARTICIPANT_COLORS = [
+  '#8b5cf6', // violet (user 0)
+  '#f43f5e', // rose   (user 1)
+  '#f59e0b', // amber  (user 2)
+  '#14b8a6', // teal   (user 3)
+]
 
 interface ParticipantSummary {
   index: number
@@ -108,10 +104,6 @@ function classifyLeaf(g: JourneyGoal): LeafEntry['state'] {
   return 'idle'
 }
 
-function isLeaf(g: JourneyGoal): boolean {
-  return g.subgoals_len === 0
-}
-
 function lastLeaf(g: JourneyGoal, goalMap: Map<number, JourneyGoal>): JourneyGoal {
   if (g.subgoals_len === 0) return g
   const lastIdx = g.subgoals[g.subgoals_len - 1]
@@ -133,7 +125,7 @@ function previousTimelineLeaf(g: JourneyGoal, goalMap: Map<number, JourneyGoal>)
 }
 
 function canStartLeaf(g: JourneyGoal, goalMap: Map<number, JourneyGoal>): boolean {
-  if (!isLeaf(g) || g.start_date !== 0) return false
+  if (g.subgoals_len !== 0 || g.start_date !== 0) return false
   let prev = previousTimelineLeaf(g, goalMap)
   while (prev) {
     if (!prev.end_date) return false
@@ -152,180 +144,244 @@ function collectLeavesInOrder(g: JourneyGoal, goalMap: Map<number, JourneyGoal>)
   return out
 }
 
-function SharedLeafCard({
-  entry,
-  owner,
-  allUsers,
-  myUserId,
-  onAction,
-  onReassign,
-  actionBusy,
+/* ─── collab node detail sheet ──────────────────────────────────────────── */
+
+function CollabNodeDetail({
+  leaf, detail, goalMap, userId, actionBusy, onAction, onReassign, onClose,
 }: {
-  entry: LeafEntry
-  owner: JourneyUser | undefined
-  allUsers: JourneyUser[]
-  myUserId: string
+  leaf: JourneyGoal
+  detail: JourneyDetail
+  goalMap: Map<number, JourneyGoal>
+  userId: string
+  actionBusy: boolean
   onAction: (goalId: string, action: 'start' | 'end') => Promise<void>
   onReassign: (goalId: string, targetUserId: string) => Promise<void>
-  actionBusy: boolean
+  onClose: () => void
 }) {
   const [passingTo, setPassing] = useState<string | null>(null)
-  const mine = owner?.id === myUserId
-  const { goal, state, canStart } = entry
-  const others = allUsers.filter((u) => u.id !== owner?.id)
+  const state = classifyLeaf(leaf)
+  const owner = leaf.assigned_to === UNASSIGNED ? undefined : detail.users[leaf.assigned_to]
+  const mine = owner?.id === userId
+  const canStart = canStartLeaf(leaf, goalMap)
+  const others = detail.users.filter((u) => u.id !== owner?.id)
 
-  const ownerBadge = (
-    <span className={[
-      'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold',
-      mine ? 'bg-[#111] text-white' : 'bg-[#2a2a2a] text-white/55',
-    ].join(' ')}>
-      {owner?.display_name ?? '?'}{mine && ' (you)'}
-    </span>
-  )
-
-  if (state === 'finished') {
-    return (
-      <article className="rounded-xl border border-white/10 bg-[#1a1a1a] px-5 py-4">
-        <div className="mb-2 flex items-center gap-2">
-          <span className="size-2 rounded-full bg-neutral-300" />
-          <span className="text-xs font-semibold uppercase tracking-widest text-white/40">Done</span>
-          {ownerBadge}
-        </div>
-        <h3 className="text-base font-semibold text-white/40 line-through">{goal.title}</h3>
-        <p className="mt-1 text-xs text-white/40">{formatDuration(goal.required_time)} estimated</p>
-      </article>
-    )
-  }
-
-  if (state === 'started') {
-    return (
-      <article className="rounded-xl border border-green-900 bg-green-950/30 px-5 py-4">
-        <div className="mb-2 flex items-center gap-2">
-          <span className="size-2 animate-pulse rounded-full bg-green-500" />
-          <span className="text-xs font-semibold uppercase tracking-widest text-green-400">Running</span>
-          {ownerBadge}
-        </div>
-        <h3 className="mb-1 text-base font-semibold text-white">{goal.title}</h3>
-        {goal.extra_info && <p className="mb-3 text-sm leading-relaxed text-white/70">{goal.extra_info}</p>}
-        <p className="mb-3 text-xs text-white/55">{formatDuration(goal.required_time)} estimated</p>
-        {mine && (
-          <button
-            disabled={actionBusy}
-            onClick={() => void onAction(goal.id, 'end')}
-            className="rounded border border-[#333] px-3 py-1.5 text-sm text-white/70 hover:bg-[#1a1a1a] disabled:opacity-40"
-          >End</button>
-        )}
-      </article>
-    )
-  }
-
-  const passControls = mine && state === 'idle' && others.length > 0 && (
-    <div className="mt-2">
-      {passingTo === null ? (
-        <button
-          disabled={actionBusy}
-          onClick={() => setPassing(others[0]!.id)}
-          className="rounded border border-[#333] px-3 py-1.5 text-sm text-white/55 hover:bg-[#1a1a1a] disabled:opacity-40"
-        >Pass</button>
-      ) : (
-        <div className="flex items-center gap-2">
-          <select
-            value={passingTo}
-            onChange={(e) => setPassing(e.target.value)}
-            className="rounded border border-[#333] px-2 py-1.5 text-sm text-white outline-none"
-          >
-            {others.map((u) => (
-              <option key={u.id} value={u.id}>{u.display_name}</option>
-            ))}
-          </select>
-          <button
-            disabled={actionBusy}
-            onClick={() => { void onReassign(goal.id, passingTo); setPassing(null) }}
-            className="rounded border border-[#333] bg-white px-3 py-1.5 text-sm text-black hover:bg-[#e5e5e5] disabled:opacity-40"
-          >Confirm</button>
-          <button
-            onClick={() => setPassing(null)}
-            className="rounded border border-[#333] px-3 py-1.5 text-sm text-white/55 hover:bg-[#1a1a1a]"
-          >Cancel</button>
-        </div>
-      )}
-    </div>
-  )
-
-  if (canStart) {
-    return (
-      <article className="rounded-xl border border-[#2a2a2a] bg-[#111] px-5 py-4">
-        <div className="mb-2 flex items-center gap-2">
-          {ownerBadge}
-        </div>
-        <h3 className="mb-1 text-base font-semibold text-white">{goal.title}</h3>
-        {goal.extra_info && <p className="mb-3 text-sm leading-relaxed text-white/55">{goal.extra_info}</p>}
-        <p className="mb-3 text-xs text-white/55">{formatDuration(goal.required_time)} estimated</p>
-        <div className="flex flex-wrap gap-2">
-          {mine && (
-            <button
-              disabled={actionBusy}
-              onClick={() => void onAction(goal.id, 'start')}
-              className="rounded border border-green-800 bg-green-950/30 px-3 py-1.5 text-sm text-green-400 hover:bg-green-900/30 disabled:opacity-40"
-            >Start</button>
-          )}
-          {!mine && (
-            <p className="text-xs text-white/40 italic self-center">Waiting for {owner?.display_name ?? 'partner'}</p>
-          )}
-        </div>
-        {passControls}
-      </article>
-    )
-  }
-
-  /* Future — not yet reachable */
   return (
-    <article className="rounded-xl border border-white/10 bg-[#1a1a1a] px-5 py-4">
-      <div className="mb-1 flex items-center gap-2 opacity-50">{ownerBadge}</div>
-      <h3 className="text-base font-semibold text-white/40">{goal.title}</h3>
-      <p className="mt-1 text-xs text-white/40">{formatDuration(goal.required_time)} estimated</p>
-      {passControls}
-    </article>
+    <div className="fixed inset-0 z-[60] flex items-end justify-center">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-lg rounded-t-3xl border-t border-[#2a2a2a] bg-[#111] px-6 py-6 pb-10">
+        <div className="mb-2 flex items-center gap-2">
+          {state === 'started' && <span className="size-1.5 animate-pulse rounded-full bg-green-500" />}
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40">
+            {state === 'finished' ? 'Done' : state === 'started' ? 'Running' : 'Next'}
+          </p>
+          {owner && (
+            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold bg-[#2a2a2a] text-white/70">
+              {owner.display_name}{mine && ' (you)'}
+            </span>
+          )}
+          {!owner && (
+            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold bg-[#2a2a2a] text-white/40">
+              Unassigned
+            </span>
+          )}
+        </div>
+        <p className="mb-1 text-base font-semibold text-white">{leaf.title}</p>
+        {leaf.extra_info && <p className="mb-3 text-sm leading-relaxed text-white/55">{leaf.extra_info}</p>}
+        <p className="mb-4 text-xs text-white/40">{formatDuration(leaf.required_time)} estimated</p>
+        <div className="flex flex-wrap gap-2">
+          {state !== 'finished' && mine && canStart && (
+            <button disabled={actionBusy} onClick={() => void onAction(leaf.id, 'start')}
+              className="rounded-xl border border-green-800 bg-green-950/30 px-4 py-2 text-sm text-green-400 disabled:opacity-40">
+              Start
+            </button>
+          )}
+          {state === 'started' && mine && (
+            <button disabled={actionBusy} onClick={() => void onAction(leaf.id, 'end')}
+              className="rounded-xl border border-[#333] px-4 py-2 text-sm text-white/70 disabled:opacity-40">
+              End
+            </button>
+          )}
+          {!mine && state !== 'finished' && canStart && (
+            <p className="text-xs text-white/40 italic self-center">
+              Waiting for {owner?.display_name ?? 'partner'}
+            </p>
+          )}
+          {mine && others.length > 0 && state !== 'finished' && (
+            passingTo === null ? (
+              <button disabled={actionBusy} onClick={() => setPassing(others[0]!.id)}
+                className="rounded-xl border border-[#333] px-4 py-2 text-sm text-white/55 disabled:opacity-40">
+                Pass
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <select value={passingTo} onChange={(e) => setPassing(e.target.value)}
+                  className="rounded border border-[#333] px-2 py-1.5 text-sm text-white outline-none bg-[#1a1a1a]">
+                  {others.map((u) => (
+                    <option key={u.id} value={u.id}>{u.display_name}</option>
+                  ))}
+                </select>
+                <button disabled={actionBusy}
+                  onClick={() => { void onReassign(leaf.id, passingTo); setPassing(null) }}
+                  className="rounded border border-[#333] bg-white px-3 py-1.5 text-sm text-black disabled:opacity-40">
+                  Confirm
+                </button>
+                <button onClick={() => setPassing(null)}
+                  className="rounded border border-[#333] px-3 py-1.5 text-sm text-white/55">
+                  Cancel
+                </button>
+              </div>
+            )
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
 
-function JourneyCard({ summary, userId }: { summary: JourneyListItem; userId: string }) {
-  const [expanded, setExpanded] = useState(false)
+/* ─── collab journey detail view ─────────────────────────────────────────── */
+
+function CollabJourneyView({
+  summary, userId, onBack,
+}: {
+  summary: JourneyListItem
+  userId: string
+  onBack: () => void
+}) {
   const [detail, setDetail] = useState<JourneyDetail | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [proposals, setProposals] = useState<RootProposal[]>([])
-  const [proposalBusy, setProposalBusy] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
   const [leafBusy, setLeafBusy] = useState(false)
+  const [proposalBusy, setProposalBusy] = useState(false)
+  const wrapperRef = useRef<HTMLDivElement>(null)
+  const [dim, setDim] = useState({ w: 0, h: 0 })
+
+  useEffect(() => {
+    const el = wrapperRef.current
+    if (!el) return
+    function measure() {
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      setDim({ w: Math.max(280, Math.floor(r.width)), h: Math.max(360, Math.floor(r.height)) })
+    }
+    measure()
+    const obs = new ResizeObserver(measure)
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [])
 
   const load = useCallback(async () => {
     try {
-      setLoading(true)
-      const [detailRes, propsRes] = await Promise.all([
+      const [dr, pr] = await Promise.all([
         fetch(CENTRAL_ENDPOINTS.journey(summary.id), { cache: 'no-store' }),
         fetch(CENTRAL_ENDPOINTS.journeyProposals(summary.id), { cache: 'no-store' }),
       ])
-      if (!detailRes.ok) throw new Error(`journey fetch failed (${detailRes.status})`)
-      const data = (await detailRes.json()) as JourneyDetail
+      if (!dr.ok) throw new Error(`journey fetch failed (${dr.status})`)
+      const data = (await dr.json()) as JourneyDetail
       setDetail(data)
-      if (propsRes.ok) {
-        const pd = (await propsRes.json()) as { ok: boolean; proposals: RootProposal[] }
+      if (pr.ok) {
+        const pd = (await pr.json()) as { ok: boolean; proposals: RootProposal[] }
         if (pd.ok) setProposals(pd.proposals)
       }
-      setError(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }
   }, [summary.id])
 
   useEffect(() => {
-    if (!expanded) return
     void load()
     const id = setInterval(load, 6000)
     return () => clearInterval(id)
-  }, [expanded, load])
+  }, [load])
+
+  const goalMap = useMemo(
+    () => detail ? new Map<number, JourneyGoal>(detail.goals.map((g) => [g.localIndex, g])) : new Map<number, JourneyGoal>(),
+    [detail],
+  )
+
+  const orderedLeaves = useMemo(() => {
+    if (!detail) return []
+    const leaves: JourneyGoal[] = []
+    for (const g of detail.goals) {
+      if (g.parent !== 0) continue
+      leaves.push(...collectLeavesInOrder(g, goalMap))
+    }
+    return leaves
+  }, [detail, goalMap])
+
+  const collabNodes = useMemo((): PathNodeData[] => {
+    let num = 1
+    let prevParentIdx: number | null | undefined = undefined
+    return orderedLeaves.map((leaf) => {
+      const nodeState: NodeState =
+        leaf.start_date && leaf.end_date ? 'done' :
+        leaf.start_date ? 'active' : 'idle'
+      const chapterTitle = leaf.parent !== prevParentIdx && leaf.parent !== 0
+        ? goalMap.get(leaf.parent)?.title
+        : undefined
+      prevParentIdx = leaf.parent
+      // colour by assigned participant
+      const tintColor = (leaf.assigned_to !== UNASSIGNED && leaf.assigned_to >= 0)
+        ? PARTICIPANT_COLORS[leaf.assigned_to % PARTICIPANT_COLORS.length]
+        : undefined
+      return { key: leaf.localIndex, title: leaf.title, nodeState, num: num++, isMystery: false, chapterTitle, tintColor }
+    })
+  }, [orderedLeaves, goalMap])
+
+  const focusIdx = useMemo(() => {
+    let idx = collabNodes.findIndex((n) => n.nodeState === 'active')
+    if (idx < 0) {
+      for (let i = collabNodes.length - 1; i >= 0; i--) {
+        if (collabNodes[i].nodeState === 'done') { idx = i; break }
+      }
+    }
+    if (idx < 0) idx = collabNodes.findIndex((n) => n.nodeState === 'idle')
+    return idx
+  }, [collabNodes])
+
+  /** The node where the "current front" is — used to show the assigned user's avatar. */
+  const userOverlay = useMemo(() => {
+    if (!detail) return undefined
+    // find the active node, or the first idle node
+    let frontIdx = collabNodes.findIndex((n) => n.nodeState === 'active')
+    if (frontIdx < 0) frontIdx = collabNodes.findIndex((n) => n.nodeState === 'idle')
+    if (frontIdx < 0) return undefined
+    const leaf = orderedLeaves[frontIdx]
+    if (!leaf) return undefined
+    const assignedUser = leaf.assigned_to !== UNASSIGNED ? detail.users[leaf.assigned_to] : undefined
+    if (!assignedUser) return undefined
+    const color = PARTICIPANT_COLORS[leaf.assigned_to % PARTICIPANT_COLORS.length]
+    const label = (assignedUser.display_name || '?').slice(0, 2).toUpperCase()
+    return { nodeIdx: frontIdx, label, color }
+  }, [collabNodes, orderedLeaves, detail])
+
+  const myParticipantIndex = summary.participants.findIndex((p) => p.id === userId)
+
+  async function onLeafAction(goalId: string, action: 'start' | 'end') {
+    setLeafBusy(true)
+    try {
+      await fetch(SERVER_ENDPOINTS.goalSharedAction, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ journey_id: summary.id, goal_id: goalId, action }),
+      })
+      setSelectedIdx(null)
+      await load()
+    } finally { setLeafBusy(false) }
+  }
+
+  async function onReassign(goalId: string, targetUserId: string) {
+    setLeafBusy(true)
+    try {
+      await fetch(SERVER_ENDPOINTS.goalSharedAction, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ journey_id: summary.id, goal_id: goalId, action: 'reassign', target_user_id: targetUserId }),
+      })
+      setSelectedIdx(null)
+      await load()
+    } finally { setLeafBusy(false) }
+  }
 
   async function approveProposal(p: RootProposal) {
     setProposalBusy(true)
@@ -336,24 +392,15 @@ function JourneyCard({ summary, userId }: { summary: JourneyListItem; userId: st
         body: JSON.stringify({ user_id: userId, proposal_id: p.id }),
       })
       const data = (await res.json()) as { ok: boolean; both_approved?: boolean; error?: string }
-      if (!res.ok || !data.ok) throw new Error(data.error ?? 'approve failed')
-
       if (data.both_approved) {
-        /* Both approved — materialize the goal locally then push to central */
-        const cr = await fetch(SERVER_ENDPOINTS.goalCreateSharedRoot, {
+        await fetch(SERVER_ENDPOINTS.goalCreateSharedRoot, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ journey_id: summary.id, proposal_id: p.id, title: p.title, extra_info: p.extra_info }),
         })
-        if (!cr.ok) console.error('[together] create-shared-root failed', await cr.text())
       }
-
       await load()
-    } catch (err) {
-      console.error('[together] approve proposal:', err)
-    } finally {
-      setProposalBusy(false)
-    }
+    } finally { setProposalBusy(false) }
   }
 
   async function declineProposal(p: RootProposal) {
@@ -365,183 +412,121 @@ function JourneyCard({ summary, userId }: { summary: JourneyListItem; userId: st
         body: JSON.stringify({ user_id: userId, proposal_id: p.id }),
       })
       await load()
-    } catch (err) {
-      console.error('[together] decline proposal:', err)
-    } finally {
-      setProposalBusy(false)
-    }
+    } finally { setProposalBusy(false) }
   }
 
-  const goalMap = detail
-    ? new Map<number, JourneyGoal>(detail.goals.map((g) => [g.localIndex, g]))
-    : new Map<number, JourneyGoal>()
-
-  const orderedLeaves: LeafEntry[] = []
-  if (detail) {
-    for (const g of detail.goals) {
-      if (g.parent !== 0) continue
-      for (const leaf of collectLeavesInOrder(g, goalMap)) {
-        orderedLeaves.push({ goal: leaf, state: classifyLeaf(leaf), canStart: canStartLeaf(leaf, goalMap) })
-      }
-    }
-  }
-
-  async function onLeafAction(goalId: string, action: 'start' | 'end') {
-    setLeafBusy(true)
-    try {
-      const res = await fetch(SERVER_ENDPOINTS.goalSharedAction, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ journey_id: summary.id, goal_id: goalId, action }),
-      })
-      if (!res.ok) console.error('[together] leaf action failed', await res.text())
-      await load()
-    } catch (err) {
-      console.error('[together] leaf action:', err)
-    } finally {
-      setLeafBusy(false)
-    }
-  }
-
-  async function onReassign(goalId: string, targetUserId: string) {
-    setLeafBusy(true)
-    try {
-      const res = await fetch(SERVER_ENDPOINTS.goalSharedAction, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ journey_id: summary.id, goal_id: goalId, action: 'reassign', target_user_id: targetUserId }),
-      })
-      if (!res.ok) console.error('[together] reassign failed', await res.text())
-      await load()
-    } catch (err) {
-      console.error('[together] reassign:', err)
-    } finally {
-      setLeafBusy(false)
-    }
-  }
-
-  /* Map userId → participant index (0 or 1) for proposal display */
-  const myParticipantIndex = summary.participants.findIndex((p) => p.id === userId)
+  const doneCount = collabNodes.filter((n) => n.nodeState === 'done').length
+  const selectedLeaf = selectedIdx !== null ? orderedLeaves[selectedIdx] : null
 
   return (
-    <section className="rounded-3xl border border-[#2a2a2a] bg-[#111] shadow-sm">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left"
+    <div className="flex flex-col h-full">
+      {/* header */}
+      <div
+        className="px-5 pt-12 pb-4 flex items-center gap-3.5 flex-shrink-0"
+        style={{ borderBottom: '1px solid rgba(255,255,255,.07)' }}
       >
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-base font-semibold text-white">{summary.title}</p>
-          <p className="mt-0.5 text-xs text-white/55">
-            {summary.user_count} participant{summary.user_count === 1 ? '' : 's'} · {summary.goal_count} goal{summary.goal_count === 1 ? '' : 's'}
+        <button
+          type="button"
+          onClick={onBack}
+          className="w-[34px] h-[34px] rounded-[11px] flex items-center justify-center flex-shrink-0"
+          style={{ background: 'var(--surface2)', border: '1px solid var(--border)' }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+        </button>
+        <div className="flex-1 min-w-0">
+          <div className="text-base font-bold tracking-tight truncate">{summary.title}</div>
+          <div className="text-[11px] text-white/40">{doneCount}/{collabNodes.length} done</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => void load()}
+          className="rounded-xl border border-white/[0.08] px-3 py-1.5 text-xs text-white/40"
+        >
+          Refresh
+        </button>
+      </div>
+
+      {/* proposals */}
+      {proposals.length > 0 && (
+        <div
+          className="flex-shrink-0 px-4 py-3 space-y-2"
+          style={{ borderBottom: '1px solid rgba(255,255,255,.07)' }}
+        >
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40">
+            {proposals.length} pending proposal{proposals.length > 1 ? 's' : ''}
           </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="flex -space-x-2">
-            {summary.participants.slice(0, 4).map((p) => (
-              <div
-                key={p.id}
-                title={p.display_name}
-                className={[
-                  'flex h-7 w-7 items-center justify-center rounded-full border-2 border-white text-[10px] font-semibold',
-                  p.id === userId ? 'bg-[#111] text-white' : 'bg-[#2a2a2a] text-white/70',
-                ].join(' ')}
-              >
-                {(p.display_name || '?').slice(0, 1).toUpperCase()}
+          {proposals.map((p) => {
+            const myApproved = myParticipantIndex === 0 ? p.a_approved : p.b_approved
+            return (
+              <div key={p.id} className="flex items-center gap-3">
+                <p className="flex-1 min-w-0 text-sm font-semibold text-white truncate">{p.title}</p>
+                {!p.finalized && !myApproved && (
+                  <div className="flex gap-2 shrink-0">
+                    <button disabled={proposalBusy} onClick={() => void declineProposal(p)}
+                      className="rounded-lg border border-[#2a2a2a] px-3 py-1 text-xs text-white/55 disabled:opacity-40">
+                      Decline
+                    </button>
+                    <button disabled={proposalBusy} onClick={() => void approveProposal(p)}
+                      className="rounded-lg bg-[#111] border border-[#2a2a2a] px-3 py-1 text-xs text-white disabled:opacity-40">
+                      Approve
+                    </button>
+                  </div>
+                )}
+                {myApproved && !p.finalized && (
+                  <span className="text-[10px] text-amber-400 shrink-0">Waiting for partner</span>
+                )}
               </div>
-            ))}
-          </div>
-          <span className="text-white/30">{expanded ? '▾' : '▸'}</span>
-        </div>
-      </button>
-
-      {expanded && (
-        <div className="border-t border-white/10 px-5 py-4">
-          {loading && !detail && (
-            <p className="py-6 text-center text-xs text-white/40">Loading journey…</p>
-          )}
-          {error && <p className="text-xs text-red-400">{error}</p>}
-
-          {detail && (
-            <>
-              {detail.extra_info && (
-                <p className="mb-4 text-xs leading-relaxed text-white/55">{detail.extra_info}</p>
-              )}
-
-              {/* Proposals */}
-              {proposals.length > 0 && (
-                <div className="mb-4 space-y-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40">
-                    Root goal proposals
-                  </p>
-                  {proposals.map((p) => {
-                    const myApproved  = myParticipantIndex === 0 ? p.a_approved : p.b_approved
-                    const bothApproved = p.a_approved && p.b_approved
-                    const isMine = p.proposed_by === userId
-
-                    return (
-                      <div key={p.id} className="rounded-xl border border-[#2a2a2a] px-4 py-3 bg-[#1a1a1a]">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold text-white">{p.title}</p>
-                            {p.extra_info && <p className="mt-0.5 text-xs text-white/55 line-clamp-2">{p.extra_info}</p>}
-                            <p className="mt-1 text-[10px] text-white/40">
-                              {isMine ? 'You proposed' : 'Partner proposed'} ·{' '}
-                              {p.finalized ? <span className="text-emerald-400">finalized</span>
-                                : bothApproved ? <span className="text-emerald-400">both approved</span>
-                                : myApproved  ? <span className="text-amber-400">waiting for partner</span>
-                                :               <span className="text-white/55">awaiting your vote</span>}
-                            </p>
-                          </div>
-                          {!p.finalized && !myApproved && (
-                            <div className="flex gap-2 shrink-0">
-                              <button
-                                disabled={proposalBusy}
-                                onClick={() => void declineProposal(p)}
-                                className="rounded-lg border border-[#2a2a2a] px-3 py-1.5 text-xs text-white/55
-                                  hover:border-red-700 hover:text-red-400 disabled:opacity-40"
-                              >Decline</button>
-                              <button
-                                disabled={proposalBusy}
-                                onClick={() => void approveProposal(p)}
-                                className="rounded-lg bg-[#111] px-3 py-1.5 text-xs text-white
-                                  hover:bg-[#e0e0e0] disabled:opacity-40"
-                              >Approve</button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-
-              {orderedLeaves.length === 0 && (
-                <p className="py-6 text-center text-xs text-white/40">No tasks yet — propose a goal to get started.</p>
-              )}
-              <div className="space-y-3">
-                {orderedLeaves.map((entry) => (
-                  <SharedLeafCard
-                    key={entry.goal.id}
-                    entry={entry}
-                    owner={entry.goal.assigned_to === UNASSIGNED ? undefined : detail!.users[entry.goal.assigned_to]}
-                    allUsers={detail!.users}
-                    myUserId={userId}
-                    onAction={onLeafAction}
-                    onReassign={onReassign}
-                    actionBusy={leafBusy}
-                  />
-                ))}
-              </div>
-            </>
-          )}
+            )
+          })}
         </div>
       )}
-    </section>
+
+      {/* path canvas */}
+      <div ref={wrapperRef} className="flex-1 relative overflow-hidden">
+        {loading && !detail && (
+          <div className="flex items-center justify-center h-full text-sm text-white/40">Loading…</div>
+        )}
+        {!loading && collabNodes.length === 0 && (
+          <div className="flex items-center justify-center h-full">
+            <p className="text-sm text-white/30 text-center px-8">
+              No tasks yet — approve a goal proposal to get started.
+            </p>
+          </div>
+        )}
+        {dim.w > 0 && dim.h > 0 && collabNodes.length > 0 && (
+          <PathCanvas
+            nodes={collabNodes}
+            width={dim.w}
+            height={dim.h}
+            hasMysteryZone={false}
+            initialFocusIdx={focusIdx}
+            onSelect={setSelectedIdx}
+            userOverlay={userOverlay}
+          />
+        )}
+      </div>
+
+      {selectedLeaf && detail && selectedIdx !== null && (
+        <CollabNodeDetail
+          leaf={selectedLeaf}
+          detail={detail}
+          goalMap={goalMap}
+          userId={userId}
+          actionBusy={leafBusy}
+          onAction={onLeafAction}
+          onReassign={onReassign}
+          onClose={() => setSelectedIdx(null)}
+        />
+      )}
+    </div>
   )
 }
 
-function JourneysContent({ userId }: { userId: string }) {
+/* ─── journey list ───────────────────────────────────────────────────────── */
+
+function JourneysContent({ userId, onSelect }: { userId: string; onSelect: (j: JourneyListItem) => void }) {
   const [journeys, setJourneys] = useState<JourneyListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -552,12 +537,8 @@ function JourneysContent({ userId }: { userId: string }) {
       const r = await fetch(CENTRAL_ENDPOINTS.journeyList(userId), { cache: 'no-store' })
       if (!r.ok) throw new Error(`journey list failed (${r.status})`)
       const data = (await r.json()) as JourneyListResponse
-      if (data.ok) {
-        setJourneys(data.journeys)
-        setError(null)
-      } else {
-        throw new Error('server returned ok=false')
-      }
+      if (data.ok) { setJourneys(data.journeys); setError(null) }
+      else throw new Error('server returned ok=false')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -583,15 +564,15 @@ function JourneysContent({ userId }: { userId: string }) {
     return (
       <section className="mx-auto w-full max-w-2xl px-4 py-10">
         <header className="mb-6">
-          <h1 className="text-2xl font-bold text-white">Together</h1>
+          <h1 className="text-2xl font-bold text-white">Collab</h1>
           <p className="mt-1 text-sm text-white/55">Journeys you're working on with someone else.</p>
         </header>
-
         <div className="rounded-3xl border border-dashed border-[#2a2a2a] bg-[#1a1a1a] px-6 py-10 text-center">
           <p className="text-3xl">🤝</p>
           <p className="mt-3 text-sm font-semibold text-white">No shared journeys yet</p>
           <p className="mt-2 text-xs text-white/55">
-            Connect with someone, then open the chat and tap <span className="font-semibold">+ Propose goal</span> to start a shared journey.
+            Connect with someone, then open the chat and tap{' '}
+            <span className="font-semibold">+ Propose goal</span> to start a shared journey.
           </p>
           {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
         </div>
@@ -601,68 +582,153 @@ function JourneysContent({ userId }: { userId: string }) {
 
   return (
     <section className="mx-auto w-full max-w-3xl px-4 py-8">
-      <header className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Together</h1>
-          <p className="mt-1 text-sm text-white/55">
-            {journeys.length} shared journey{journeys.length === 1 ? '' : 's'} · each leaf is owned by one person.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => void load()}
-          className="rounded-full border border-[#2a2a2a] px-3 py-1.5 text-xs text-white/55 hover:bg-[#1a1a1a]"
-        >
-          Refresh
-        </button>
+      <header className="mb-6">
+        <h1 className="text-2xl font-bold text-white">Collab</h1>
+        <p className="mt-1 text-sm text-white/55">
+          {journeys.length} shared journey{journeys.length === 1 ? '' : 's'}
+        </p>
       </header>
-
-      <div className="space-y-4">
+      <div className="space-y-3">
         {journeys.map((j) => (
-          <JourneyCard key={j.id} summary={j} userId={userId} />
+          <button
+            key={j.id}
+            type="button"
+            onClick={() => onSelect(j)}
+            className="w-full text-left rounded-3xl border border-[#2a2a2a] bg-[#111] px-5 py-4 transition-colors hover:bg-[#1a1a1a]"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-base font-semibold text-white">{j.title}</p>
+                <p className="mt-0.5 text-xs text-white/55">
+                  {j.user_count} participant{j.user_count === 1 ? '' : 's'} · {j.goal_count} goal{j.goal_count === 1 ? '' : 's'}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="flex -space-x-2">
+                  {j.participants.slice(0, 4).map((p) => (
+                    <div
+                      key={p.id}
+                      title={p.display_name}
+                      className={[
+                        'flex h-7 w-7 items-center justify-center rounded-full border-2 border-white text-[10px] font-semibold',
+                        p.id === userId ? 'bg-[#111] text-white' : 'bg-[#2a2a2a] text-white/70',
+                      ].join(' ')}
+                    >
+                      {(p.display_name || '?').slice(0, 1).toUpperCase()}
+                    </div>
+                  ))}
+                </div>
+                <span className="text-white/30">▸</span>
+              </div>
+            </div>
+          </button>
         ))}
       </div>
-
       {error && <p className="mt-4 text-xs text-red-400">{error}</p>}
     </section>
   )
 }
 
-const TAB_LABELS = { together: 'Together', chat: 'Chat', people: 'People' } as const
-type Tab = keyof typeof TAB_LABELS
+/* ─── main together view ─────────────────────────────────────────────────── */
 
 export default function TogetherView({ userId }: { userId: string }) {
-  const [tab, setTab] = useState<Tab>('together')
+  const [tab, setTab] = useState<'together' | 'chat'>('together')
+  const [peopleOpen, setPeopleOpen] = useState(false)
+  const [selectedJourney, setSelectedJourney] = useState<JourneyListItem | null>(null)
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex flex-shrink-0 border-b border-white/[0.06]">
-        {(Object.keys(TAB_LABELS) as Tab[]).map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setTab(t)}
-            className={`flex-1 py-3 text-sm font-medium transition-colors ${
-              tab === t
-                ? 'text-white border-b-2 border-white'
-                : 'text-white/35 border-b-2 border-transparent'
-            }`}
-          >
-            {TAB_LABELS[t]}
-          </button>
-        ))}
-      </div>
-      {tab === 'chat' ? (
-        <ChatView key={userId} />
-      ) : tab === 'people' ? (
-        <div className="flex-1 overflow-y-auto no-scrollbar">
-          <ConnectionsView userId={userId} />
-        </div>
-      ) : (
-        <div className="flex-1 overflow-y-auto no-scrollbar">
-          <JourneysContent userId={userId} />
+      {/* sub-tab strip — hidden when journey detail is open */}
+      {!selectedJourney && (
+        <div className="flex flex-shrink-0 border-b border-white/[0.06]">
+          {(['together', 'chat'] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTab(t)}
+              className={`flex-1 py-3 text-sm font-medium capitalize transition-colors ${
+                tab === t
+                  ? 'text-white border-b-2 border-white'
+                  : 'text-white/35 border-b-2 border-transparent'
+              }`}
+            >
+              {t === 'together' ? 'Together' : 'Chat'}
+            </button>
+          ))}
         </div>
       )}
+
+      {selectedJourney ? (
+        <div className="flex-1 overflow-hidden">
+          <CollabJourneyView
+            summary={selectedJourney}
+            userId={userId}
+            onBack={() => setSelectedJourney(null)}
+          />
+        </div>
+      ) : tab === 'chat' ? (
+        <ChatView key={userId} />
+      ) : (
+        <div className="flex-1 overflow-y-auto no-scrollbar">
+          <JourneysContent userId={userId} onSelect={setSelectedJourney} />
+        </div>
+      )}
+
+      {/* People FAB — hidden when journey detail is open */}
+      {!selectedJourney && (
+        <button
+          type="button"
+          onClick={() => setPeopleOpen(true)}
+          className="fixed z-[99] flex items-center justify-center"
+          style={{
+            bottom: 96, right: 20,
+            width: 52, height: 52,
+            borderRadius: '50%',
+            border: '1px solid rgba(255,255,255,.18)',
+            background: 'rgba(20,20,20,.92)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            boxShadow: '0 4px 16px rgba(0,0,0,.5)',
+            color: 'rgba(255,255,255,.85)',
+          }}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+        </button>
+      )}
+
+      {/* People overlay — slides in from right */}
+      <div
+        className="fixed inset-0 z-[200] flex flex-col transition-transform duration-300"
+        style={{
+          background: 'var(--bg)',
+          transform: peopleOpen ? 'translateX(0)' : 'translateX(100%)',
+        }}
+      >
+        <div
+          className="px-5 pt-12 pb-4 flex items-center gap-3.5 flex-shrink-0"
+          style={{ borderBottom: '1px solid rgba(255,255,255,.07)' }}
+        >
+          <button
+            type="button"
+            onClick={() => setPeopleOpen(false)}
+            className="w-[34px] h-[34px] rounded-[11px] flex items-center justify-center flex-shrink-0"
+            style={{ background: 'var(--surface2)', border: '1px solid var(--border)' }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+          </button>
+          <div className="text-lg font-bold tracking-tight">People</div>
+        </div>
+        <div className="flex-1 overflow-hidden">
+          {peopleOpen && <ConnectionsView userId={userId} />}
+        </div>
+      </div>
     </div>
   )
 }

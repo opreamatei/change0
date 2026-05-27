@@ -77,6 +77,7 @@ export const SERVER_ENDPOINTS = {
   get devTimeAdvance() { return path('/dev/time/advance')() },
   get devTimeReset() { return path('/dev/time/reset')() },
   get schedule() { return path('/schedule')() },
+  get scheduleRefresh() { return path('/schedule/refresh')() },
   get sessionGoals() { return path('/goal/session')() },
   get goalRepair() { return path('/goal/repair')() },
   get goalDrop() { return path('/goal/drop')() },
