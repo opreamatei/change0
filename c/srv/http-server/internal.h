@@ -69,4 +69,14 @@ void handle_get_dev_time(int fd);
 void handle_post_dev_time_advance(int fd, const HttpRequest *req);
 void handle_post_dev_time_reset(int fd);
 
+/* ── journal handlers (journal/journal-handlers.c) ── */
+void handle_post_journal_create(int fd, const HttpRequest *req, User *user);
+void handle_get_journal_list(int fd, User *user);
+void handle_get_journal_entry(int fd, const HttpRequest *req, User *user);
+void handle_post_journal_update(int fd, const HttpRequest *req, User *user);
+void handle_post_journal_delete(int fd, const HttpRequest *req, User *user);
+void handle_post_journal_attach(int fd, const HttpRequest *req, User *user);
+void handle_get_journal_file(int fd, const HttpRequest *req, User *user);
+void handle_post_journal_embed(int fd, const HttpRequest *req, User *user);
+
 #endif

@@ -90,6 +90,15 @@ export const SERVER_ENDPOINTS = {
   get middlewareEvents() { return path('/middleware/events')() },
   get middlewarePermission() { return path('/middleware/permission')() },
   get chatSessions() { return path('/chat/sessions')() },
+
+  get journalCreate()  { return path('/journal/create')() },
+  get journalList()    { return path('/journal/list')() },
+  get journalEntry()   { return path('/journal/entry')() },
+  get journalUpdate()  { return path('/journal/update')() },
+  get journalDelete()  { return path('/journal/delete')() },
+  get journalAttach()  { return path('/journal/attach')() },
+  get journalFile()    { return path('/journal/file')() },
+  get journalEmbed()   { return path('/journal/embed')() },
 }
 
 export const CENTRAL_ENDPOINTS = {

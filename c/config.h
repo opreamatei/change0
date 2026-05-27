@@ -41,6 +41,7 @@
 #define USER_GOAL_EXPORT_FILENAME "goals-copy.json"
 #define USER_PROFILE_EXPORT_FILENAME "user-profile.log"
 #define USER_META_FILENAME ".meta"
+#define USER_JOURNAL_DIRNAME "journal"
 #define USER_DIRECTORY_SIZE 256
 
 #define CONFIG_STR(x) #x

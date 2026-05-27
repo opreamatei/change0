@@ -67,6 +67,15 @@ static int handle_request(int fd, const HttpRequest *req, User *user)
 	if (GET("/schedule"))               { handle_get_schedule(fd, user);                     return 0; }
 	if (POST("/schedule/refresh"))      { handle_post_schedule_refresh(fd, user);            return 0; }
 
+	if (POST("/journal/create"))  { handle_post_journal_create(fd, req, user);  return 0; }
+	if (GET("/journal/list"))     { handle_get_journal_list(fd, user);          return 0; }
+	if (GET("/journal/entry"))    { handle_get_journal_entry(fd, req, user);    return 0; }
+	if (POST("/journal/update"))  { handle_post_journal_update(fd, req, user);  return 0; }
+	if (POST("/journal/delete"))  { handle_post_journal_delete(fd, req, user);  return 0; }
+	if (POST("/journal/attach"))  { handle_post_journal_attach(fd, req, user);  return 0; }
+	if (GET("/journal/file"))     { handle_get_journal_file(fd, req, user);     return 0; }
+	if (POST("/journal/embed"))   { handle_post_journal_embed(fd, req, user);   return 0; }
+
 #undef GET
 #undef POST
 

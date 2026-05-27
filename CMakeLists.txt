@@ -290,6 +290,22 @@ target_include_directories(http-util PUBLIC
 )
 target_link_libraries(http-util PUBLIC util change-errors)
 
+add_library(journal SHARED
+	${CMAKE_SOURCE_DIR}/c/journal/journal.c
+	${CMAKE_SOURCE_DIR}/c/journal/journal-embeds.c
+	${CMAKE_SOURCE_DIR}/c/journal/journal-handlers.c
+)
+target_include_directories(journal PUBLIC
+	${CMAKE_SOURCE_DIR}/c
+	${CMAKE_SOURCE_DIR}/c/journal
+	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/srv/http-server
+	${CMAKE_SOURCE_DIR}/c/srv/user
+	${CMAKE_SOURCE_DIR}/c/ne/goal
+	${CMAKE_SOURCE_DIR}/c/lib/util
+)
+target_link_libraries(journal PUBLIC util user-management http-util goal-util)
+
 add_library(http-server SHARED
 	${CMAKE_SOURCE_DIR}/c/srv/http-server/server.c
 	${CMAKE_SOURCE_DIR}/c/srv/http-server/sse.c
@@ -308,6 +324,7 @@ target_include_directories(http-server PUBLIC
 	${CMAKE_SOURCE_DIR}/c/srv
 	${CMAKE_SOURCE_DIR}/c/srv/http-server
 	${CMAKE_SOURCE_DIR}/c/srv/user
+	${CMAKE_SOURCE_DIR}/c/journal
 )
 target_link_libraries(http-server PUBLIC
 	node
@@ -319,6 +336,7 @@ target_link_libraries(http-server PUBLIC
 	user-management
 	connections
 	http-util
+	journal
 	pthread
 )
 
