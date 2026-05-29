@@ -98,7 +98,7 @@ function getWeek(now: Date): Date[] {
 
 /* ── component ──────────────────────────────────────────────────────── */
 
-export default function DailyBriefView() {
+export default function DailyBriefView({ embedded = false }: { embedded?: boolean } = {}) {
   const bodyRef      = useRef<HTMLDivElement>(null)
   const [bodyW, setBodyW] = useState(360)
   const now          = useRef(new Date()).current
@@ -180,9 +180,9 @@ export default function DailyBriefView() {
     <div className="flex flex-col h-full overflow-hidden">
 
       {/* ── header ── */}
-      <div className="px-5 pt-4 pb-2 flex items-end justify-between flex-shrink-0">
+      <div className={`px-5 pb-2 flex items-end justify-between flex-shrink-0 ${embedded ? 'pt-1' : 'pt-4'}`}>
         <div>
-          <h1 className="text-[28px] font-bold tracking-tight text-white leading-none">Schedule</h1>
+          {!embedded && <h1 className="text-[28px] font-bold tracking-tight text-white leading-none">Schedule</h1>}
           <p className="text-[13px] mt-1" style={{ color: 'rgba(255,255,255,.38)' }}>
             {now.getDate()} {MONTH[now.getMonth()]} {now.getFullYear()}
           </p>

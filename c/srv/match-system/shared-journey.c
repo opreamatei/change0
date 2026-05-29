@@ -422,9 +422,13 @@ void handle_list_shared_journeys(int fd, const char *query)
 		if (!first) CatFixed(&out, ",");
 		first = 0;
 
+		size_t root_count = 0;
+		for (size_t gi = 0; gi < j->goals_count; gi++)
+			if (j->goals[gi] && j->goals[gi]->parent == 0) root_count++;
+
 		CatTemplateString(&out,
-			"{\"id\":\"%s\",\"title\":\"%s\",\"user_count\":%zu,\"goal_count\":%zu,\"participants\":[",
-			esc_id, esc_title, j->user_count, j->goals_count);
+			"{\"id\":\"%s\",\"title\":\"%s\",\"user_count\":%zu,\"goal_count\":%zu,\"root_count\":%zu,\"participants\":[",
+			esc_id, esc_title, j->user_count, j->goals_count, root_count);
 
 		for (size_t u = 0; u < j->user_count; u++) {
 			JourneyUser *ju = &j->users[u];

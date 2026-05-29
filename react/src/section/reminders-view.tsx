@@ -9,11 +9,67 @@ interface Reminder {
   enabled: boolean
 }
 
+interface ApiReminder {
+  id?: string
+  title?: string
+  time?: string
+  hour?: number
+  minute?: number
+  days?: number[] | number
+  enabled?: boolean | number
+  end_time?: number
+}
+
 const DAY_LABELS = ['D', 'L', 'M', 'M', 'J', 'V', 'S']
 const DAY_ORDER  = [1, 2, 3, 4, 5, 6, 0]
 const DAY_SHORT  = ['L', 'M', 'M', 'J', 'V', 'S', 'D']
 
 const ITEM_H = 38
+
+function daysMaskToArray(mask: number): number[] {
+  const days: number[] = []
+  for (let d = 0; d < 7; d++) {
+    if (mask & (1 << d)) days.push(d)
+  }
+  return days
+}
+
+function daysArrayToMask(days: number[]): number {
+  return days.reduce((mask, d) => mask | (1 << d), 0)
+}
+
+function formatTime(hour = 9, minute = 0): string {
+  return `${String(Math.max(0, Math.min(23, hour))).padStart(2, '0')}:${String(Math.max(0, Math.min(59, minute))).padStart(2, '0')}`
+}
+
+function normalizeReminder(raw: ApiReminder): Reminder {
+  const [timeHour, timeMinute] = (raw.time ?? '').split(':').map((v) => Number.parseInt(v, 10))
+  const hour = Number.isFinite(raw.hour) ? raw.hour : timeHour
+  const minute = Number.isFinite(raw.minute) ? raw.minute : timeMinute
+
+  return {
+    id: raw.id ?? '',
+    title: raw.title?.trim() || 'Reminder',
+    time: formatTime(hour, minute),
+    days: Array.isArray(raw.days) ? raw.days : daysMaskToArray(raw.days ?? 0),
+    enabled: typeof raw.enabled === 'number' ? raw.enabled !== 0 : raw.enabled ?? true,
+  }
+}
+
+function reminderSavePayload(r: Omit<Reminder, 'id'> & { id?: string }) {
+  const [hourRaw, minuteRaw] = r.time.split(':')
+  const hour = Number.parseInt(hourRaw ?? '', 10)
+  const minute = Number.parseInt(minuteRaw ?? '', 10)
+
+  return {
+    id: r.id,
+    title: r.title,
+    hour: Number.isFinite(hour) ? hour : 9,
+    minute: Number.isFinite(minute) ? minute : 0,
+    days: daysArrayToMask(r.days),
+    enabled: r.enabled ? 1 : 0,
+  }
+}
 
 function PickerCol({
   values,
@@ -134,13 +190,19 @@ function ReminderModal({
         >
           {/* header */}
           <div
-            className="flex items-center justify-between px-4 pt-4 pb-3.5"
+            className="flex items-center justify-between gap-3 px-4 pt-4 pb-3.5"
             style={{ borderBottom: '1px solid rgba(255,255,255,.08)' }}
           >
+            <button
+              onClick={onClose}
+              className="cursor-pointer border-none bg-transparent py-1 text-[14px] font-medium text-white/55"
+            >
+              Cancel
+            </button>
             <span className="text-[15px] font-bold">{editReminder ? 'Edit reminder' : 'New reminder'}</span>
             <button
               onClick={handleSave}
-              className="border-none text-[14px] font-bold cursor-pointer bg-transparent text-white py-1"
+              className="cursor-pointer border-none bg-transparent py-1 text-[14px] font-bold text-white"
             >
               {editReminder ? 'Save' : 'Add'}
             </button>
@@ -217,7 +279,7 @@ function ReminderModal({
   )
 }
 
-export default function RemindersView() {
+export default function RemindersView({ embedded = false }: { embedded?: boolean } = {}) {
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [loading, setLoading]     = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
@@ -227,8 +289,8 @@ export default function RemindersView() {
     setLoading(true)
     try {
       const res  = await fetch(SERVER_ENDPOINTS.reminders, { cache: 'no-store' })
-      const data = (await res.json()) as { ok: boolean; reminders: Reminder[] }
-      if (data.ok) setReminders(data.reminders)
+      const data = (await res.json()) as { ok: boolean; reminders: ApiReminder[] }
+      if (data.ok) setReminders(data.reminders.map(normalizeReminder))
     } catch { /* ignore */ } finally {
       setLoading(false)
     }
@@ -245,7 +307,7 @@ export default function RemindersView() {
       await fetch(SERVER_ENDPOINTS.remindersSave, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(r),
+        body: JSON.stringify(reminderSavePayload(r)),
       })
       void load()
     } catch { /* ignore */ }
@@ -268,25 +330,22 @@ export default function RemindersView() {
       await fetch(SERVER_ENDPOINTS.remindersSave, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...r, enabled }),
+        body: JSON.stringify(reminderSavePayload({ ...r, enabled })),
       })
     } catch { /* ignore */ }
   }
 
   return (
     <section className="mx-auto w-full max-w-3xl">
-      <header className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white">Reminders</h1>
-        {loading && <span className="text-xs text-white/40">Loading…</span>}
-      </header>
+      {!embedded && (
+        <header className="mb-6 flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-white">Reminders</h1>
+          {loading && <span className="text-xs text-white/40">Loading…</span>}
+        </header>
+      )}
 
       <div className="space-y-2.5">
         {reminders.map((r) => {
-          const daysStr = DAY_ORDER
-            .filter((d) => r.days.includes(d))
-            .map((_, i) => DAY_SHORT[DAY_ORDER.indexOf(DAY_ORDER[i])])
-            .join(' ')
-
           const activeDays = DAY_ORDER.filter((d) => r.days.includes(d))
           const daysLabel  = activeDays.length === 0
             ? 'No days'

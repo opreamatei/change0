@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CENTRAL_ENDPOINTS, SERVER_ENDPOINTS } from '../config/server'
 import { PathCanvas } from '../components/path-canvas'
 import type { PathNodeData, NodeState } from '../components/path-canvas'
+import { SwipeDeck } from '../components/swipe-deck'
 import ConnectionsView from './connections-view'
+import ReviewsPanel from './reviews-panel'
 
 const UNASSIGNED = 255
 
@@ -25,6 +27,7 @@ interface JourneyListItem {
   title: string
   user_count: number
   goal_count: number
+  root_count?: number
   participants: ParticipantSummary[]
 }
 
@@ -240,11 +243,14 @@ function CollabNodeDetail({
 /* ─── collab journey detail view ─────────────────────────────────────────── */
 
 function CollabJourneyView({
-  summary, userId, onBack,
+  summary, userId, onBack, journeyCount = 1, journeyIndex = 0, onSelectJourney,
 }: {
   summary: JourneyListItem
   userId: string
   onBack: () => void
+  journeyCount?: number
+  journeyIndex?: number
+  onSelectJourney?: (idx: number) => void
 }) {
   const [detail, setDetail] = useState<JourneyDetail | null>(null)
   const [proposals, setProposals] = useState<RootProposal[]>([])
@@ -437,26 +443,47 @@ function CollabJourneyView({
           </svg>
         </button>
         <div className="flex-1 min-w-0">
-          <div className="text-base font-bold tracking-tight truncate">{summary.title}</div>
+          <div className="text-base font-bold tracking-tight leading-tight line-clamp-2 break-words">{summary.title}</div>
           <div className="text-[11px] text-white/40">{doneCount}/{collabNodes.length} done</div>
         </div>
 
-        {/* user legend */}
-        {detail && detail.users.length >= 2 && (
-          <div className="flex items-center gap-2 shrink-0">
-            {detail.users.slice(0, 2).map((u, i) => (
-              <div key={u.id} className="flex items-center gap-1">
-                <div
-                  className="w-2 h-2 rounded-full"
-                  style={{ background: PARTICIPANT_COLORS[i] }}
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          {/* journey pager dots */}
+          {journeyCount > 1 && (
+            <div className="flex items-center gap-[5px]">
+              {Array.from({ length: journeyCount }, (_, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  aria-label={`Go to journey ${i + 1}`}
+                  onClick={() => onSelectJourney?.(i)}
+                  className="h-1.5 rounded-full transition-all"
+                  style={{
+                    width: i === journeyIndex ? 16 : 6,
+                    background: i === journeyIndex ? '#fff' : 'var(--border-light)',
+                  }}
                 />
-                <span className="text-[11px]" style={{ color: 'rgba(255,255,255,.45)' }}>
-                  {u.display_name}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+
+          {/* user legend */}
+          {detail && detail.users.length >= 2 && (
+            <div className="flex items-center gap-2">
+              {detail.users.slice(0, 2).map((u, i) => (
+                <div key={u.id} className="flex items-center gap-1">
+                  <div
+                    className="w-2 h-2 rounded-full"
+                    style={{ background: PARTICIPANT_COLORS[i] }}
+                  />
+                  <span className="text-[11px]" style={{ color: 'rgba(255,255,255,.45)' }}>
+                    {u.display_name}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* proposals */}
@@ -537,7 +564,176 @@ function CollabJourneyView({
 
 /* ─── journey list ───────────────────────────────────────────────────────── */
 
-function JourneysContent({ userId, onSelect }: { userId: string; onSelect: (j: JourneyListItem) => void }) {
+// Deterministic dark gradient per journey so each "portal" card feels distinct
+// but stable across reloads. Matches the hero-card aesthetic used elsewhere.
+const JOURNEY_GRADIENTS = [
+  'linear-gradient(155deg,#1e1b4b 0%,#312e81 55%,#1e1b4b 100%)', // indigo
+  'linear-gradient(155deg,#052e16 0%,#064e3b 60%,#0a3a2a 100%)', // emerald
+  'linear-gradient(155deg,#1c0a00 0%,#431407 60%,#7c2d12 100%)', // amber
+  'linear-gradient(155deg,#2a0a2e 0%,#581c87 60%,#3b0764 100%)', // violet
+  'linear-gradient(155deg,#0a1a2e 0%,#0c4a6e 60%,#082f49 100%)', // ocean
+  'linear-gradient(155deg,#2e0a14 0%,#831843 60%,#500724 100%)', // rose
+]
+
+function hashString(s: string): number {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0
+  return Math.abs(h)
+}
+
+function journeyGradient(id: string): string {
+  return JOURNEY_GRADIENTS[hashString(id) % JOURNEY_GRADIENTS.length]
+}
+
+function JourneyPortalCard({
+  journey, index, onSelect,
+}: {
+  journey: JourneyListItem
+  index: number
+  onSelect: (idx: number) => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(index)}
+      className="anim-entry-in group relative w-full overflow-hidden rounded-[26px] border border-white/10 text-left active:scale-[0.985] transition-transform"
+      style={{ height: 168, animationDelay: `${index * 60}ms` }}
+    >
+      <div className="absolute inset-0" style={{ background: journeyGradient(journey.id) }} />
+      {/* soft glow blobs for depth */}
+      <div
+        className="absolute -top-12 -right-10 h-52 w-52 rounded-full opacity-70 blur-2xl"
+        style={{ background: PARTICIPANT_COLORS[index % PARTICIPANT_COLORS.length] }}
+      />
+      <div
+        className="absolute -bottom-16 -left-10 h-48 w-48 rounded-full opacity-45 blur-2xl"
+        style={{ background: PARTICIPANT_COLORS[(index + 1) % PARTICIPANT_COLORS.length] }}
+      />
+      <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(0,0,0,.78) 0%, rgba(0,0,0,.15) 55%, rgba(0,0,0,.05) 100%)' }} />
+
+      {/* top: chevron affordance */}
+      <div className="absolute top-4 right-5">
+        <span
+          className="flex h-8 w-8 items-center justify-center rounded-full transition-transform group-hover:translate-x-0.5"
+          style={{ background: 'rgba(255,255,255,.92)', color: '#000' }}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
+        </span>
+      </div>
+
+      {/* bottom: title + meta + avatars */}
+      <div className="absolute bottom-0 left-0 right-0 px-5 pb-4">
+        <div className="text-[22px] font-extrabold tracking-tight leading-[1.12] line-clamp-2">{journey.title}</div>
+        <div className="mt-2 flex items-center gap-3">
+          <div className="flex -space-x-2">
+            {journey.participants.slice(0, 4).map((p, i) => (
+              <div
+                key={p.id}
+                title={p.display_name}
+                className="flex h-7 w-7 items-center justify-center rounded-full border-2 text-[11px] font-bold"
+                style={{
+                  borderColor: 'rgba(0,0,0,.55)',
+                  background: PARTICIPANT_COLORS[i % PARTICIPANT_COLORS.length],
+                  color: '#0a0a0a',
+                }}
+              >
+                {(p.display_name || '?').slice(0, 1).toUpperCase()}
+              </div>
+            ))}
+          </div>
+          <span className="text-[12px] font-medium" style={{ color: 'rgba(255,255,255,.6)' }}>
+            {(journey.root_count ?? journey.goal_count)} goal{(journey.root_count ?? journey.goal_count) === 1 ? '' : 's'}
+          </span>
+        </div>
+      </div>
+    </button>
+  )
+}
+
+function ReviewsButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 rounded-xl bg-white px-3.5 py-2 text-[13px] font-semibold text-black shadow-sm transition-transform active:scale-95"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 2l2.9 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l7.1-1.01L12 2z" />
+      </svg>
+      Reviews
+    </button>
+  )
+}
+
+function JourneysContent({
+  journeys, loading, error, onSelect, onOpenReviews,
+}: {
+  journeys: JourneyListItem[]
+  loading: boolean
+  error: string | null
+  onSelect: (idx: number) => void
+  onOpenReviews: () => void
+}) {
+  if (loading && journeys.length === 0) {
+    return (
+      <div className="flex items-center justify-center py-20 text-sm text-white/40">
+        Loading shared journeys…
+      </div>
+    )
+  }
+
+  if (journeys.length === 0) {
+    return (
+      <section className="mx-auto w-full max-w-2xl px-4 pt-[52px] pb-10">
+        <header className="mb-6 flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-white">Collab</h1>
+            <p className="mt-1 text-sm text-white/55">Journeys you're working on with someone else.</p>
+          </div>
+          <div className="pt-1"><ReviewsButton onClick={onOpenReviews} /></div>
+        </header>
+        <div className="rounded-3xl border border-dashed border-[#2a2a2a] bg-[#1a1a1a] px-6 py-10 text-center">
+          <p className="text-3xl">🤝</p>
+          <p className="mt-3 text-sm font-semibold text-white">No shared journeys yet</p>
+          <p className="mt-2 text-xs text-white/55">
+            Connect with someone, then open the chat and tap{' '}
+            <span className="font-semibold">+ Propose goal</span> to start a shared journey.
+          </p>
+          {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <section className="mx-auto w-full max-w-2xl px-4 pt-[52px] pb-8">
+      <header className="mb-6 flex items-start justify-between gap-3 px-1">
+        <div>
+          <h1 className="text-[28px] font-bold tracking-tight text-white">Collab</h1>
+          <p className="mt-1 text-sm" style={{ color: 'var(--white-dim)' }}>
+            {journeys.length} shared journey{journeys.length === 1 ? '' : 's'}
+          </p>
+        </div>
+        <div className="pt-1.5"><ReviewsButton onClick={onOpenReviews} /></div>
+      </header>
+      <div className="flex flex-col gap-3.5">
+        {journeys.map((j, i) => (
+          <JourneyPortalCard key={j.id} journey={j} index={i} onSelect={onSelect} />
+        ))}
+      </div>
+      {error && <p className="mt-4 text-xs text-red-400">{error}</p>}
+    </section>
+  )
+}
+
+/* ─── main together view ─────────────────────────────────────────────────── */
+
+export default function TogetherView({ userId }: { userId: string }) {
+  const [peopleOpen, setPeopleOpen] = useState(false)
+  const [reviewsOpen, setReviewsOpen] = useState(false)
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
   const [journeys, setJourneys] = useState<JourneyListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -563,108 +759,53 @@ function JourneysContent({ userId, onSelect }: { userId: string; onSelect: (j: J
     return () => clearInterval(id)
   }, [load])
 
-  if (loading && journeys.length === 0) {
-    return (
-      <div className="flex items-center justify-center py-20 text-sm text-white/40">
-        Loading shared journeys…
-      </div>
-    )
-  }
+  // Keep the open journey index valid if the list shrinks underneath us.
+  useEffect(() => {
+    if (selectedIdx !== null && selectedIdx > journeys.length - 1) {
+      setSelectedIdx(journeys.length > 0 ? journeys.length - 1 : null)
+    }
+  }, [journeys.length, selectedIdx])
 
-  if (journeys.length === 0) {
-    return (
-      <section className="mx-auto w-full max-w-2xl px-4 py-10">
-        <header className="mb-6">
-          <h1 className="text-2xl font-bold text-white">Collab</h1>
-          <p className="mt-1 text-sm text-white/55">Journeys you're working on with someone else.</p>
-        </header>
-        <div className="rounded-3xl border border-dashed border-[#2a2a2a] bg-[#1a1a1a] px-6 py-10 text-center">
-          <p className="text-3xl">🤝</p>
-          <p className="mt-3 text-sm font-semibold text-white">No shared journeys yet</p>
-          <p className="mt-2 text-xs text-white/55">
-            Connect with someone, then open the chat and tap{' '}
-            <span className="font-semibold">+ Propose goal</span> to start a shared journey.
-          </p>
-          {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
-        </div>
-      </section>
-    )
-  }
-
-  return (
-    <section className="mx-auto w-full max-w-3xl px-4 py-8">
-      <header className="mb-6">
-        <h1 className="text-2xl font-bold text-white">Collab</h1>
-        <p className="mt-1 text-sm text-white/55">
-          {journeys.length} shared journey{journeys.length === 1 ? '' : 's'}
-        </p>
-      </header>
-      <div className="space-y-3">
-        {journeys.map((j) => (
-          <button
-            key={j.id}
-            type="button"
-            onClick={() => onSelect(j)}
-            className="w-full text-left rounded-3xl border border-[#2a2a2a] bg-[#111] px-5 py-4 transition-colors hover:bg-[#1a1a1a]"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-base font-semibold text-white">{j.title}</p>
-                <p className="mt-0.5 text-xs text-white/55">
-                  {j.user_count} participant{j.user_count === 1 ? '' : 's'} · {j.goal_count} goal{j.goal_count === 1 ? '' : 's'}
-                </p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <div className="flex -space-x-2">
-                  {j.participants.slice(0, 4).map((p, i) => (
-                    <div
-                      key={p.id}
-                      title={p.display_name}
-                      className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-black text-[10px] font-semibold"
-                      style={{
-                        background: PARTICIPANT_COLORS[i % PARTICIPANT_COLORS.length] + '33',
-                        color: PARTICIPANT_COLORS[i % PARTICIPANT_COLORS.length],
-                      }}
-                    >
-                      {(p.display_name || '?').slice(0, 1).toUpperCase()}
-                    </div>
-                  ))}
-                </div>
-                <span className="text-white/30">▸</span>
-              </div>
-            </div>
-          </button>
-        ))}
-      </div>
-      {error && <p className="mt-4 text-xs text-red-400">{error}</p>}
-    </section>
-  )
-}
-
-/* ─── main together view ─────────────────────────────────────────────────── */
-
-export default function TogetherView({ userId }: { userId: string }) {
-  const [peopleOpen, setPeopleOpen] = useState(false)
-  const [selectedJourney, setSelectedJourney] = useState<JourneyListItem | null>(null)
+  const journeyOpen = selectedIdx !== null && journeys[selectedIdx] !== undefined
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {selectedJourney ? (
-        <div className="flex-1 overflow-hidden">
-          <CollabJourneyView
-            summary={selectedJourney}
-            userId={userId}
-            onBack={() => setSelectedJourney(null)}
-          />
-        </div>
+      {journeyOpen ? (
+        <SwipeDeck
+          count={journeys.length}
+          index={selectedIdx as number}
+          onIndexChange={setSelectedIdx}
+          className="h-full"
+          renderSlide={(i) => {
+            // Render the open journey and its neighbours only — bounds the number
+            // of live CollabJourneyView fetch/poll loops to three.
+            if (Math.abs(i - (selectedIdx as number)) > 1) return null
+            return (
+              <CollabJourneyView
+                summary={journeys[i]}
+                userId={userId}
+                onBack={() => setSelectedIdx(null)}
+                journeyCount={journeys.length}
+                journeyIndex={i}
+                onSelectJourney={setSelectedIdx}
+              />
+            )
+          }}
+        />
       ) : (
         <div className="flex-1 overflow-y-auto no-scrollbar">
-          <JourneysContent userId={userId} onSelect={setSelectedJourney} />
+          <JourneysContent
+            journeys={journeys}
+            loading={loading}
+            error={error}
+            onSelect={setSelectedIdx}
+            onOpenReviews={() => setReviewsOpen(true)}
+          />
         </div>
       )}
 
       {/* People FAB — hidden when journey detail is open */}
-      {!selectedJourney && (
+      {!journeyOpen && (
         <button
           type="button"
           onClick={() => setPeopleOpen(true)}
@@ -689,6 +830,8 @@ export default function TogetherView({ userId }: { userId: string }) {
           </svg>
         </button>
       )}
+
+      <ReviewsPanel open={reviewsOpen} onClose={() => setReviewsOpen(false)} />
 
       {/* People overlay — slides in from right */}
       <div

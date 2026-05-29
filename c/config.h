@@ -828,6 +828,7 @@
 "Prefer section-based extraction over summarization."\
 "Never place the whole source message or a long analytical report into title."\
 "If explicit sections are missing, title must still stay short and goal-like; move explanatory or investigative content into extrainfo instead."\
+"The title MUST be very short: at most 20-30 characters, ideally 2 to 4 words. Compress aggressively. Make it punchy and a little epic, evocative of the destination, while remaining clear and specific. Strike a balance between compression, epicness, and clarity; never sacrifice clarity for either. Keep any longer detail in extrainfo."\
 "Prefer a specific project title over a generic category title."\
 "If title is generic but extrainfo names a concrete project or tool type, use the concrete project or tool type as title and keep the rest in extrainfo."\
 "If the message contains headings such as Main findings, Relevant contexts, Strongest graph structures, Strongest behavioral goal evidence, How activation affected interpretation, How weight affected interpretation, Goals support/contradict graph evidence, or Stopping is justified, treat that material as extrainfo, not title."\

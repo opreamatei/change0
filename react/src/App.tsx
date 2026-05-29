@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import CurrentGoalsView from './section/current-goals-view'
-import DailyBriefView from './section/daily-brief-view'
+import SchedulePanel from './section/schedule-panel'
 import SettingsView from './section/settings-view'
 import TogetherView from './section/together-view'
 import JournalView from './section/journal-view'
-import RemindersView from './section/reminders-view'
 import ChatView from './section/chat-view'
 import LoginView, { type LocalUser } from './section/login-view'
 import LoadingOrb from './components/loading-orb'
@@ -559,9 +558,7 @@ function App() {
           ) : goalPanel === 'collab' ? (
             <TogetherView userId={localUser?.id ?? ''} />
           ) : goalPanel === 'schedule' ? (
-            <DailyBriefView />
-          ) : goalPanel === 'reminders' ? (
-            <RemindersView />
+            <SchedulePanel />
           ) : goalPanel === 'profile' ? (
             <SettingsView />
           ) : (

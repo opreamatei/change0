@@ -1,6 +1,6 @@
 const today = new Date().getDate()
 
-export type NavPanel = 'journal' | 'collab' | 'journey' | 'schedule' | 'profile' | 'reminders'
+export type NavPanel = 'journal' | 'collab' | 'journey' | 'schedule' | 'profile'
 
 export default function NavBar({
   panel,
@@ -22,27 +22,29 @@ export default function NavBar({
     return (
       <div
         role="button"
+        aria-label={label}
+        title={label}
         onClick={() => onSetPanel(id)}
-        className="flex-1 flex flex-col items-center gap-1 py-1 cursor-pointer"
+        className="flex-1 flex h-full items-center justify-center cursor-pointer"
       >
-        <div style={{ opacity: active ? 1 : 0.35 }}>{children}</div>
-        <span
-          className="text-[10px] font-semibold tracking-wide"
-          style={{ color: active ? '#fff' : 'rgba(255,255,255,.35)' }}
-        >
-          {label}
-        </span>
+        <div style={{ opacity: active ? 1 : 0.38, transform: active ? 'scale(1.34)' : 'scale(1.22)' }}>
+          {children}
+        </div>
       </div>
     )
   }
 
   return (
     <nav
-      className="fixed bottom-3 left-4 right-4 h-[72px] flex items-end justify-between px-2 pb-2.5 z-[100] backdrop-blur-24"
+      className="nav-squircle fixed bottom-3 left-4 right-4 h-[72px] flex items-center justify-between px-2 z-[100]"
       style={{
-        background: 'rgba(10,10,10,.78)',
-        border: '1px solid rgba(255,255,255,.08)',
-        borderRadius: 26,
+        background: 'linear-gradient(180deg, rgba(42,42,42,.58), rgba(10,10,10,.70) 48%, rgba(0,0,0,.62))',
+        border: '1px solid rgba(255,255,255,.10)',
+        borderRadius: 28,
+        overflow: 'hidden',
+        boxShadow: 'inset 0 1px 0 rgba(255,255,255,.08), 0 10px 26px rgba(0,0,0,.24)',
+        backdropFilter: 'blur(16px)',
+        WebkitBackdropFilter: 'blur(16px)',
       }}
     >
       <Btn id="journal" label="Journal">
@@ -82,13 +84,6 @@ export default function NavBar({
           <text x="12" y="17.5" textAnchor="middle" dominantBaseline="middle" fontSize="6.5" fontWeight="800" fill="currentColor" stroke="none" fontFamily="system-ui,-apple-system,sans-serif">
             {today}
           </text>
-        </svg>
-      </Btn>
-
-      <Btn id="reminders" label="Reminders">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-          <path d="M13.73 21a2 2 0 0 1-3.46 0" />
         </svg>
       </Btn>
 

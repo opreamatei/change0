@@ -24,13 +24,41 @@ const LABEL_LINES = 2
 const HIT_PAD = 14
 const CHAPTER_EXTRA = 90
 
+/* ── colour helpers ──────────────────────────────────────────────────────── */
+// Append an alpha to a #rrggbb hex (canvas accepts #rrggbbaa). White strings
+// fall through to an rgba() form so non-hex accents still work.
+function withAlpha(color: string, alpha: number): string {
+  const a = Math.round(Math.max(0, Math.min(1, alpha)) * 255).toString(16).padStart(2, '0')
+  if (/^#[0-9a-fA-F]{6}$/.test(color)) return color + a
+  return color
+}
+
+function parseHex(color: string): [number, number, number] | null {
+  const m = /^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/.exec(color)
+  if (!m) return null
+  return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)]
+}
+
+// Midpoint blend of two hex colours — used to ease one strand's colour into the next.
+function mixHex(a: string, b: string): string {
+  const ca = parseHex(a), cb = parseHex(b)
+  if (!ca || !cb) return a
+  const m = ca.map((v, i) => Math.round((v + cb[i]) / 2))
+  return `#${m.map((v) => v.toString(16).padStart(2, '0')).join('')}`
+}
+
 export function nodeXAt(i: number, vw: number): number {
   return vw / 2 + Math.min(vw * 0.27, 96) * Math.sin((i * Math.PI) / 2)
 }
 
 function nodeXForNode(i: number, node: PathNodeData, vw: number): number {
-  if (node.sideOverride !== undefined)
-    return vw / 2 + Math.min(vw * 0.27, 96) * node.sideOverride
+  if (node.sideOverride !== undefined) {
+    // Deterministic horizontal wiggle so the two collab lanes feel organic rather
+    // than a rigid two-column grid — a little closer to the solo path's weave.
+    const base = vw / 2 + Math.min(vw * 0.27, 96) * node.sideOverride
+    const jitter = Math.sin(i * 53.17) * Math.min(vw * 0.06, 22)
+    return base + jitter
+  }
   return nodeXAt(i, vw)
 }
 
@@ -104,7 +132,7 @@ export function PathCanvas({
   const canvasRef   = useRef<HTMLCanvasElement>(null)
   const chapterDivsRef = useRef<(HTMLDivElement | null)[]>([])
   const offsetRef   = useRef(0)
-  const dragRef     = useRef<{ startY: number; startOffset: number; moved: boolean; pointerId: number } | null>(null)
+  const dragRef     = useRef<{ startX: number; startY: number; startOffset: number; moved: boolean; pointerId: number } | null>(null)
   const rafRef      = useRef<number | null>(null)
   const mountedRef  = useRef(false)
 
@@ -131,12 +159,38 @@ export function PathCanvas({
 
     const dpr = window.devicePixelRatio || 1
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    ctx.fillStyle = '#0a0a0a'
+    ctx.fillStyle = '#000000'
     ctx.fillRect(0, 0, width, height)
 
     const offset = offsetRef.current
     const now    = performance.now()
     const posOf  = (i: number) => ({ x: nodeXForNode(i, nodes[i]!, width), y: nodeYsBase[i] - offset })
+
+    /* ── colour washes beneath completed paths ──
+       Large, soft radial glows in the relevant colour (the assignee's colour in
+       multiuser journeys). Additive blend; only the few visible done nodes are
+       drawn, so this is effectively free off-screen. */
+    const WASH_R = 560
+    ctx.save()
+    ctx.globalCompositeOperation = 'lighter'
+    for (let i = 0; i < n; i++) {
+      if (nodes[i].nodeState !== 'done') continue
+      const { x, y } = posOf(i)
+      if (y < -WASH_R || y > height + WASH_R) continue
+      const col = nodes[i].tintColor ?? '#ffffff'
+      const isTinted = nodes[i].tintColor !== undefined
+      // Solo (white) washes read brighter on black, so keep them softer than
+      // participant-coloured journey/together paths.
+      const peak = isTinted ? 0.20 : 0.035
+      const g = ctx.createRadialGradient(x, y, 0, x, y, WASH_R)
+      g.addColorStop(0, withAlpha(col, peak))
+      g.addColorStop(0.42, withAlpha(col, peak * (isTinted ? 0.56 : 0.30)))
+      g.addColorStop(0.72, withAlpha(col, peak * (isTinted ? 0.20 : 0.08)))
+      g.addColorStop(1, withAlpha(col, 0))
+      ctx.fillStyle = g
+      ctx.beginPath(); ctx.arc(x, y, WASH_R, 0, Math.PI * 2); ctx.fill()
+    }
+    ctx.restore()
 
     /* chapter divider positions */
     let ci = 0
@@ -160,18 +214,29 @@ export function PathCanvas({
       const isDone  = nodes[i].nodeState === 'done'
       const nxt     = nodes[i + 1].nodeState
       const bright  = isDone && (nxt === 'done' || nxt === 'active')
-      const tint    = nodes[i].tintColor ?? nodes[i + 1].tintColor
+      const colA    = nodes[i].tintColor
+      const colB    = nodes[i + 1].tintColor
+      const hasTint = colA !== undefined || colB !== undefined
 
       const c1x = a.x, c1y = a.y - PATH_SY * 0.42
       const c2x = b.x, c2y = b.y + PATH_SY * 0.42
 
       ctx.lineWidth = 4
-      if (tint && bright) {
-        ctx.strokeStyle = tint + 'cc'
+      if (hasTint) {
+        // Ease one assignee's colour into the next along the segment. The plateaus
+        // (0.28 / 0.72) hold each colour before a smooth centred crossover.
+        const ca = colA ?? colB ?? '#ffffff'
+        const cb = colB ?? colA ?? '#ffffff'
+        const alpha = bright ? 0.85 : 0.30
+        const grad = ctx.createLinearGradient(a.x, a.y, b.x, b.y)
+        grad.addColorStop(0, withAlpha(ca, alpha))
+        grad.addColorStop(0.28, withAlpha(ca, alpha))
+        grad.addColorStop(0.5, withAlpha(mixHex(ca, cb), alpha))
+        grad.addColorStop(0.72, withAlpha(cb, alpha))
+        grad.addColorStop(1, withAlpha(cb, alpha))
+        ctx.strokeStyle = grad
       } else if (bright) {
         ctx.strokeStyle = 'rgba(255,255,255,0.82)'
-      } else if (tint) {
-        ctx.strokeStyle = tint + '44'
       } else {
         ctx.strokeStyle = 'rgba(255,255,255,0.13)'
       }
@@ -236,9 +301,9 @@ export function PathCanvas({
         ctx.lineWidth = 2.5; ctx.stroke()
       }
 
-      /* glyph / star */
+      /* glyph / star — drawn directly on the disc, no shadow */
       if (node.nodeState === 'done') {
-        const sc = (node.tintColor && node.tintColor !== '#ffffff') ? '#ffffff' : '#0a0a0a'
+        const sc = (node.tintColor && node.tintColor !== '#ffffff') ? '#ffffff' : '#000000'
         drawStarPath(ctx, x, y, 12, 5)
         ctx.fillStyle = sc; ctx.fill()
         ctx.lineJoin = 'round'; ctx.lineCap = 'round'
@@ -247,7 +312,7 @@ export function PathCanvas({
       } else if (node.nodeState === 'active') {
         ctx.font = 'bold 22px ui-sans-serif,system-ui,-apple-system,sans-serif'
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-        ctx.fillStyle = (node.tintColor && node.tintColor !== '#ffffff') ? '#ffffff' : '#0a0a0a'
+        ctx.fillStyle = (node.tintColor && node.tintColor !== '#ffffff') ? '#ffffff' : '#000000'
         ctx.fillText(String(node.num), x, y + 1)
       } else {
         ctx.font = 'bold 22px ui-sans-serif,system-ui,-apple-system,sans-serif'
@@ -274,14 +339,17 @@ export function PathCanvas({
         : '600 12px ui-sans-serif,system-ui,-apple-system,sans-serif'
       ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'
       const lines = wrapText(ctx, lText, LABEL_MAX_W, LABEL_LINES)
+      // subtle black shadow on the label text only (legibility over the path)
+      ctx.save()
+      ctx.shadowColor = 'rgba(0,0,0,0.7)'
+      ctx.shadowBlur = 4
+      ctx.shadowOffsetY = 1
       for (let li = 0; li < lines.length; li++) {
         const lx = x, ly = y + PATH_NR + LABEL_GAP + li * LABEL_LH
-        // subtle shadow
-        ctx.fillStyle = 'rgba(0,0,0,0.55)'
-        ctx.fillText(lines[li], lx + 1, ly + 1)
         ctx.fillStyle = lCol
         ctx.fillText(lines[li], lx, ly)
       }
+      ctx.restore()
     }
 
     /* user overlay avatar */
@@ -327,12 +395,12 @@ export function PathCanvas({
       const fadeTo   = Math.max(0, topY - PATH_SY * 2.5)
       if (fadeFrom > fadeTo) {
         const grad = ctx.createLinearGradient(0, fadeFrom, 0, fadeTo)
-        grad.addColorStop(0,    'rgba(10,10,10,0)')
-        grad.addColorStop(0.45, 'rgba(10,10,10,0.80)')
-        grad.addColorStop(1,    'rgba(10,10,10,1)')
+        grad.addColorStop(0,    'rgba(0,0,0,0)')
+        grad.addColorStop(0.45, 'rgba(0,0,0,0.80)')
+        grad.addColorStop(1,    'rgba(0,0,0,1)')
         ctx.fillStyle = grad; ctx.fillRect(0, fadeTo, width, fadeFrom - fadeTo)
       }
-      if (fadeTo > 0) { ctx.fillStyle = '#0a0a0a'; ctx.fillRect(0, 0, width, fadeTo) }
+      if (fadeTo > 0) { ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, width, fadeTo) }
     }
   }, [nodes, width, height, n, contentH, nodeYsBase, hasMysteryZone, userOverlay])
 
@@ -369,12 +437,15 @@ export function PathCanvas({
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     if (e.pointerType === 'mouse' && e.button !== 0) return
     canvasRef.current?.setPointerCapture(e.pointerId)
-    dragRef.current = { startY: e.clientY, startOffset: offsetRef.current, moved: false, pointerId: e.pointerId }
+    dragRef.current = { startX: e.clientX, startY: e.clientY, startOffset: offsetRef.current, moved: false, pointerId: e.pointerId }
   }
   function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
     const d = dragRef.current; if (!d || d.pointerId !== e.pointerId) return
     const dy = e.clientY - d.startY
-    if (Math.abs(dy) > 4) d.moved = true
+    const dx = e.clientX - d.startX
+    // Horizontal motion counts as movement too, so a sideways page-swipe is never
+    // mistaken for a node tap.
+    if (Math.abs(dy) > 4 || Math.abs(dx) > 4) d.moved = true
     offsetRef.current = clamp(d.startOffset - dy); draw()
   }
   function endDrag(e: React.PointerEvent<HTMLCanvasElement>, cancelled: boolean) {

@@ -972,22 +972,12 @@ function PanelAssistantContent({
     return (
       <>
         <div className="text-[10px] font-semibold mb-0.5 px-1" style={{ color: 'var(--white-dim)' }}>System</div>
-        <div
-          className="px-3 py-2 text-[13px] leading-snug"
-          style={{
-            background: 'var(--surface2)',
-            color: '#fff',
-            border: '1px solid var(--border)',
-            borderRadius: '16px 16px 16px 4px',
-          }}
-        >
-          Graph update {entry.graphUpdateResolved ? 'complete' : 'in progress'}
-        </div>
-        <div className="text-[10px] mt-0.5 px-1" style={{ color: 'var(--white-dim)' }}>{formatChatTime(entry.timestamp)}</div>
+        <GraphUpdateBubble resolved={entry.graphUpdateResolved ?? false} />
       </>
     )
   }
 
+  const loading = isLoadingAction(entry.eventType)
   return (
     <>
       <div className="text-[10px] font-semibold mb-0.5 px-1" style={{ color: 'var(--white-dim)' }}>System</div>
@@ -1000,7 +990,20 @@ function PanelAssistantContent({
           borderRadius: '16px 16px 16px 4px',
         }}
       >
-        {actionSummary(entry)}
+        <span className="inline-flex items-center gap-2">
+          {loading && (
+            <span className="inline-flex items-center gap-1">
+              {[0, 1, 2].map((dot) => (
+                <span
+                  key={dot}
+                  className="size-1.5 rounded-full bg-neutral-400 animate-bounce"
+                  style={{ animationDelay: `${dot * 140}ms` }}
+                />
+              ))}
+            </span>
+          )}
+          <span>{actionSummary(entry)}</span>
+        </span>
       </div>
       <div className="text-[10px] mt-0.5 px-1" style={{ color: 'var(--white-dim)' }}>{formatChatTime(entry.timestamp)}</div>
     </>
@@ -1250,7 +1253,21 @@ export default function ChatView({ mode = 'page' }: { mode?: 'page' | 'panel' })
       )}
 
       <div className={`flex-1 space-y-3 overflow-y-auto ${panelMode ? 'px-4 pt-4 pb-4' : 'pb-4'}`}>
-        {entries.length === 0 && (
+        {entries.length === 0 && reloading && (
+          <div className="mt-16 flex flex-col items-center gap-3 text-white/40">
+            <span className="inline-flex items-center gap-1.5">
+              {[0, 1, 2].map((dot) => (
+                <span
+                  key={dot}
+                  className="size-2 rounded-full bg-neutral-400 animate-bounce"
+                  style={{ animationDelay: `${dot * 140}ms` }}
+                />
+              ))}
+            </span>
+            <p className="text-sm">Connecting…</p>
+          </div>
+        )}
+        {entries.length === 0 && !reloading && (
           <p className="mt-12 text-center text-sm text-white/40">
             No messages yet. Say something.
           </p>
