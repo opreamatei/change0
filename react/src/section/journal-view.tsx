@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { SERVER_ENDPOINTS } from '../config/server'
 
 /* ── constants ──────────────────────────────────────────────────────── */
@@ -11,21 +11,6 @@ const MONTHS = [
 ]
 const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 const DOW_FULL = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
-
-const MOOD_TAG_PREFIX = 'mood:'
-
-/* mood stored as "mood:<index>" in tags — avoids multi-byte emoji in C strings */
-function moodToTag(mood: string | null): string | null {
-  if (!mood) return null
-  const i = MOODS.indexOf(mood)
-  return i >= 0 ? `${MOOD_TAG_PREFIX}${i}` : null
-}
-
-function tagToMood(tag: string): string | null {
-  if (!tag.startsWith(MOOD_TAG_PREFIX)) return null
-  const i = parseInt(tag.slice(MOOD_TAG_PREFIX.length), 10)
-  return Number.isFinite(i) && i >= 0 && i < MOODS.length ? MOODS[i] : null
-}
 
 /* ── icons ──────────────────────────────────────────────────────────── */
 /* 12-slot palette. iconIndex stored in C JournalMeta.icon_index */
@@ -67,7 +52,7 @@ function JournalIcon({ idx, size = 18 }: { idx: number; size?: number }) {
 interface JournalMeta {
   id: string
   title: string
-  tags: string
+  mood_index: number   /* -1 = no mood; 0-11 = MOODS[] index */
   last_updated: number
   icon_index: number
 }
@@ -91,24 +76,8 @@ interface GoalOption { id: string; title: string }
 
 /* ── helpers ────────────────────────────────────────────────────────── */
 
-function parseTags(raw: string): string[] {
-  return raw.split(',').map(t => t.trim()).filter(Boolean)
-}
-
-function encodeTags(tags: string[], mood: string | null): string {
-  const nonMood = tags.filter(t => !t.startsWith(MOOD_TAG_PREFIX))
-  const moodTag = moodToTag(mood)
-  if (moodTag) nonMood.unshift(moodTag)
-  return nonMood.join(',')
-}
-
-function extractMood(tags: string[]): string | null {
-  const m = tags.find(t => t.startsWith(MOOD_TAG_PREFIX))
-  return m ? tagToMood(m) : null
-}
-
-function displayTags(tags: string[]): string[] {
-  return tags.filter(t => !t.startsWith(MOOD_TAG_PREFIX))
+function moodFromIndex(idx: number): string | null {
+  return idx >= 0 && idx < MOODS.length ? MOODS[idx] : null
 }
 
 function monthKey(ts: number): string {
@@ -123,6 +92,24 @@ function monthLabel(ts: number): string {
 function buildJournalEntryUrl(entryId: string): string {
   const params = new URLSearchParams({ id: entryId })
   return `${SERVER_ENDPOINTS.journalEntry}?${params.toString()}`
+}
+
+function buildJournalFileUrl(entryId: string, filename: string): string {
+  const params = new URLSearchParams({ id: entryId, f: filename })
+  return `${SERVER_ENDPOINTS.journalFile}?${params.toString()}`
+}
+
+function buildJournalAttachUrl(entryId: string, filename: string): string {
+  const params = new URLSearchParams({ id: entryId, f: filename })
+  return `${SERVER_ENDPOINTS.journalAttach}?${params.toString()}`
+}
+
+function sanitizeUploadFilename(name: string): string {
+  const dot = name.lastIndexOf('.')
+  const base = (dot >= 0 ? name.slice(0, dot) : name).replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '')
+  const ext = dot >= 0 ? name.slice(dot).toLowerCase().replace(/[^.a-z0-9]+/g, '') : ''
+  const safeBase = base || 'image'
+  return `${Date.now()}-${safeBase}${ext}`
 }
 
 /* deterministic icon index from entry id — no user choice needed */
@@ -161,18 +148,24 @@ interface EmbedSheetProps {
   onAdded: () => void
 }
 
+interface JournalViewProps {
+  openEntryId?: string | null
+}
+
 function EmbedSheet({ open, entryId, journalEntries, onClose, onAdded }: EmbedSheetProps) {
   const [step, setStep]         = useState<'type' | 'input'>('type')
   const [embedType, setEmbedType] = useState<'goal' | 'journal' | 'image' | null>(null)
   const [ref, setRef]           = useState('')
   const [caption, setCaption]   = useState('')
+  const [selectedImage, setSelectedImage] = useState<File | null>(null)
   const [goals, setGoals]       = useState<GoalOption[]>([])
   const [adding, setAdding]     = useState(false)
   const [query, setQuery]       = useState('')
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   /* reset when closed */
   useEffect(() => {
-    if (!open) { setStep('type'); setEmbedType(null); setRef(''); setCaption(''); setQuery('') }
+    if (!open) { setStep('type'); setEmbedType(null); setRef(''); setCaption(''); setSelectedImage(null); setQuery('') }
   }, [open])
 
   /* load goals when goal type selected */
@@ -185,10 +178,28 @@ function EmbedSheet({ open, entryId, journalEntries, onClose, onAdded }: EmbedSh
   }, [embedType])
 
   async function submit() {
-    const finalRef = embedType === 'image' ? caption : ref
-    if (!finalRef.trim()) return
+    if (embedType === 'image') {
+      if (!selectedImage) return
+    } else if (!ref.trim()) {
+      return
+    }
+
     setAdding(true)
     try {
+      let finalRef = ref.trim()
+
+      if (embedType === 'image' && selectedImage) {
+        finalRef = sanitizeUploadFilename(selectedImage.name)
+        const uploadResponse = await fetch(buildJournalAttachUrl(entryId, finalRef), {
+          method: 'POST',
+          headers: {
+            'Content-Type': selectedImage.type || 'application/octet-stream',
+          },
+          body: selectedImage,
+        })
+        if (!uploadResponse.ok) throw new Error(`Image upload failed: ${uploadResponse.status}`)
+      }
+
       await fetch(SERVER_ENDPOINTS.journalEmbed, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -263,12 +274,12 @@ function EmbedSheet({ open, entryId, journalEntries, onClose, onAdded }: EmbedSh
             <button
               type="button"
               onClick={() => void submit()}
-              disabled={adding || !(embedType === 'image' ? caption.trim() : ref.trim())}
+              disabled={adding || !(embedType === 'image' ? selectedImage : ref.trim())}
               className="px-4 py-1.5 rounded-full text-[13px] font-bold"
               style={{
                 background: '#34c759',
                 color: '#fff',
-                opacity: adding || !(embedType === 'image' ? caption.trim() : ref.trim()) ? 0.4 : 1,
+                opacity: adding || !(embedType === 'image' ? selectedImage : ref.trim()) ? 0.4 : 1,
               }}
             >
               {adding ? '…' : 'Add'}
@@ -279,11 +290,11 @@ function EmbedSheet({ open, entryId, journalEntries, onClose, onAdded }: EmbedSh
         {/* step 1: type selection */}
         {step === 'type' && (
           <div className="px-5 pb-8 flex gap-3">
-            {([
-              { type: 'goal'    as const, label: 'Goal',  icon: '🎯', desc: 'Link a goal' },
-              { type: 'journal' as const, label: 'Entry', icon: '📝', desc: 'Link an entry' },
-              { type: 'image'   as const, label: 'Image', icon: '🖼️', desc: 'Add a caption' },
-            ]).map(({ type, label, icon, desc }) => (
+              {([
+                { type: 'goal'    as const, label: 'Goal',  icon: '🎯', desc: 'Link a goal' },
+                { type: 'journal' as const, label: 'Entry', icon: '📝', desc: 'Link an entry' },
+                { type: 'image'   as const, label: 'Image', icon: '🖼️', desc: 'Attach an image' },
+              ]).map(({ type, label, icon, desc }) => (
               <button
                 key={type}
                 type="button"
@@ -351,8 +362,7 @@ function EmbedSheet({ open, entryId, journalEntries, onClose, onAdded }: EmbedSh
                 />
                 <div className="flex flex-col gap-1.5">
                   {filteredEntries.slice(0, 12).map(e => {
-                    const tags  = parseTags(e.tags)
-                    const mood  = extractMood(tags)
+                    const mood = moodFromIndex(e.mood_index)
                     return (
                       <button
                         key={e.id}
@@ -388,18 +398,44 @@ function EmbedSheet({ open, entryId, journalEntries, onClose, onAdded }: EmbedSh
               </>
             )}
 
-            {/* image: caption input */}
+            {/* image: file + caption */}
             {embedType === 'image' && (
-              <div>
-                <p className="text-[12px] mb-2" style={{ color: 'rgba(255,255,255,.35)' }}>Caption</p>
+              <div className="flex flex-col gap-4">
                 <input
-                  value={caption}
-                  onChange={e => setCaption(e.target.value)}
-                  placeholder="Describe the image…"
-                  className="w-full bg-transparent text-[14px] outline-none px-3 py-2.5 rounded-xl"
-                  style={{ background: 'rgba(255,255,255,.07)', color: '#fff', caretColor: '#fff' }}
-                  autoFocus
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={e => setSelectedImage(e.target.files?.[0] ?? null)}
                 />
+                <div>
+                  <p className="text-[12px] mb-2" style={{ color: 'rgba(255,255,255,.35)' }}>Image</p>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-full rounded-xl px-3 py-3 text-left text-[14px]"
+                    style={{ background: 'rgba(255,255,255,.07)', color: '#fff' }}
+                  >
+                    {selectedImage ? selectedImage.name : 'Choose image…'}
+                  </button>
+                </div>
+                {selectedImage && (
+                  <img
+                    src={URL.createObjectURL(selectedImage)}
+                    alt=""
+                    className="w-full rounded-2xl object-cover max-h-[180px]"
+                  />
+                )}
+                <div>
+                  <p className="text-[12px] mb-2" style={{ color: 'rgba(255,255,255,.35)' }}>Caption</p>
+                  <input
+                    value={caption}
+                    onChange={e => setCaption(e.target.value)}
+                    placeholder="Optional caption…"
+                    className="w-full bg-transparent text-[14px] outline-none px-3 py-2.5 rounded-xl"
+                    style={{ background: 'rgba(255,255,255,.07)', color: '#fff', caretColor: '#fff' }}
+                  />
+                </div>
               </div>
             )}
           </div>
@@ -409,14 +445,43 @@ function EmbedSheet({ open, entryId, journalEntries, onClose, onAdded }: EmbedSh
   )
 }
 
+function ImageEmbedPreview({ entryId, filename, caption }: { entryId: string; filename: string; caption: string }) {
+  return (
+    <div
+      className="overflow-hidden rounded-2xl"
+      style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.08)' }}
+    >
+      <img
+        src={buildJournalFileUrl(entryId, filename)}
+        alt={caption}
+        className="block w-full h-[160px] object-cover"
+      />
+      {caption && (
+        <div className="px-3 py-2 text-[12px]" style={{ color: 'rgba(255,255,255,.65)' }}>
+          {caption}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ── EmbedChip ──────────────────────────────────────────────────────── */
 
-function EmbedChip({ embed }: { embed: EmbedItem }) {
+function EmbedChip({ embed, entryId }: { embed: EmbedItem; entryId: string }) {
   const snap = embed.snapshot
+
+  if (embed.type === 'image') {
+    const file = (snap.file as string | undefined) ?? embed.ref
+    const caption = (snap.caption as string | undefined) ?? ''
+    if (file) {
+      return <ImageEmbedPreview entryId={entryId} filename={file} caption={caption} />
+    }
+  }
+
   const label =
     embed.type === 'goal'    ? (snap.title as string ?? embed.ref) :
     embed.type === 'journal' ? (snap.title as string ?? 'Entry') :
-    /* image */                (snap.caption as string ?? 'Image')
+    ((snap.caption as string | undefined) || (snap.file as string | undefined) || 'Image')
 
   const icon = embed.type === 'goal' ? '🎯' : embed.type === 'journal' ? '📝' : '🖼️'
 
@@ -437,40 +502,79 @@ function EmbedChip({ embed }: { embed: EmbedItem }) {
 
 interface ComposeProps {
   open: boolean
-  editEntry?: { id: string; title: string; text: string; tags: string[]; mood: string | null } | null
-  onSave: (data: { title: string; text: string; tags: string; mood: string | null }) => Promise<void>
+  editEntry?: { id: string; title: string; text: string; mood_index: number } | null
+  journalEntries: JournalMeta[]
+  onSave: (data: { title: string; text: string; mood_index: number; draftId?: string }) => Promise<void>
+  onAutoCreate: (title: string, text: string, mood_index: number) => Promise<string>
   onBack: () => void
 }
 
-function ComposeScreen({ open, editEntry, onSave, onBack }: ComposeProps) {
-  const [mood,     setMood]     = useState<string | null>(null)
-  const [title,    setTitle]    = useState('')
-  const [text,     setText]     = useState('')
-  const [tags,     setTags]     = useState<string[]>([])
-  const [tagInput, setTagInput] = useState('')
-  const [saving,   setSaving]   = useState(false)
-  const [saveErr,  setSaveErr]  = useState<string | null>(null)
+function ComposeScreen({ open, editEntry, journalEntries, onSave, onAutoCreate, onBack }: ComposeProps) {
+  const [mood,       setMood]       = useState<string | null>(null)
+  const [title,      setTitle]      = useState('')
+  const [text,       setText]       = useState('')
+  const [saving,     setSaving]     = useState(false)
+  const [saveErr,    setSaveErr]    = useState<string | null>(null)
+  const [embedOpen,  setEmbedOpen]  = useState(false)
+  const [liveId,     setLiveId]     = useState<string | null>(null)
+  const [embedVer,   setEmbedVer]   = useState(0)
+  const [embeds,     setEmbeds]     = useState<EmbedItem[]>([])
 
   useEffect(() => {
     if (open) {
-      setMood(editEntry?.mood ?? null)
+      setMood(moodFromIndex(editEntry?.mood_index ?? -1))
       setTitle(editEntry?.title ?? '')
       setText(editEntry?.text ?? '')
-      setTags(editEntry?.tags ? [...editEntry.tags] : [])
-      setTagInput('')
       setSaveErr(null)
+      setLiveId(null)
+      setEmbedOpen(false)
+      setEmbeds([])
     }
   }, [open, editEntry?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const activeId = editEntry?.id ?? liveId
+
+  /* reload embeds whenever the active entry or embed version changes */
+  useEffect(() => {
+    if (!activeId) { setEmbeds([]); return }
+    fetch(buildJournalEntryUrl(activeId), { cache: 'no-store' })
+      .then(r => r.json() as Promise<JournalEntryResponse>)
+      .then(d => { if (d.ok) setEmbeds(d.embeds) })
+      .catch(() => {})
+  }, [activeId, embedVer])
+
+  async function deleteEmbed(index: number) {
+    if (!activeId) return
+    await fetch(SERVER_ENDPOINTS.journalEmbedDelete, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: activeId, index }),
+    })
+    setEmbedVer(v => v + 1)
+  }
+
+  async function openLink() {
+    if (activeId) { setEmbedOpen(true); return }
+    /* auto-create draft so EmbedSheet has an id to work with */
+    const moodIdx = mood ? MOODS.indexOf(mood) : -1
+    const id = await onAutoCreate(title.trim() || 'Draft', text.trim(), moodIdx)
+    setLiveId(id)
+    setEmbedOpen(true)
+  }
 
   async function save() {
     const trimT    = title.trim()
     const trimText = text.trim()
-    const finalTags = tagInput.trim() ? [...tags, tagInput.trim()] : tags
-    if (!trimT && !trimText) { onBack(); return }
+    if (!trimT && !trimText && !liveId) { onBack(); return }
     setSaving(true)
     setSaveErr(null)
     try {
-      await onSave({ title: trimT || 'Untitled', text: trimText, tags: finalTags.join(','), mood })
+      await onSave({
+        title: trimT || 'Untitled',
+        text: trimText,
+        mood_index: mood ? MOODS.indexOf(mood) : -1,
+        draftId: liveId ?? undefined,
+      })
     } catch (e) {
       setSaveErr(e instanceof Error ? e.message : 'Save failed')
     } finally {
@@ -567,34 +671,74 @@ function ComposeScreen({ open, editEntry, onSave, onBack }: ComposeProps) {
         style={{ color: 'rgba(255,255,255,.8)' }}
       />
 
-      {/* tags bar */}
-      <div className="px-4 py-2 pb-5 flex-shrink-0" style={{ borderTop: '1px solid #2a2a2a' }}>
-        <div className="flex flex-wrap gap-1.5 items-center">
-          {tags.map(t => (
-            <div key={t} className="text-[11px] px-2.5 py-1 rounded-lg flex items-center gap-1"
-              style={{ background: 'rgba(255,255,255,.08)', color: 'rgba(255,255,255,.5)' }}>
-              {t}
-              <span className="opacity-50 ml-0.5 cursor-pointer" onClick={() => setTags(tags.filter(x => x !== t))}>×</span>
-            </div>
-          ))}
-          <input
-            type="text"
-            value={tagInput}
-            onChange={e => setTagInput(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter' || e.key === ',') {
-                e.preventDefault()
-                const v = tagInput.trim().replace(/,$/, '')
-                if (v && !tags.includes(v)) setTags([...tags, v])
-                setTagInput('')
-              }
-            }}
-            placeholder="+ Add tag"
-            className="bg-transparent outline-none text-[13px] min-w-[90px] text-white"
-            style={{ caretColor: 'white' }}
-          />
+      {/* embeds in editor */}
+      {embeds.length > 0 && (
+        <div
+          className="flex gap-2 px-4 py-2.5 overflow-x-auto flex-shrink-0 no-scrollbar"
+          style={{ borderTop: '1px solid #1e1e1e' }}
+        >
+          {embeds.map((em, i) => {
+            const snap = em.snapshot
+            const label =
+              em.type === 'goal'    ? (snap.title as string | undefined ?? em.ref) :
+              em.type === 'journal' ? (snap.title as string | undefined ?? 'Entry') :
+              ((snap.caption as string | undefined) || (snap.file as string | undefined) || 'Image')
+            const icon = em.type === 'goal' ? '🎯' : em.type === 'journal' ? '📝' : '🖼️'
+            return (
+              <div
+                key={i}
+                className="flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-xl flex-shrink-0"
+                style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.1)' }}
+              >
+                <span className="text-[13px] leading-none">{icon}</span>
+                <span className="text-[12px] font-medium max-w-[110px] truncate" style={{ color: 'rgba(255,255,255,.65)' }}>
+                  {label}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void deleteEmbed(i)}
+                  className="ml-0.5 w-[18px] h-[18px] rounded-full flex items-center justify-center flex-shrink-0 active:scale-90 transition-transform"
+                  style={{ background: 'rgba(255,255,255,.12)' }}
+                >
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.6)" strokeWidth="2.8" strokeLinecap="round">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+            )
+          })}
         </div>
+      )}
+
+      {/* bottom toolbar */}
+      <div
+        className="flex items-center gap-2 px-4 py-3 flex-shrink-0"
+        style={{ borderTop: '1px solid #1e1e1e' }}
+      >
+        <button
+          type="button"
+          onClick={() => void openLink()}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[13px] font-medium transition-colors active:scale-95"
+          style={{ background: 'rgba(255,255,255,.07)', color: 'rgba(255,255,255,.5)', border: '1px solid rgba(255,255,255,.1)' }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+          </svg>
+          Link
+        </button>
       </div>
+
+      {/* embed sheet — available while composing */}
+      {activeId && (
+        <EmbedSheet
+          open={embedOpen}
+          entryId={activeId}
+          journalEntries={journalEntries}
+          onClose={() => setEmbedOpen(false)}
+          onAdded={() => setEmbedVer(v => v + 1)}
+        />
+      )}
     </div>
   )
 }
@@ -606,15 +750,19 @@ interface EntryScreenProps {
   entryId: string | null
   journalEntries: JournalMeta[]
   onBack: () => void
-  onEdit: (data: { id: string; title: string; text: string; tags: string[]; mood: string | null }) => void
+  onEdit: (data: { id: string; title: string; text: string; mood_index: number }) => void
+  onDelete: (id: string) => void
 }
 
-function EntryScreen({ open, entryId, journalEntries, onBack, onEdit }: EntryScreenProps) {
-  const [entry,        setEntry]        = useState<JournalEntryResponse | null>(null)
-  const [loading,      setLoading]      = useState(false)
-  const [error,        setError]        = useState<string | null>(null)
-  const [embedOpen,    setEmbedOpen]    = useState(false)
-  const [embedVersion, setEmbedVersion] = useState(0) // bump to reload embeds
+function EntryScreen({ open, entryId, journalEntries, onBack, onEdit, onDelete }: EntryScreenProps) {
+  const [entry,         setEntry]         = useState<JournalEntryResponse | null>(null)
+  const [loading,       setLoading]       = useState(false)
+  const [error,         setError]         = useState<string | null>(null)
+  const [embedOpen,     setEmbedOpen]     = useState(false)
+  const [embedVersion,  setEmbedVersion]  = useState(0) // bump to reload embeds
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  useEffect(() => { setConfirmDelete(false) }, [entryId])
 
   useEffect(() => {
     if (!entryId?.trim()) {
@@ -637,11 +785,9 @@ function EntryScreen({ open, entryId, journalEntries, onBack, onEdit }: EntryScr
       })
   }, [entryId, embedVersion])
 
-  const meta  = entry?.meta ?? null
-  const tags  = meta ? parseTags(meta.tags) : []
-  const mood  = extractMood(tags)
-  const dTags = displayTags(tags)
-  const d     = meta ? new Date(meta.last_updated * 1000) : null
+  const meta = entry?.meta ?? null
+  const mood = meta ? moodFromIndex(meta.mood_index) : null
+  const d    = meta ? new Date(meta.last_updated * 1000) : null
   const embeds = entry?.embeds ?? []
 
   return (
@@ -656,6 +802,43 @@ function EntryScreen({ open, entryId, journalEntries, onBack, onEdit }: EntryScr
           style={{ color: 'rgba(255,255,255,.65)' }}>
           <ChevronLeft />Back
         </div>
+        {meta && (
+          confirmDelete ? (
+            <div className="flex items-center gap-2">
+              <span className="text-[13px]" style={{ color: 'rgba(255,255,255,.4)' }}>Delete?</span>
+              <button
+                type="button"
+                onClick={() => { onDelete(meta.id) }}
+                className="px-3 py-1.5 rounded-full text-[13px] font-bold"
+                style={{ background: '#ef4444', color: '#fff' }}
+              >
+                Yes
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                className="px-3 py-1.5 rounded-full text-[13px] font-medium"
+                style={{ background: 'rgba(255,255,255,.1)', color: 'rgba(255,255,255,.6)' }}
+              >
+                No
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(true)}
+              className="w-9 h-9 flex items-center justify-center rounded-full transition-colors active:scale-90"
+              style={{ background: 'rgba(255,255,255,.07)' }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.45)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6M14 11v6" />
+                <path d="M9 6V4h6v2" />
+              </svg>
+            </button>
+          )
+        )}
       </div>
 
       {loading && (
@@ -700,49 +883,21 @@ function EntryScreen({ open, entryId, journalEntries, onBack, onEdit }: EntryScr
             {entry!.text}
           </div>
 
-          {/* tags */}
-          {dTags.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 px-5 pt-1 pb-4">
-              {dTags.map(t => (
-                <span key={t} className="text-[11px] px-2.5 py-1 rounded-lg"
-                  style={{ background: 'rgba(255,255,255,.07)', color: 'rgba(255,255,255,.45)' }}>
-                  {t}
-                </span>
-              ))}
+          {/* ── embeds strip ─────────────────────────────────────── */}
+          {embeds.length > 0 && (
+            <div className="px-5 pb-5">
+              <div className="h-px mb-4" style={{ background: 'rgba(255,255,255,.07)' }} />
+              <div className="flex items-center gap-2 flex-wrap">
+                {embeds.map((em, i) => <EmbedChip key={i} embed={em} entryId={meta.id} />)}
+              </div>
             </div>
           )}
-
-          {/* ── embeds strip ─────────────────────────────────────── */}
-          <div className="px-5 pb-5">
-            <div className="h-px mb-4" style={{ background: 'rgba(255,255,255,.07)' }} />
-            <div className="flex items-center gap-2 flex-wrap">
-              {embeds.map((em, i) => <EmbedChip key={i} embed={em} />)}
-
-              {/* + link button */}
-              <button
-                type="button"
-                onClick={() => setEmbedOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[12px] font-semibold transition-colors active:scale-95"
-                style={{
-                  background: 'rgba(255,255,255,.06)',
-                  border: '1px solid rgba(255,255,255,.1)',
-                  color: 'rgba(255,255,255,.45)',
-                }}
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-                Link
-              </button>
-            </div>
-          </div>
         </div>
       )}
 
       {/* edit FAB */}
       <div
-        onClick={() => meta && onEdit({ id: meta.id, title: meta.title, text: entry!.text, tags: dTags, mood })}
+        onClick={() => meta && onEdit({ id: meta.id, title: meta.title, text: entry!.text, mood_index: meta.mood_index })}
         className="absolute bottom-[100px] right-5 w-[52px] h-[52px] rounded-full bg-white flex items-center justify-center cursor-pointer z-10 active:scale-90 transition-transform"
         style={{ boxShadow: '0 4px 18px rgba(0,0,0,.55),0 1px 4px rgba(0,0,0,.3)' }}
       >
@@ -771,9 +926,9 @@ function EntryScreen({ open, entryId, journalEntries, onBack, onEdit }: EntryScr
 type Screen =
   | { type: 'list' }
   | { type: 'entry'; id: string }
-  | { type: 'compose'; editEntry?: { id: string; title: string; text: string; tags: string[]; mood: string | null } }
+  | { type: 'compose'; editEntry?: { id: string; title: string; text: string; mood_index: number } }
 
-export default function JournalView() {
+export default function JournalView({ openEntryId = null }: JournalViewProps) {
   const [entries, setEntries] = useState<JournalMeta[]>([])
   const [loading, setLoading] = useState(true)
   const [screen,  setScreen]  = useState<Screen>({ type: 'list' })
@@ -791,24 +946,49 @@ export default function JournalView() {
 
   useEffect(() => { void loadList() }, [loadList])
 
-  async function handleCreate(data: { title: string; text: string; tags: string; mood: string | null }) {
-    const tagStr = encodeTags(data.tags.split(',').map(t => t.trim()).filter(Boolean), data.mood)
+  useEffect(() => {
+    if (!openEntryId?.trim()) return
+    setScreen({ type: 'entry', id: openEntryId })
+  }, [openEntryId])
+
+  async function autoCreate(title: string, text: string, mood_index: number): Promise<string> {
     const res = await fetch(SERVER_ENDPOINTS.journalCreate, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: data.title, text: data.text, tags: tagStr }),
+      body: JSON.stringify({ title, text, mood_index }),
     })
     if (!res.ok) throw new Error(`Server error ${res.status}`)
+    const d = await res.json() as { ok: boolean; id: string }
+    await loadList()
+    return d.id
+  }
+
+  async function handleCreate(data: { title: string; text: string; mood_index: number; draftId?: string }) {
+    if (data.draftId) {
+      /* entry was auto-created as draft — just update it */
+      await handleUpdate(data.draftId, data)
+      return
+    }
+    const id = await autoCreate(data.title, data.text, data.mood_index)
+    void id  /* id unused here, list already reloaded */
+    setScreen({ type: 'list' })
+  }
+
+  async function handleDelete(id: string) {
+    await fetch(SERVER_ENDPOINTS.journalDelete, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    })
     await loadList()
     setScreen({ type: 'list' })
   }
 
-  async function handleUpdate(id: string, data: { title: string; text: string; tags: string; mood: string | null }) {
-    const tagStr = encodeTags(data.tags.split(',').map(t => t.trim()).filter(Boolean), data.mood)
+  async function handleUpdate(id: string, data: { title: string; text: string; mood_index: number; draftId?: string }) {
     const res = await fetch(SERVER_ENDPOINTS.journalUpdate, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, title: data.title, text: data.text, tags: tagStr }),
+      body: JSON.stringify({ id, title: data.title, text: data.text, mood_index: data.mood_index }),
     })
     if (!res.ok) throw new Error(`Server error ${res.status}`)
     await loadList()
@@ -862,8 +1042,7 @@ export default function JournalView() {
             </div>
             {items.map(entry => {
               const delay = idx++ * 40
-              const tags  = parseTags(entry.tags)
-              const mood  = extractMood(tags)
+              const mood  = moodFromIndex(entry.mood_index)
               const d     = new Date(entry.last_updated * 1000)
               const dow   = DOW_FULL[d.getDay()]
               return (
@@ -898,17 +1077,6 @@ export default function JournalView() {
                           {entry.title || 'Untitled'}
                         </div>
                       </div>
-                      <div
-                        className="text-[14px] leading-[1.5] overflow-hidden pl-[42px]"
-                        style={{
-                          color: 'rgba(255,255,255,.38)',
-                          display: '-webkit-box',
-                          WebkitLineClamp: 1,
-                          WebkitBoxOrient: 'vertical' as never,
-                        }}
-                      >
-                        {displayTags(tags).join(' · ')}
-                      </div>
                     </div>
                     <div className="flex items-baseline gap-1 mt-4 pl-[42px]">
                       <span className="text-[11px] font-semibold" style={{ color: 'rgba(255,255,255,.28)' }}>{dow}</span>
@@ -932,12 +1100,15 @@ export default function JournalView() {
         journalEntries={entries}
         onBack={() => setScreen({ type: 'list' })}
         onEdit={d => setScreen({ type: 'compose', editEntry: d })}
+        onDelete={id => void handleDelete(id)}
       />
 
       {/* compose */}
       <ComposeScreen
         open={composeOpen}
         editEntry={editEntry}
+        journalEntries={entries}
+        onAutoCreate={autoCreate}
         onSave={async data => {
           if (editEntry) await handleUpdate(editEntry.id, data)
           else await handleCreate(data)

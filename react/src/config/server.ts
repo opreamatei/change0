@@ -98,7 +98,12 @@ export const SERVER_ENDPOINTS = {
   get journalDelete()  { return path('/journal/delete')() },
   get journalAttach()  { return path('/journal/attach')() },
   get journalFile()    { return path('/journal/file')() },
-  get journalEmbed()   { return path('/journal/embed')() },
+  get journalEmbed()         { return path('/journal/embed')() },
+  get journalEmbedDelete()   { return path('/journal/embed/delete')() },
+
+  get reminders()        { return path('/reminders')() },
+  get remindersSave()    { return path('/reminders/save')() },
+  get remindersDelete()  { return path('/reminders/delete')() },
 }
 
 export const CENTRAL_ENDPOINTS = {

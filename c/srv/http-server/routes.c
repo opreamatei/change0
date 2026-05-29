@@ -74,7 +74,12 @@ static int handle_request(int fd, const HttpRequest *req, User *user)
 	if (POST("/journal/delete"))  { handle_post_journal_delete(fd, req, user);  return 0; }
 	if (POST("/journal/attach"))  { handle_post_journal_attach(fd, req, user);  return 0; }
 	if (GET("/journal/file"))     { handle_get_journal_file(fd, req, user);     return 0; }
-	if (POST("/journal/embed"))   { handle_post_journal_embed(fd, req, user);   return 0; }
+	if (POST("/journal/embed"))          { handle_post_journal_embed(fd, req, user);        return 0; }
+	if (POST("/journal/embed/delete"))   { handle_post_journal_embed_delete(fd, req, user); return 0; }
+
+	if (GET("/reminders"))              { handle_get_reminders(fd, user);                  return 0; }
+	if (POST("/reminders/save"))        { handle_post_reminders_save(fd, req, user);       return 0; }
+	if (POST("/reminders/delete"))      { handle_post_reminders_delete(fd, req, user);     return 0; }
 
 #undef GET
 #undef POST

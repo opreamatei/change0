@@ -141,6 +141,11 @@
 "If found == 0: tell the user no compatible people were found right now — no hedging, no invented next steps, no fictional filters. " \
 "Do NOT invent filtering options (age, time zone, language, etc.) — there are no such filters. The AI decides compatibility based on the description alone. " \
 "All fields: null. " \
+"set_reminder: Propose a reminder to the user — always requires their approval before saving. " \
+"ALWAYS fire set_reminder when the user asks to be reminded of something, or when you naturally see an opportunity (e.g. they mention a recurring habit, a task they keep forgetting, or a goal that needs a time anchor). You may proactively suggest it at the end of a relevant turn. " \
+"Required: reminder_title (short, concrete, action-oriented — what they should do), reminder_hour (0–23), reminder_minute (0–59), reminder_days (bitmask: bit0=Sun bit1=Mon bit2=Tue bit3=Wed bit4=Thu bit5=Fri bit6=Sat; Mon–Fri=62, every day=127, weekends=65), reminder_end_time (unix timestamp; 0=repeats forever; for one-shot set to the exact target unix time + 10). " \
+"The system shows the user a confirmation popup before saving — fire the action, do not ask the user to confirm in chat first. Mention in assistant_message that you have proposed a reminder for their approval. " \
+"All other fields: null. " \
 "SUGGESTED REPLIES: Only use when the question has a small fixed set of correct answers that a stranger could pick without knowing the user. " \
 "Good: pure yes/no, an explicit list you just presented ('which of these?'), category choices ('skill / project / habit'). " \
 "Never suggest replies when: the answer is personal information (name, age, profession, opinion, experience), the user needs to describe something, the question is open-ended or exploratory, or the reply would require knowing who the user actually is. " \

@@ -1,4 +1,5 @@
 #include "middleware.h"
+#include "reminders.h"
 
 #include "goal/goal.h"
 #include "goal/goal-info.h"
@@ -31,9 +32,9 @@
       "\"items\":{" \
         "\"type\":\"object\"," \
         "\"additionalProperties\":false," \
-        "\"required\":[\"type\",\"key\",\"value\",\"requires_permission\",\"reason\",\"goal_input1\",\"goal_input2\",\"goal_id\",\"priority\",\"deep_search_task\",\"graph_input\",\"min_rounds\",\"delay_seconds\",\"delay_until\",\"repair_reason\"]," \
+        "\"required\":[\"type\",\"key\",\"value\",\"requires_permission\",\"reason\",\"goal_input1\",\"goal_input2\",\"goal_id\",\"priority\",\"deep_search_task\",\"graph_input\",\"min_rounds\",\"delay_seconds\",\"delay_until\",\"repair_reason\",\"reminder_title\",\"reminder_hour\",\"reminder_minute\",\"reminder_days\",\"reminder_end_time\"]," \
         "\"properties\":{" \
-          "\"type\":{\"type\":\"string\",\"enum\":[\"reply\",\"set_profile\",\"clear_profile\",\"ask_permission\",\"create_goal\",\"set_goal_priority\",\"call_deep_search\",\"update_graph\",\"delay_goal\",\"drop_goal\",\"repair_branch\",\"set_discoverable\",\"set_private\",\"update_match_description\",\"find_match\"]}," \
+          "\"type\":{\"type\":\"string\",\"enum\":[\"reply\",\"set_profile\",\"clear_profile\",\"ask_permission\",\"create_goal\",\"set_goal_priority\",\"call_deep_search\",\"update_graph\",\"delay_goal\",\"drop_goal\",\"repair_branch\",\"set_discoverable\",\"set_private\",\"update_match_description\",\"find_match\",\"set_reminder\"]}," \
           "\"key\":{\"type\":[\"string\",\"null\"]}," \
           "\"value\":{\"type\":[\"string\",\"null\"]}," \
           "\"requires_permission\":{\"type\":[\"boolean\",\"null\"]}," \
@@ -47,7 +48,12 @@
           "\"min_rounds\":{\"type\":[\"integer\",\"null\"],\"minimum\":1,\"maximum\":8}," \
           "\"delay_seconds\":{\"type\":[\"integer\",\"null\"],\"minimum\":0}," \
           "\"delay_until\":{\"type\":[\"string\",\"null\"]}," \
-          "\"repair_reason\":{\"type\":[\"string\",\"null\"]}" \
+          "\"repair_reason\":{\"type\":[\"string\",\"null\"]}," \
+          "\"reminder_title\":{\"type\":[\"string\",\"null\"]}," \
+          "\"reminder_hour\":{\"type\":[\"integer\",\"null\"],\"minimum\":0,\"maximum\":23}," \
+          "\"reminder_minute\":{\"type\":[\"integer\",\"null\"],\"minimum\":0,\"maximum\":59}," \
+          "\"reminder_days\":{\"type\":[\"integer\",\"null\"],\"minimum\":0,\"maximum\":127}," \
+          "\"reminder_end_time\":{\"type\":[\"integer\",\"null\"],\"minimum\":0}" \
         "}" \
       "}" \
     "}" \
@@ -62,6 +68,17 @@ typedef struct {
 	char reason[512];
 	_Bool active;
 } PendingProfilePermission;
+
+typedef struct {
+	char   id[64];
+	char   session_id[64];
+	char   title[REMINDER_TITLE_SIZE];
+	int    hour;
+	int    minute;
+	int    days;
+	long long end_time;
+	_Bool  active;
+} PendingReminderPermission;
 
 typedef struct {
 	char session_id[64];
@@ -86,6 +103,11 @@ typedef struct {
 	char delay_until[32];
 	int delay_seconds;
 	char repair_reason[2048];
+	char reminder_title[REMINDER_TITLE_SIZE];
+	int  reminder_hour;
+	int  reminder_minute;
+	int  reminder_days;
+	long long reminder_end_time;
 	_Bool has_repair_reason;
 	_Bool has_key;
 	_Bool has_value;
@@ -94,12 +116,14 @@ typedef struct {
 	_Bool has_priority;
 	_Bool has_delay_seconds;
 	_Bool has_delay_until;
+	_Bool has_reminder;
 	_Bool requires_permission;
 	_Bool has_requires_permission;
 } MiddlewareAction;
 
-static PendingProfilePermission pending_permissions[MIDDLEWARE_MAX_PENDING_PERMISSIONS];
-static MiddlewareSessionHistory chat_histories[MIDDLEWARE_CHAT_HISTORY_CAP];
+static PendingProfilePermission  pending_permissions[MIDDLEWARE_MAX_PENDING_PERMISSIONS];
+static PendingReminderPermission pending_reminders[MIDDLEWARE_MAX_PENDING_PERMISSIONS];
+static MiddlewareSessionHistory  chat_histories[MIDDLEWARE_CHAT_HISTORY_CAP];
 
 static void copy_json_string_field(json_value *v, char *dst, size_t cap, _Bool *seen)
 {
@@ -410,6 +434,16 @@ static _Bool parse_action(json_value *item, MiddlewareAction *action, String *er
 			copy_json_string_field(entry.value, action->delay_until, sizeof(action->delay_until), &action->has_delay_until);
 		} else if (strcmp(entry.name, "repair_reason") == 0) {
 			copy_json_string_field(entry.value, action->repair_reason, sizeof(action->repair_reason), &action->has_repair_reason);
+		} else if (strcmp(entry.name, "reminder_title") == 0) {
+			copy_json_string_field(entry.value, action->reminder_title, sizeof(action->reminder_title), &action->has_reminder);
+		} else if (strcmp(entry.name, "reminder_hour") == 0 && entry.value->type == json_integer) {
+			action->reminder_hour = (int)entry.value->u.integer;
+		} else if (strcmp(entry.name, "reminder_minute") == 0 && entry.value->type == json_integer) {
+			action->reminder_minute = (int)entry.value->u.integer;
+		} else if (strcmp(entry.name, "reminder_days") == 0 && entry.value->type == json_integer) {
+			action->reminder_days = (int)entry.value->u.integer;
+		} else if (strcmp(entry.name, "reminder_end_time") == 0 && entry.value->type == json_integer) {
+			action->reminder_end_time = entry.value->u.integer;
 		}
 	}
 
@@ -592,8 +626,60 @@ static _Bool validate_action(MiddlewareAction *action, String *error)
 	if (strcmp(action->type, "find_match") == 0)
 		return 1;
 
+	if (strcmp(action->type, "set_reminder") == 0) {
+		if (!action->has_reminder || action->reminder_title[0] == '\0') {
+			CatFixed(error, "set_reminder requires reminder_title.");
+			return 0;
+		}
+		return 1;
+	}
+
 	CatTemplateString(error, "Unknown action type [%s].", action->type);
 	return 0;
+}
+
+static PendingReminderPermission *store_pending_reminder(
+	const char *session_id,
+	const MiddlewareAction *action
+) {
+	size_t slot = SIZE_MAX;
+	for (size_t i = 0; i < MIDDLEWARE_MAX_PENDING_PERMISSIONS; i++) {
+		if (!pending_reminders[i].active) { slot = i; break; }
+	}
+	if (slot == SIZE_MAX) slot = 0;
+
+	memset(&pending_reminders[slot], 0, sizeof(pending_reminders[slot]));
+	make_permission_id(pending_reminders[slot].id);
+	strncpy(pending_reminders[slot].session_id, session_id ? session_id : "default",
+	        sizeof(pending_reminders[slot].session_id) - 1);
+	strncpy(pending_reminders[slot].title, action->reminder_title,
+	        sizeof(pending_reminders[slot].title) - 1);
+	pending_reminders[slot].hour     = action->reminder_hour;
+	pending_reminders[slot].minute   = action->reminder_minute;
+	pending_reminders[slot].days     = action->reminder_days;
+	pending_reminders[slot].end_time = action->reminder_end_time;
+	pending_reminders[slot].active   = 1;
+	return &pending_reminders[slot];
+}
+
+static void emit_reminder_permission(
+	const char *session_id,
+	PendingReminderPermission *p,
+	middleware_emit_like_func emit
+) {
+	char *esc_id    = json_escape_dup(p->id);
+	char *esc_title = json_escape_dup(p->title);
+	String payload;
+	InitString(&payload, 256);
+	CatTemplateString(&payload,
+		"{\"permission_id\":\"%s\",\"title\":\"%s\","
+		"\"hour\":%d,\"minute\":%d,\"days\":%d,\"end_time\":%lld}",
+		esc_id, esc_title,
+		p->hour, p->minute, p->days, p->end_time);
+	emit_text(emit, session_id, "reminder_permission_required", payload.p);
+	free(esc_id);
+	free(esc_title);
+	FreeString(&payload);
 }
 
 static void emit_permission_request(
@@ -915,6 +1001,12 @@ static _Bool apply_actions(
 			emit_text(emit, session_id, "match_search_done", payload);
 			continue;
 		}
+
+		if (strcmp(action->type, "set_reminder") == 0) {
+			PendingReminderPermission *p = store_pending_reminder(session_id, action);
+			emit_reminder_permission(session_id, p, emit);
+			continue;
+		}
 	}
 
 	return 1;
@@ -1112,6 +1204,44 @@ _Bool ResolveMiddlewarePermission(
 	middleware_emit_like_func emit,
 	User *user
 ) {
+	/* check reminder permissions first */
+	for (size_t i = 0; i < MIDDLEWARE_MAX_PENDING_PERMISSIONS; i++) {
+		if (!pending_reminders[i].active) continue;
+		if (strcmp(pending_reminders[i].id, permission_id) != 0) continue;
+
+		String event;
+		InitString(&event, 256);
+
+		if (approved) {
+			Reminder r;
+			memset(&r, 0, sizeof(r));
+			strncpy(r.title, pending_reminders[i].title, sizeof(r.title) - 1);
+			r.hour     = pending_reminders[i].hour;
+			r.minute   = pending_reminders[i].minute;
+			r.days     = (uint8_t)pending_reminders[i].days;
+			r.end_time = (time_t)pending_reminders[i].end_time;
+			r.enabled  = 1;
+			RemindersSave(user, &r);
+
+			char *esc_title = json_escape_dup(r.title);
+			CatTemplateString(&event,
+				"{\"permission_id\":\"%s\",\"approved\":true,"
+				"\"title\":\"%s\",\"hour\":%d,\"minute\":%d}",
+				pending_reminders[i].id, esc_title ? esc_title : "",
+				r.hour, r.minute);
+			free(esc_title);
+		} else {
+			CatTemplateString(&event,
+				"{\"permission_id\":\"%s\",\"approved\":false}",
+				pending_reminders[i].id);
+		}
+
+		emit_text(emit, pending_reminders[i].session_id, "permission_resolved", event.p);
+		pending_reminders[i].active = 0;
+		FreeString(&event);
+		return 1;
+	}
+
 	for (size_t i = 0; i < MIDDLEWARE_MAX_PENDING_PERMISSIONS; i++) {
 		if (pending_permissions[i].active && strcmp(pending_permissions[i].id, permission_id) == 0) {
 			String event;

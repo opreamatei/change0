@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { CENTRAL_ENDPOINTS, SERVER_ENDPOINTS } from '../config/server'
 
+/* ─── Types ────────────────────────────────────────────────────── */
+
 interface Connection {
   id: string
   state: number  /* 0=proposed, 1=confirmed, 2=declined */
   my_approved: boolean
   their_approved: boolean
-  /* The partner's central user id. Required to attribute shared journeys
-   * to both participants; the matching system already knows it server-side
-   * and exposes it here. */
   other_id: string
   other_name: string
   reason: string
@@ -29,6 +28,13 @@ interface ProposalMessage {
   extra_info: string
 }
 
+interface ProfileResponse {
+  ok: boolean
+  derived?: string
+  discoverable?: boolean
+  description?: string
+}
+
 function parseProposal(text: string): ProposalMessage | null {
   if (!text.startsWith('{')) return null
   try {
@@ -47,22 +53,32 @@ function formatTime(ts: number): string {
   return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-/* ─── Inline proposal bubble ──────────────────────────────────── */
+/* ─── Color helpers ────────────────────────────────────────────── */
+
+const PALETTE_HUES = [252, 338, 198, 152, 28, 286, 175, 55]
+
+function colorFromString(s: string): string {
+  let h = 5381
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i)
+  const hue = PALETTE_HUES[Math.abs(h) % PALETTE_HUES.length]
+  return `hsl(${hue}, 72%, 58%)`
+}
+
+function hexOrHslToRgba(color: string, alpha: number): string {
+  // For hsl colors, just put alpha in
+  if (color.startsWith('hsl(')) {
+    return color.replace('hsl(', 'hsla(').replace(')', `, ${alpha})`)
+  }
+  return color
+}
+
+/* ─── Proposal bubble ──────────────────────────────────────────── */
 
 function ProposalBubble({
-  proposal,
-  sender,
-  at,
-  userId,
-  conn,
-  onRefresh,
+  proposal, sender, at, userId, conn, onRefresh,
 }: {
-  proposal: ProposalMessage
-  sender: string
-  at: number
-  userId: string
-  conn: Connection
-  onRefresh: () => Promise<void>
+  proposal: ProposalMessage; sender: string; at: number
+  userId: string; conn: Connection; onRefresh: () => Promise<void>
 }) {
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState(false)
@@ -72,82 +88,58 @@ function ProposalBubble({
     setBusy(true)
     try {
       const res = await fetch(CENTRAL_ENDPOINTS.journeyApproveRoot(proposal.journey_id), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, proposal_id: proposal.proposal_id }),
       })
       const data = (await res.json()) as { ok: boolean; both_approved?: boolean; error?: string }
       if (!res.ok || !data.ok) throw new Error(data.error ?? 'approve failed')
-
       if (data.both_approved) {
         await fetch(SERVER_ENDPOINTS.goalCreateSharedRoot, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            journey_id: proposal.journey_id,
-            proposal_id: proposal.proposal_id,
-            title: proposal.title,
-            extra_info: proposal.extra_info,
+            journey_id: proposal.journey_id, proposal_id: proposal.proposal_id,
+            title: proposal.title, extra_info: proposal.extra_info,
           }),
         })
       }
-      setDone(true)
-      await onRefresh()
-    } catch (err) {
-      console.error('[proposal] approve:', err)
-    } finally {
-      setBusy(false)
-    }
+      setDone(true); await onRefresh()
+    } catch (err) { console.error('[proposal] approve:', err) }
+    finally { setBusy(false) }
   }
 
   async function decline() {
     setBusy(true)
     try {
       await fetch(CENTRAL_ENDPOINTS.journeyDeclineRoot(proposal.journey_id), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, proposal_id: proposal.proposal_id }),
       })
-      setDone(true)
-      await onRefresh()
-    } catch (err) {
-      console.error('[proposal] decline:', err)
-    } finally {
-      setBusy(false)
-    }
+      setDone(true); await onRefresh()
+    } catch (err) { console.error('[proposal] decline:', err) }
+    finally { setBusy(false) }
   }
 
   return (
     <div className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-      <div className="max-w-[82%] rounded-2xl border border-[#2a2a2a] bg-[#111] px-4 py-3 shadow-sm">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-1">
-          Goal proposal
-        </p>
+      <div className="max-w-[82%] rounded-2xl border border-white/10 bg-[#111] px-4 py-3">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-1">Goal proposal</p>
         <p className="text-sm font-semibold text-white">{proposal.title}</p>
-        {proposal.extra_info && (
-          <p className="mt-0.5 text-xs text-white/55 line-clamp-3">{proposal.extra_info}</p>
-        )}
+        {proposal.extra_info && <p className="mt-0.5 text-xs text-white/55 line-clamp-3">{proposal.extra_info}</p>}
         <p className="text-[10px] text-white/40 mt-1">{formatTime(at)}</p>
         {!mine && !done && (
           <div className="mt-2 flex gap-2">
-            <button
-              disabled={busy}
-              onClick={() => void decline()}
-              className="rounded-lg border border-[#2a2a2a] px-3 py-1.5 text-xs text-white/55 hover:border-red-700 hover:text-red-400 disabled:opacity-40"
-            >Decline</button>
-            <button
-              disabled={busy}
-              onClick={() => void approve()}
-              className="rounded-lg bg-[#111] px-3 py-1.5 text-xs text-white hover:bg-[#e0e0e0] disabled:opacity-40"
-            >Approve</button>
+            <button disabled={busy} onClick={() => void decline()}
+              className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:border-red-700 hover:text-red-400 disabled:opacity-40">
+              Decline
+            </button>
+            <button disabled={busy} onClick={() => void approve()}
+              className="rounded-lg bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/20 disabled:opacity-40">
+              Approve
+            </button>
           </div>
         )}
-        {mine && !done && (
-          <p className="mt-1.5 text-[10px] italic text-white/40">Waiting for {conn.other_name} to respond…</p>
-        )}
-        {done && (
-          <p className="mt-1.5 text-[10px] text-emerald-400">Done</p>
-        )}
+        {mine && !done && <p className="mt-1.5 text-[10px] italic text-white/40">Waiting for {conn.other_name}…</p>}
+        {done && <p className="mt-1.5 text-[10px] text-emerald-400">Done ✓</p>}
       </div>
     </div>
   )
@@ -168,40 +160,29 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
   const [proposeError, setProposeError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const pollRef  = useRef<ReturnType<typeof setInterval> | null>(null)
+  const myColor = colorFromString(userId)
+  const theirColor = colorFromString(conn.other_id || conn.other_name)
 
   async function proposeRootGoal() {
     const title = proposeTitle.trim()
     if (!title) { setProposeError('Enter a goal title.'); return }
     if (!conn.other_id) { setProposeError('Partner id is missing.'); return }
-
-    setProposeBusy(true)
-    setProposeError(null)
+    setProposeBusy(true); setProposeError(null)
     try {
       const listRes = await fetch(CENTRAL_ENDPOINTS.journeyList(userId), { cache: 'no-store' })
       const listData = (await listRes.json()) as { ok: boolean; journeys: JourneyListItem[] }
       const journey = listData.journeys?.find((j) => j.participants.some((p) => p.id === conn.other_id))
-      if (!journey) {
-        setProposeError('Shared journey not found yet — it may still be setting up.')
-        return
-      }
-
+      if (!journey) { setProposeError('Shared journey not found yet.'); return }
       const res = await fetch(CENTRAL_ENDPOINTS.journeyProposeRoot(journey.id), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, title, extra_info: proposeExtraInfo.trim() }),
       })
       const data = (await res.json()) as { ok: boolean; id?: string; error?: string }
       if (!res.ok || !data.ok) throw new Error(data.error ?? `propose failed (${res.status})`)
-
-      setProposeOpen(false)
-      setProposeTitle('')
-      setProposeExtraInfo('')
+      setProposeOpen(false); setProposeTitle(''); setProposeExtraInfo('')
       await load()
-    } catch (err) {
-      setProposeError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setProposeBusy(false)
-    }
+    } catch (err) { setProposeError(err instanceof Error ? err.message : String(err)) }
+    finally { setProposeBusy(false) }
   }
 
   const load = useCallback(async () => {
@@ -219,19 +200,14 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
   }, [load])
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
   async function send() {
-    const t = text.trim()
-    if (!t) return
-    setSending(true)
-    setText('')
+    const t = text.trim(); if (!t) return
+    setSending(true); setText('')
     try {
       await fetch(CENTRAL_ENDPOINTS.messagesSend, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ connection_id: conn.id, sender_id: userId, text: t }),
       })
       await load()
@@ -239,50 +215,54 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
   }
 
   return (
-    <div className="flex flex-col h-full bg-[#111]">
+    <div className="flex flex-col h-full" style={{ background: '#0d0d0d' }}>
       {/* header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10 shrink-0">
-        <button onClick={onBack} className="text-xl leading-none text-white/40 hover:text-white">←</button>
+      <div className="flex items-center gap-3 px-4 py-3 shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,.08)' }}>
+        <button onClick={onBack} className="flex items-center justify-center w-8 h-8 rounded-full text-white/50 hover:text-white hover:bg-white/8 transition-colors">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        {/* fused avatar */}
+        <div className="relative w-9 h-9 shrink-0">
+          <div className="absolute left-0 top-0 w-7 h-7 rounded-full border-2 flex items-center justify-center text-[10px] font-bold text-white"
+            style={{ background: myColor, borderColor: '#0d0d0d' }}>
+            {userId.charAt(0).toUpperCase()}
+          </div>
+          <div className="absolute right-0 bottom-0 w-7 h-7 rounded-full border-2 flex items-center justify-center text-[10px] font-bold text-white"
+            style={{ background: theirColor, borderColor: '#0d0d0d' }}>
+            {conn.other_name.charAt(0).toUpperCase()}
+          </div>
+        </div>
         <div className="flex-1 min-w-0">
-          <p className="font-semibold text-sm">{conn.other_name}</p>
+          <p className="font-semibold text-sm leading-tight">{conn.other_name}</p>
           <p className="text-[10px] text-white/40">Connected {formatTime(conn.proposed_at)}</p>
         </div>
         <button
-          type="button"
-          className="shrink-0 rounded-full border border-[#2a2a2a] px-3 py-1.5 text-xs font-medium text-white/70 hover:bg-[#1a1a1a]"
-          onClick={() => { setProposeOpen((v) => !v); setProposeError(null) }}
-        >
+          className="shrink-0 rounded-full px-3 py-1.5 text-[11px] font-medium text-white/60 hover:text-white hover:bg-white/8 transition-colors"
+          style={{ border: '1px solid rgba(255,255,255,.12)' }}
+          onClick={() => { setProposeOpen((v) => !v); setProposeError(null) }}>
           {proposeOpen ? 'Cancel' : '+ Propose goal'}
         </button>
       </div>
 
-      {/* root-goal proposal drawer */}
+      {/* propose drawer */}
       {proposeOpen && (
-        <div className="border-b border-white/10 bg-[#1a1a1a] px-4 py-3 shrink-0 space-y-2">
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-white/55">
-            Propose a shared root goal with {conn.other_name}
+        <div className="shrink-0 px-4 py-3 space-y-2" style={{ borderBottom: '1px solid rgba(255,255,255,.08)', background: 'rgba(255,255,255,.03)' }}>
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40">
+            Propose a shared goal with {conn.other_name}
           </p>
-          <input
-            className="w-full rounded-lg border border-[#2a2a2a] px-3 py-2 text-sm outline-none focus:border-white bg-[#111]"
-            placeholder="Goal title…"
-            value={proposeTitle}
+          <input className="w-full rounded-xl px-3 py-2 text-sm outline-none bg-white/5 text-white placeholder-white/30 focus:bg-white/8"
+            style={{ border: '1px solid rgba(255,255,255,.1)' }}
+            placeholder="Goal title…" value={proposeTitle}
             onChange={(e) => setProposeTitle(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !proposeBusy) { e.preventDefault(); void proposeRootGoal() } }}
-            disabled={proposeBusy}
-            autoFocus
-          />
-          <input
-            className="w-full rounded-lg border border-[#2a2a2a] px-3 py-2 text-sm outline-none focus:border-white bg-[#111]"
-            placeholder="Extra info (optional)…"
-            value={proposeExtraInfo}
-            onChange={(e) => setProposeExtraInfo(e.target.value)}
-            disabled={proposeBusy}
-          />
-          <button
-            className="rounded-lg bg-[#111] px-4 py-2 text-sm text-white disabled:opacity-40"
-            onClick={() => void proposeRootGoal()}
-            disabled={proposeBusy || !proposeTitle.trim()}
-          >
+            disabled={proposeBusy} autoFocus />
+          <input className="w-full rounded-xl px-3 py-2 text-sm outline-none bg-white/5 text-white placeholder-white/30 focus:bg-white/8"
+            style={{ border: '1px solid rgba(255,255,255,.1)' }}
+            placeholder="Extra info (optional)…" value={proposeExtraInfo}
+            onChange={(e) => setProposeExtraInfo(e.target.value)} disabled={proposeBusy} />
+          <button className="rounded-xl px-4 py-2 text-sm font-medium text-white disabled:opacity-40 transition-opacity"
+            style={{ background: 'rgba(255,255,255,.1)' }}
+            onClick={() => void proposeRootGoal()} disabled={proposeBusy || !proposeTitle.trim()}>
             {proposeBusy ? 'Proposing…' : 'Propose'}
           </button>
           {proposeError && <p className="text-xs text-red-400">{proposeError}</p>}
@@ -292,30 +272,22 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
       {/* messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2">
         {messages.length === 0 && (
-          <p className="text-xs text-white/40 text-center mt-12">No messages yet. Say hi.</p>
+          <p className="text-xs text-white/30 text-center mt-16">No messages yet. Say hi 👋</p>
         )}
         {messages.map((m, i) => {
           const proposal = parseProposal(m.text)
-          if (proposal) {
-            return (
-              <ProposalBubble
-                key={i}
-                proposal={proposal}
-                sender={m.sender}
-                at={m.at}
-                userId={userId}
-                conn={conn}
-                onRefresh={load}
-              />
-            )
-          }
+          if (proposal) return (
+            <ProposalBubble key={i} proposal={proposal} sender={m.sender} at={m.at}
+              userId={userId} conn={conn} onRefresh={load} />
+          )
           const mine = m.sender === userId
           return (
             <div key={i} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[78%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed
-                ${mine ? 'bg-[#111] text-white rounded-br-sm' : 'bg-[#222] text-white rounded-bl-sm'}`}>
-                <p>{m.text}</p>
-                <p className="text-[10px] mt-1 text-white/40">{formatTime(m.at)}</p>
+                ${mine ? 'rounded-br-sm' : 'rounded-bl-sm'}`}
+                style={{ background: mine ? hexOrHslToRgba(myColor, 0.18) : 'rgba(255,255,255,.07)', border: mine ? `1px solid ${hexOrHslToRgba(myColor, 0.3)}` : '1px solid rgba(255,255,255,.08)' }}>
+                <p className="text-white">{m.text}</p>
+                <p className="text-[10px] mt-1 text-white/35">{formatTime(m.at)}</p>
               </div>
             </div>
           )
@@ -324,132 +296,230 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
       </div>
 
       {/* input */}
-      <div className="shrink-0 border-t border-white/10 px-4 py-3 flex gap-2 bg-[#111]">
+      <div className="shrink-0 px-4 py-3 flex gap-2" style={{ borderTop: '1px solid rgba(255,255,255,.08)' }}>
         <input
-          className="flex-1 rounded-full border border-[#2a2a2a] px-4 py-2.5 text-sm outline-none focus:border-white bg-[#1a1a1a]"
-          placeholder="Message…"
-          value={text}
+          className="flex-1 rounded-full px-4 py-2.5 text-sm outline-none text-white placeholder-white/30"
+          style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)' }}
+          placeholder="Message…" value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-          disabled={sending}
-        />
+          disabled={sending} />
         <button
-          className="rounded-full bg-[#111] text-white text-sm px-5 py-2.5 disabled:opacity-40 shrink-0"
-          onClick={send}
-          disabled={sending || !text.trim()}
-        >
-          Send
-        </button>
+          className="rounded-full px-5 py-2.5 text-sm font-medium text-white shrink-0 disabled:opacity-30 transition-opacity"
+          style={{ background: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.15)' }}
+          onClick={send} disabled={sending || !text.trim()}>Send</button>
       </div>
     </div>
   )
 }
 
-/* ─── Proposal card (Tinder-style) ────────────────────────────── */
+/* ─── Profile permission modal ─────────────────────────────────── */
 
-function ProposalCard({
-  conn,
-  onApprove,
-  onDecline,
-}: {
-  conn: Connection
-  onApprove: () => Promise<void>
-  onDecline: () => Promise<void>
-}) {
-  const [busy, setBusy] = useState(false)
-
-  async function approve() {
-    setBusy(true)
-    try { await onApprove() } finally { setBusy(false) }
-  }
-
-  async function decline() {
-    setBusy(true)
-    try { await onDecline() } finally { setBusy(false) }
-  }
-
-  const waitingForThem = conn.my_approved && conn.state === STATE_PROPOSED
-
+function ProfilePermissionModal({
+  onAllow, onDismiss, busy,
+}: { onAllow: () => void; onDismiss: () => void; busy: boolean }) {
   return (
-    <div className="mx-auto w-full max-w-sm">
-      {/* card */}
-      <div className="rounded-3xl bg-[#111] border border-white/10 shadow-sm overflow-hidden">
-        {/* name bar */}
-        <div className="px-6 pt-6 pb-4">
-          <p className="text-xl font-semibold tracking-tight">{conn.other_name}</p>
-          <p className="text-xs text-white/40 mt-0.5">{formatTime(conn.proposed_at)}</p>
-        </div>
-
-        {/* reason */}
-        <div className="px-6 pb-6">
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-white/40 mb-2">Why you might click</p>
-          <p className="text-sm text-white/70 leading-relaxed">{conn.reason}</p>
-        </div>
-
-        {/* divider */}
-        <div className="border-t border-white/10" />
-
-        {/* actions */}
-        <div className="px-6 py-5">
-          {waitingForThem ? (
-            <div className="text-center py-2">
-              <p className="text-sm font-medium text-white">Request sent</p>
-              <p className="text-xs text-white/40 mt-1">Waiting for {conn.other_name} to respond.</p>
-            </div>
-          ) : (
-            <div className="flex gap-3">
-              <button
-                onClick={() => { void decline() }}
-                disabled={busy}
-                className="flex-1 rounded-2xl border-2 border-[#2a2a2a] text-sm font-semibold py-3.5 text-white/55
-                  hover:border-red-700 hover:text-red-400 transition-colors disabled:opacity-40"
-              >
-                Pass
-              </button>
-              <button
-                onClick={() => { void approve() }}
-                disabled={busy}
-                className="flex-1 rounded-2xl bg-[#111] text-white text-sm font-semibold py-3.5
-                  hover:bg-[#e0e0e0] transition-colors disabled:opacity-40"
-              >
-                Connect
-              </button>
-            </div>
-          )}
+    <div className="fixed inset-0 z-50 flex items-end justify-center pb-6 px-4"
+      style={{ background: 'rgba(0,0,0,.72)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}>
+      <div className="w-full max-w-sm rounded-3xl overflow-hidden"
+        style={{ background: 'linear-gradient(160deg, #1a1a1a 0%, #111 100%)', border: '1px solid rgba(255,255,255,.12)' }}>
+        {/* top glow accent */}
+        <div className="h-1 w-full" style={{ background: 'linear-gradient(90deg, #8b5cf6, #f43f5e)' }} />
+        <div className="px-7 pt-7 pb-8">
+          {/* icon */}
+          <div className="mb-5 w-14 h-14 rounded-2xl flex items-center justify-center mx-auto"
+            style={{ background: 'linear-gradient(135deg, rgba(139,92,246,.25), rgba(244,63,94,.2))' }}>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="url(#pg)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <defs><linearGradient id="pg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#8b5cf6"/><stop offset="100%" stopColor="#f43f5e"/></linearGradient></defs>
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+          </div>
+          <h2 className="text-lg font-bold text-white text-center mb-2">Build your match profile</h2>
+          <p className="text-sm text-white/55 text-center leading-relaxed mb-1">
+            To find collaborators, we'll create a brief profile from your goals and activity.
+          </p>
+          <p className="text-xs text-white/35 text-center leading-relaxed mb-7">
+            This stays private and is only used to suggest people with aligned goals.
+          </p>
+          <button
+            onClick={onAllow} disabled={busy}
+            className="w-full rounded-2xl py-3.5 text-sm font-semibold text-white mb-3 disabled:opacity-50 transition-opacity"
+            style={{ background: 'linear-gradient(135deg, #8b5cf6, #f43f5e)' }}>
+            {busy ? 'Setting up…' : 'Allow & find matches'}
+          </button>
+          <button
+            onClick={onDismiss} disabled={busy}
+            className="w-full rounded-2xl py-3 text-sm font-medium text-white/45 hover:text-white/70 transition-colors">
+            Not now
+          </button>
         </div>
       </div>
     </div>
   )
 }
 
-/* ─── Confirmed connection row ─────────────────────────────────── */
+/* ─── Searching animation ──────────────────────────────────────── */
 
-function ConnectedRow({
-  conn,
-  onOpen,
-}: {
-  conn: Connection
-  onOpen: () => void
-}) {
+function SearchingState({ onCancel }: { onCancel: () => void }) {
+  const [dots, setDots] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setDots((d) => (d + 1) % 4), 500)
+    return () => clearInterval(t)
+  }, [])
+
   return (
-    <button
-      onClick={onOpen}
-      className="w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl bg-[#111] border border-white/10
-        hover:border-[#333] transition-colors text-left"
-    >
-      {/* avatar placeholder */}
-      <div className="w-10 h-10 rounded-full bg-[#2a2a2a] text-white flex items-center justify-center
-        text-sm font-semibold shrink-0">
-        {conn.other_name.charAt(0).toUpperCase()}
+    <div className="flex flex-col items-center justify-center py-16 px-6 text-center space-y-5">
+      {/* pulsing rings */}
+      <div className="relative w-20 h-20 flex items-center justify-center">
+        {[0,1,2].map((i) => (
+          <div key={i} className="absolute rounded-full"
+            style={{
+              width: 20 + i * 24, height: 20 + i * 24,
+              border: '1.5px solid rgba(139,92,246,' + (0.5 - i * 0.15) + ')',
+              animation: `ping ${1 + i * 0.4}s ease-out infinite`,
+              animationDelay: `${i * 0.3}s`,
+            }} />
+        ))}
+        <div className="relative z-10 w-8 h-8 rounded-full flex items-center justify-center"
+          style={{ background: 'linear-gradient(135deg, #8b5cf6, #f43f5e)' }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+        </div>
       </div>
-      <div className="flex-1 min-w-0">
-        <p className="font-semibold text-sm">{conn.other_name}</p>
-        <p className="text-xs text-white/40 truncate">{conn.reason}</p>
+      <div>
+        <p className="text-base font-semibold text-white">Finding matches{'.'.repeat(dots)}</p>
+        <p className="text-xs text-white/40 mt-1.5">Looking for people with aligned goals</p>
       </div>
-      <span className="text-white/30 text-lg">›</span>
+      <button onClick={onCancel}
+        className="rounded-full px-5 py-2 text-xs font-medium text-white/40 hover:text-white/70 transition-colors"
+        style={{ border: '1px solid rgba(255,255,255,.1)' }}>
+        Cancel
+      </button>
+    </div>
+  )
+}
+
+/* ─── Collab card (confirmed) ──────────────────────────────────── */
+
+function CollabCard({ conn, userId, onOpen }: { conn: Connection; userId: string; onOpen: () => void }) {
+  const myColor = colorFromString(userId)
+  const theirColor = colorFromString(conn.other_id || conn.other_name)
+
+  return (
+    <button onClick={onOpen} className="w-full text-left rounded-3xl overflow-hidden transition-transform active:scale-[.98]"
+      style={{ border: '1px solid rgba(255,255,255,.1)', background: '#111' }}>
+      {/* gradient banner */}
+      <div className="relative h-14 overflow-hidden">
+        <div className="absolute inset-0"
+          style={{ background: `linear-gradient(135deg, ${hexOrHslToRgba(myColor, 0.35)} 0%, transparent 45%, ${hexOrHslToRgba(theirColor, 0.35)} 100%)` }} />
+        {/* shine line */}
+        <div className="absolute inset-x-0 top-0 h-px"
+          style={{ background: `linear-gradient(90deg, transparent, ${hexOrHslToRgba(myColor, 0.6)}, ${hexOrHslToRgba(theirColor, 0.6)}, transparent)` }} />
+      </div>
+
+      {/* overlapping avatars */}
+      <div className="px-5 -mt-5 flex items-end gap-3">
+        <div className="relative flex shrink-0">
+          <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white z-10"
+            style={{ background: myColor, border: '2.5px solid #111', boxShadow: `0 0 12px ${hexOrHslToRgba(myColor, 0.4)}` }}>
+            {userId.charAt(0).toUpperCase()}
+          </div>
+          <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white -ml-2"
+            style={{ background: theirColor, border: '2.5px solid #111', boxShadow: `0 0 12px ${hexOrHslToRgba(theirColor, 0.4)}` }}>
+            {conn.other_name.charAt(0).toUpperCase()}
+          </div>
+        </div>
+        <div className="pb-1 min-w-0">
+          <p className="font-semibold text-sm text-white leading-tight truncate">{conn.other_name}</p>
+        </div>
+        <div className="ml-auto pb-1 shrink-0">
+          <span className="text-white/30">›</span>
+        </div>
+      </div>
+
+      {/* reason */}
+      <div className="px-5 pt-2.5 pb-5">
+        <p className="text-[11px] text-white/45 leading-relaxed line-clamp-2">{conn.reason}</p>
+        <p className="text-[10px] text-white/25 mt-1.5">{formatTime(conn.proposed_at)}</p>
+      </div>
     </button>
   )
 }
+
+/* ─── Proposal card ─────────────────────────────────────────────── */
+
+function ProposalCard({ conn, userId, onApprove, onDecline }: {
+  conn: Connection; userId: string
+  onApprove: () => Promise<void>; onDecline: () => Promise<void>
+}) {
+  const [busy, setBusy] = useState(false)
+  const theirColor = colorFromString(conn.other_id || conn.other_name)
+  const myColor = colorFromString(userId)
+  const waitingForThem = conn.my_approved && conn.state === STATE_PROPOSED
+
+  async function approve() { setBusy(true); try { await onApprove() } finally { setBusy(false) } }
+  async function decline() { setBusy(true); try { await onDecline() } finally { setBusy(false) } }
+
+  return (
+    <div className="w-full rounded-3xl overflow-hidden"
+      style={{ border: '1px solid rgba(255,255,255,.12)', background: '#111' }}>
+      {/* gradient banner */}
+      <div className="relative h-20 overflow-hidden">
+        <div className="absolute inset-0"
+          style={{ background: `radial-gradient(ellipse at 30% 60%, ${hexOrHslToRgba(theirColor, 0.4)} 0%, transparent 65%), radial-gradient(ellipse at 70% 40%, ${hexOrHslToRgba(myColor, 0.25)} 0%, transparent 55%)` }} />
+        <div className="absolute inset-x-0 top-0 h-px"
+          style={{ background: `linear-gradient(90deg, transparent, ${hexOrHslToRgba(theirColor, 0.8)}, transparent)` }} />
+      </div>
+
+      {/* avatar */}
+      <div className="px-6 -mt-6">
+        <div className="w-12 h-12 rounded-full flex items-center justify-center text-base font-bold text-white"
+          style={{ background: theirColor, border: '3px solid #111', boxShadow: `0 0 20px ${hexOrHslToRgba(theirColor, 0.5)}` }}>
+          {conn.other_name.charAt(0).toUpperCase()}
+        </div>
+      </div>
+
+      {/* info */}
+      <div className="px-6 pt-3 pb-2">
+        <p className="text-xl font-bold tracking-tight text-white">{conn.other_name}</p>
+        <p className="text-xs text-white/40 mt-0.5">{formatTime(conn.proposed_at)}</p>
+      </div>
+
+      {/* reason */}
+      <div className="px-6 pb-5">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-white/30 mb-2">Why you might click</p>
+        <p className="text-sm text-white/65 leading-relaxed">{conn.reason}</p>
+      </div>
+
+      {/* divider */}
+      <div style={{ borderTop: '1px solid rgba(255,255,255,.07)' }} />
+
+      {/* actions */}
+      <div className="px-6 py-5">
+        {waitingForThem ? (
+          <div className="text-center py-1.5 space-y-1">
+            <p className="text-sm font-semibold text-white">Request sent ✓</p>
+            <p className="text-xs text-white/40">Waiting for {conn.other_name} to respond.</p>
+          </div>
+        ) : (
+          <div className="flex gap-3">
+            <button onClick={() => { void decline() }} disabled={busy}
+              className="flex-1 rounded-2xl py-3.5 text-sm font-semibold text-white/45 hover:text-red-400 transition-colors disabled:opacity-40"
+              style={{ border: '1.5px solid rgba(255,255,255,.1)' }}>Pass</button>
+            <button onClick={() => { void approve() }} disabled={busy}
+              className="flex-1 rounded-2xl py-3.5 text-sm font-semibold text-white disabled:opacity-40 transition-all hover:opacity-90"
+              style={{ background: `linear-gradient(135deg, ${theirColor}, ${hexOrHslToRgba(myColor, 0.8)})` }}>Connect</button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ─── Find match button ────────────────────────────────────────── */
+
+type MatchState = 'idle' | 'checking' | 'searching' | 'found'
 
 /* ─── Main view ────────────────────────────────────────────────── */
 
@@ -457,7 +527,11 @@ export default function ConnectionsView({ userId }: { userId: string }) {
   const [connections, setConnections] = useState<Connection[]>([])
   const [loading, setLoading]         = useState(true)
   const [thread, setThread]           = useState<Connection | null>(null)
+  const [matchState, setMatchState]   = useState<MatchState>('idle')
+  const [showPermModal, setShowPermModal] = useState(false)
+  const [permBusy, setPermBusy]       = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -480,105 +554,217 @@ export default function ConnectionsView({ userId }: { userId: string }) {
     return () => { if (pollRef.current) clearInterval(pollRef.current) }
   }, [load])
 
+  /* ── Match trigger ── */
+  async function triggerFindMatch() {
+    setMatchState('checking')
+    try {
+      const r = await fetch(SERVER_ENDPOINTS.profile, { cache: 'no-store' })
+      const profile = (await r.json()) as ProfileResponse
+
+      const hasProfile = profile.ok && profile.derived && profile.derived.trim().length > 0
+      if (!hasProfile) {
+        setMatchState('idle')
+        setShowPermModal(true)
+        return
+      }
+
+      await doSearch()
+    } catch {
+      setMatchState('idle')
+    }
+  }
+
+  async function doSearch() {
+    setMatchState('searching')
+    try {
+      await fetch(CENTRAL_ENDPOINTS.connectionsDiscoverable, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, discoverable: true }),
+      })
+    } catch { /* best-effort */ }
+
+    // keep searching state for a few seconds then refresh
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+    searchTimerRef.current = setTimeout(async () => {
+      await load()
+      setMatchState('found')
+      setTimeout(() => setMatchState('idle'), 1200)
+    }, 3500)
+  }
+
+  async function handlePermAllow() {
+    setPermBusy(true)
+    try {
+      // Enable discovery – the backend will generate a profile if needed
+      await fetch(CENTRAL_ENDPOINTS.connectionsDiscoverable, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, discoverable: true }),
+      })
+      setShowPermModal(false)
+      await doSearch()
+    } catch { /* ignore */ }
+    finally { setPermBusy(false) }
+  }
+
   if (thread) {
     return <MessageThread conn={thread} userId={userId} onBack={() => setThread(null)} />
   }
 
-  const proposals  = connections.filter((c) => c.state === STATE_PROPOSED)
-  const confirmed  = connections.filter((c) => c.state === STATE_CONFIRMED)
-  const declined   = connections.filter((c) => c.state === STATE_DECLINED)
+  const proposals = connections.filter((c) => c.state === STATE_PROPOSED)
+  const confirmed = connections.filter((c) => c.state === STATE_CONFIRMED)
+  const declined  = connections.filter((c) => c.state === STATE_DECLINED)
 
   if (loading) {
-    return <div className="flex items-center justify-center h-full text-sm text-white/40">Loading…</div>
+    return <div className="flex items-center justify-center h-full text-sm text-white/30">Loading…</div>
   }
 
   const empty = proposals.length === 0 && confirmed.length === 0
 
   return (
-    <div className="overflow-y-auto h-full px-4 py-6 space-y-8">
+    <>
+      {showPermModal && (
+        <ProfilePermissionModal
+          onAllow={() => void handlePermAllow()}
+          onDismiss={() => setShowPermModal(false)}
+          busy={permBusy} />
+      )}
 
-      {empty && (
-        <div className="flex flex-col items-center justify-center py-20 text-center space-y-3">
-          <p className="text-2xl">👋</p>
-          <p className="text-sm font-semibold">No connections yet</p>
-          <p className="text-xs text-white/40 max-w-xs leading-relaxed">
-            Tell the assistant you're open to meeting people — it will build a short profile and search for a match.
-          </p>
+      <div className="overflow-y-auto h-full" style={{ background: '#0d0d0d' }}>
+        {/* ── Find match header ── */}
+        <div className="px-5 pt-6 pb-4">
+          {matchState === 'searching' ? (
+            <SearchingState onCancel={() => {
+              if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+              setMatchState('idle')
+            }} />
+          ) : (
+            <button
+              onClick={() => { void triggerFindMatch() }}
+              disabled={matchState === 'checking'}
+              className="w-full rounded-2xl py-4 flex items-center justify-center gap-3 text-sm font-semibold text-white transition-all active:scale-[.98] disabled:opacity-60"
+              style={{ background: matchState === 'found' ? 'rgba(34,197,94,.18)' : 'linear-gradient(135deg, rgba(139,92,246,.22), rgba(244,63,94,.18))', border: matchState === 'found' ? '1px solid rgba(34,197,94,.4)' : '1px solid rgba(139,92,246,.3)' }}>
+              {matchState === 'checking' ? (
+                <>
+                  <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><circle cx="12" cy="12" r="10" opacity=".25"/><path d="M12 2a10 10 0 0 1 10 10" opacity=".75"/></svg>
+                  <span>Checking profile…</span>
+                </>
+              ) : matchState === 'found' ? (
+                <>
+                  <span className="text-base">✓</span>
+                  <span className="text-green-400">Refreshed!</span>
+                </>
+              ) : (
+                <>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                  </svg>
+                  <span>Find a match</span>
+                  <span className="text-white/35 text-xs font-normal">→</span>
+                </>
+              )}
+            </button>
+          )}
         </div>
-      )}
 
-      {/* pending proposals — one at a time */}
-      {proposals.length > 0 && (() => {
-        const current = proposals[0]
-        const rest = proposals.slice(1)
-
-        async function handleApprove() {
-          await fetch(CENTRAL_ENDPOINTS.connectionsApprove, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ connection_id: current.id, user_id: userId }),
-          })
-          await Promise.all(rest.map((p) =>
-            fetch(CENTRAL_ENDPOINTS.connectionsDecline, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ connection_id: p.id, user_id: userId }),
-            })
-          ))
-          await load()
-        }
-
-        async function handleDecline() {
-          await fetch(CENTRAL_ENDPOINTS.connectionsDecline, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ connection_id: current.id, user_id: userId }),
-          })
-          await load()
-        }
-
-        return (
-          <section className="space-y-4">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-white/40 px-1">
-              {proposals.length === 1 ? '1 proposal' : `1 of ${proposals.length} proposals`}
-            </p>
-            <ProposalCard
-              key={current.id}
-              conn={current}
-              onApprove={handleApprove}
-              onDecline={handleDecline}
-            />
-          </section>
-        )
-      })()}
-
-      {/* confirmed */}
-      {confirmed.length > 0 && (
-        <section className="space-y-2">
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-white/40 px-1">Connected</p>
-          {confirmed.map((c) => (
-            <ConnectedRow key={c.id} conn={c} onOpen={() => setThread(c)} />
-          ))}
-        </section>
-      )}
-
-      {/* declined — collapsed */}
-      {declined.length > 0 && (
-        <details className="px-1">
-          <summary className="text-[11px] text-white/40 cursor-pointer select-none list-none flex items-center gap-1">
-            <span className="text-white/30">▸</span>
-            {declined.length} passed
-          </summary>
-          <div className="mt-3 space-y-2">
-            {declined.map((c) => (
-              <div key={c.id} className="px-4 py-3 rounded-2xl border border-white/10 bg-[#1a1a1a]">
-                <p className="text-sm font-medium text-white/40">{c.other_name}</p>
-                <p className="text-xs text-white/30 mt-0.5">{c.reason}</p>
+        {/* ── Empty state ── */}
+        {empty && matchState !== 'searching' && (
+          <div className="flex flex-col items-center justify-center py-12 px-8 text-center space-y-3">
+            <div className="relative w-16 h-16 mb-2">
+              <div className="absolute inset-0 rounded-full opacity-30"
+                style={{ background: 'linear-gradient(135deg, #8b5cf6, #f43f5e)', filter: 'blur(10px)' }} />
+              <div className="relative w-16 h-16 rounded-full flex items-center justify-center"
+                style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)' }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.6)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                </svg>
               </div>
-            ))}
+            </div>
+            <p className="text-sm font-semibold text-white/80">No connections yet</p>
+            <p className="text-xs text-white/35 max-w-[220px] leading-relaxed">
+              Tap "Find a match" to discover people with aligned goals.
+            </p>
           </div>
-        </details>
-      )}
-    </div>
+        )}
+
+        <div className="px-5 pb-10 space-y-8">
+          {/* ── Proposals ── */}
+          {proposals.length > 0 && (() => {
+            const current = proposals[0]
+            const rest = proposals.slice(1)
+
+            async function handleApprove() {
+              await fetch(CENTRAL_ENDPOINTS.connectionsApprove, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ connection_id: current.id, user_id: userId }),
+              })
+              await Promise.all(rest.map((p) =>
+                fetch(CENTRAL_ENDPOINTS.connectionsDecline, {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ connection_id: p.id, user_id: userId }),
+                })
+              ))
+              await load()
+            }
+
+            async function handleDecline() {
+              await fetch(CENTRAL_ENDPOINTS.connectionsDecline, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ connection_id: current.id, user_id: userId }),
+              })
+              await load()
+            }
+
+            return (
+              <section className="space-y-3">
+                <div className="flex items-center justify-between px-1">
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-white/35">
+                    {proposals.length === 1 ? '1 match found' : `${proposals.length} matches found`}
+                  </p>
+                  {proposals.length > 1 && (
+                    <p className="text-[10px] text-white/25">{proposals.length - 1} more</p>
+                  )}
+                </div>
+                <ProposalCard key={current.id} conn={current} userId={userId}
+                  onApprove={handleApprove} onDecline={handleDecline} />
+              </section>
+            )
+          })()}
+
+          {/* ── Confirmed (collab cards) ── */}
+          {confirmed.length > 0 && (
+            <section className="space-y-3">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-white/35 px-1">
+                Collaborators
+              </p>
+              {confirmed.map((c) => (
+                <CollabCard key={c.id} conn={c} userId={userId} onOpen={() => setThread(c)} />
+              ))}
+            </section>
+          )}
+
+          {/* ── Declined (collapsed) ── */}
+          {declined.length > 0 && (
+            <details>
+              <summary className="text-[10px] text-white/25 cursor-pointer select-none list-none flex items-center gap-1.5 px-1">
+                <span className="text-white/20">▸</span>
+                {declined.length} passed
+              </summary>
+              <div className="mt-3 space-y-2">
+                {declined.map((c) => (
+                  <div key={c.id} className="px-4 py-3 rounded-2xl"
+                    style={{ background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.07)' }}>
+                    <p className="text-sm font-medium text-white/35">{c.other_name}</p>
+                    <p className="text-xs text-white/20 mt-0.5 line-clamp-1">{c.reason}</p>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      </div>
+    </>
   )
 }

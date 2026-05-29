@@ -250,6 +250,8 @@ target_include_directories(middleware PUBLIC
 	${CMAKE_SOURCE_DIR}/c/lib/util
 	${CMAKE_SOURCE_DIR}/c/lib/jsonp
 	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/journal
+	${CMAKE_SOURCE_DIR}/c/srv/user
 )
 target_link_libraries(middleware PUBLIC
 	util
@@ -260,6 +262,7 @@ target_link_libraries(middleware PUBLIC
 	goal
 	deepsearchsession
 	connections
+	journal
 )
 
 add_library(userprofile SHARED ${CMAKE_SOURCE_DIR}/c/ne/profile/user-profile.c)
@@ -294,6 +297,8 @@ add_library(journal SHARED
 	${CMAKE_SOURCE_DIR}/c/journal/journal.c
 	${CMAKE_SOURCE_DIR}/c/journal/journal-embeds.c
 	${CMAKE_SOURCE_DIR}/c/journal/journal-handlers.c
+	${CMAKE_SOURCE_DIR}/c/journal/reminders.c
+	${CMAKE_SOURCE_DIR}/c/journal/reminders-handlers.c
 )
 target_include_directories(journal PUBLIC
 	${CMAKE_SOURCE_DIR}/c

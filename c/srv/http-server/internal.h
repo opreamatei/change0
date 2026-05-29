@@ -78,5 +78,11 @@ void handle_post_journal_delete(int fd, const HttpRequest *req, User *user);
 void handle_post_journal_attach(int fd, const HttpRequest *req, User *user);
 void handle_get_journal_file(int fd, const HttpRequest *req, User *user);
 void handle_post_journal_embed(int fd, const HttpRequest *req, User *user);
+void handle_post_journal_embed_delete(int fd, const HttpRequest *req, User *user);
+
+/* ── reminders handlers (journal/reminders-handlers.c) ── */
+void handle_get_reminders(int fd, User *user);
+void handle_post_reminders_save(int fd, const HttpRequest *req, User *user);
+void handle_post_reminders_delete(int fd, const HttpRequest *req, User *user);
 
 #endif

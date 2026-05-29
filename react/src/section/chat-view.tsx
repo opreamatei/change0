@@ -2,13 +2,22 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { SERVER_ENDPOINTS } from '../config/server'
 import GraphUpdateBubble from '../components/graph-update-bubble'
 
-type ChatEntryKind = 'user' | 'assistant' | 'action' | 'permission'
+type ChatEntryKind = 'user' | 'assistant' | 'action' | 'permission' | 'reminder_permission'
 
 interface PermissionData {
   permission_id: string
   key: string
   value: string
   reason: string
+}
+
+interface ReminderPermissionData {
+  permission_id: string
+  title: string
+  hour: number
+  minute: number
+  days: number
+  end_time: number
 }
 
 interface GoalCreatedData {
@@ -24,6 +33,7 @@ interface ChatEntry {
   content: string
   timestamp: number
   permission?: PermissionData
+  reminderPermission?: ReminderPermissionData
   permissionResolved?: boolean
   permissionApproved?: boolean
   graphUpdateResolved?: boolean
@@ -73,6 +83,15 @@ function parseEntry(id: string, type: string, content: string, timestamp: number
     }
   }
 
+  if (type === 'reminder_permission_required') {
+    try {
+      const data = JSON.parse(content) as ReminderPermissionData
+      return { ...base, kind: 'reminder_permission', reminderPermission: data }
+    } catch {
+      return base
+    }
+  }
+
   if (type === 'graph_update_started') return { ...base, kind: 'action' }
 
   return base
@@ -92,11 +111,13 @@ function applyGraphUpdateResolved(entries: ChatEntry[]): ChatEntry[] {
 function applyPermissionResolution(entries: ChatEntry[], resolvedJson: string): ChatEntry[] {
   try {
     const data = JSON.parse(resolvedJson) as { permission_id: string; approved: boolean }
-    return entries.map((e) =>
-      e.kind === 'permission' && e.permission?.permission_id === data.permission_id
-        ? { ...e, permissionResolved: true, permissionApproved: data.approved }
-        : e,
-    )
+    return entries.map((e) => {
+      if (e.kind === 'permission' && e.permission?.permission_id === data.permission_id)
+        return { ...e, permissionResolved: true, permissionApproved: data.approved }
+      if (e.kind === 'reminder_permission' && e.reminderPermission?.permission_id === data.permission_id)
+        return { ...e, permissionResolved: true, permissionApproved: data.approved }
+      return e
+    })
   } catch {
     return entries
   }
@@ -667,6 +688,76 @@ function PermissionBubble({
   )
 }
 
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+function formatReminderDays(days: number): string {
+  const active = DAY_NAMES.filter((_, i) => (days >> i) & 1)
+  if (active.length === 7) return 'Every day'
+  if (active.length === 0) return 'No days'
+  return active.join(', ')
+}
+
+function ReminderPermissionBubble({
+  entry,
+  onResolve,
+}: {
+  entry: ChatEntry
+  onResolve: (id: string, approved: boolean) => void
+}) {
+  const p = entry.reminderPermission
+  if (!p) return null
+
+  const timeStr = `${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`
+  const isOneShot = p.end_time > 0
+  const daysStr = formatReminderDays(p.days)
+
+  if (entry.permissionResolved) {
+    return (
+      <div className="flex justify-start">
+        <div className={`rounded-xl border px-4 py-2.5 text-sm ${
+          entry.permissionApproved
+            ? 'border-green-900 bg-green-950/30 text-green-300'
+            : 'border-[#2a2a2a] bg-[#1a1a1a] text-white/55'
+        }`}>
+          <span className="font-medium">{entry.permissionApproved ? 'Reminder set' : 'Reminder declined'}:</span>{' '}
+          {entry.permissionApproved && <span className="font-mono text-xs">{p.title} · {timeStr}</span>}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex justify-start">
+      <div className="rounded-xl border px-4 py-3" style={{ borderColor: 'rgba(167,139,250,.35)', background: 'rgba(124,58,237,.1)' }}>
+        <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#a78bfa' }}>
+          Reminder request
+        </p>
+        <p className="mb-0.5 text-sm font-semibold text-white">{p.title}</p>
+        <p className="mb-3 text-xs text-white/55">
+          {timeStr} · {isOneShot ? 'One-time' : daysStr}
+        </p>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            className="rounded px-3 py-1 text-xs font-medium text-white"
+            style={{ background: 'rgba(167,139,250,.25)', border: '1px solid rgba(167,139,250,.4)' }}
+            onClick={() => onResolve(p.permission_id, true)}
+          >
+            Set reminder
+          </button>
+          <button
+            type="button"
+            className="rounded border border-[#333] px-3 py-1 text-xs font-medium text-white/55 hover:bg-[#1a1a1a]"
+            onClick={() => onResolve(p.permission_id, false)}
+          >
+            No thanks
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const THINKING_PHRASES = [
   'Thinking through that…',
   'Let me check your goals…',
@@ -731,8 +822,194 @@ function ThinkingBubble() {
 
 const HIDDEN_EVENT_TYPES = new Set(['sse_connected', 'permission_resolved', 'suggested_replies', 'graph_updated'])
 
-export default function ChatView() {
-  const [sessionId, setSessionId] = useState('default')
+function formatChatTime(timestamp: number) {
+  return new Date(timestamp * 1000).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function PanelAssistantContent({
+  entry,
+  sending,
+  onSuggestion,
+  onResolve,
+}: {
+  entry: ChatEntry
+  sending: boolean
+  onResolve: (id: string, approved: boolean) => void
+  onSuggestion: (entryId: string, suggestion: string) => void
+}) {
+  if (entry.kind === 'assistant') {
+    return (
+      <>
+        <div className="text-[10px] font-semibold mb-0.5 px-1" style={{ color: 'var(--white-dim)' }}>Personal</div>
+        <div
+          className="px-3 py-2 text-[13px] leading-snug"
+          style={{
+            background: 'var(--surface2)',
+            color: '#fff',
+            border: '1px solid var(--border)',
+            borderRadius: '16px 16px 16px 4px',
+          }}
+        >
+          <AssistantContent content={entry.content} />
+        </div>
+        <div className="text-[10px] mt-0.5 px-1" style={{ color: 'var(--white-dim)' }}>{formatChatTime(entry.timestamp)}</div>
+        {entry.suggestions && entry.suggestions.length > 0 && !entry.suggestionsHidden && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {entry.suggestions.map((s, i) => {
+              const isSelected = entry.selectedSuggestion === s
+              const isDimmed = entry.selectedSuggestion !== undefined && !isSelected
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  disabled={entry.selectedSuggestion !== undefined || sending}
+                  onClick={() => onSuggestion(entry.id, s)}
+                  className={[
+                    'rounded-full px-4 py-2 text-sm text-white transition-all duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)]',
+                    SUGGESTION_COLORS[i % SUGGESTION_COLORS.length],
+                    isSelected ? 'scale-105 ring-2 ring-white ring-offset-1 brightness-110' : '',
+                    isDimmed ? 'opacity-10 saturate-50' : '',
+                    entry.suggestionsExiting ? 'pointer-events-none -translate-y-2 scale-[0.86] opacity-0 blur-[2px]' : '',
+                  ].join(' ')}
+                  style={
+                    entry.suggestionsExiting
+                      ? { transitionDelay: `${((entry.suggestions?.length ?? 1) - 1 - i) * SUGGESTION_EXIT_STAGGER_MS}ms` }
+                      : undefined
+                  }
+                >
+                  {isSelected ? '✓ ' : ''}{s}
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </>
+    )
+  }
+
+  if (entry.kind === 'permission') {
+    const p = entry.permission
+    if (!p) return null
+    return (
+      <>
+        <div className="text-[10px] font-semibold mb-0.5 px-1" style={{ color: 'var(--white-dim)' }}>System</div>
+        <div
+          className="px-3 py-2 text-[13px] leading-snug"
+          style={{
+            background: entry.permissionResolved && entry.permissionApproved ? 'rgba(20,83,45,.35)' : 'var(--surface2)',
+            color: '#fff',
+            border: `1px solid ${entry.permissionResolved && entry.permissionApproved ? 'rgba(34,197,94,.28)' : 'var(--border)'}`,
+            borderRadius: '16px 16px 16px 4px',
+          }}
+        >
+          <div className="text-[10px] font-semibold uppercase tracking-[1.5px] text-amber-300/80">Permission</div>
+          <div className="mt-1">
+            <span className="font-mono text-[12px]">{p.key}</span>
+            {' = '}
+            <span className="font-mono text-[12px]">{p.value}</span>
+          </div>
+          {p.reason && <div className="mt-1 text-[12px] text-white/65">{p.reason}</div>}
+        </div>
+        <div className="text-[10px] mt-0.5 px-1" style={{ color: 'var(--white-dim)' }}>{formatChatTime(entry.timestamp)}</div>
+      </>
+    )
+  }
+
+  if (entry.kind === 'reminder_permission') {
+    const p = entry.reminderPermission
+    if (!p) return null
+    const timeStr = `${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`
+    const isOneShot = p.end_time > 0
+    return (
+      <>
+        <div className="text-[10px] font-semibold mb-0.5 px-1" style={{ color: 'var(--white-dim)' }}>System</div>
+        <div
+          className="px-3 py-2 text-[13px] leading-snug"
+          style={{
+            background: entry.permissionResolved && entry.permissionApproved ? 'rgba(124,58,237,.2)' : 'var(--surface2)',
+            color: '#fff',
+            border: `1px solid ${entry.permissionResolved && entry.permissionApproved ? 'rgba(167,139,250,.4)' : 'var(--border)'}`,
+            borderRadius: '16px 16px 16px 4px',
+          }}
+        >
+          <div className="text-[10px] font-semibold uppercase tracking-[1.5px]" style={{ color: '#a78bfa' }}>Reminder</div>
+          <div className="mt-1 font-semibold">{p.title}</div>
+          <div className="mt-0.5 text-[12px] text-white/65">{timeStr} · {isOneShot ? 'One-time' : formatReminderDays(p.days)}</div>
+          {!entry.permissionResolved && (
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                className="rounded px-2.5 py-1 text-[11px] font-medium text-white"
+                style={{ background: 'rgba(167,139,250,.25)', border: '1px solid rgba(167,139,250,.4)' }}
+                onClick={() => onResolve(p.permission_id, true)}
+              >
+                Set reminder
+              </button>
+              <button
+                type="button"
+                className="rounded border border-[#333] px-2.5 py-1 text-[11px] text-white/55"
+                onClick={() => onResolve(p.permission_id, false)}
+              >
+                No thanks
+              </button>
+            </div>
+          )}
+          {entry.permissionResolved && (
+            <div className="mt-1 text-[11px]" style={{ color: entry.permissionApproved ? '#a78bfa' : 'rgba(255,255,255,.4)' }}>
+              {entry.permissionApproved ? 'Reminder set' : 'Declined'}
+            </div>
+          )}
+        </div>
+        <div className="text-[10px] mt-0.5 px-1" style={{ color: 'var(--white-dim)' }}>{formatChatTime(entry.timestamp)}</div>
+      </>
+    )
+  }
+
+  if (entry.eventType === 'graph_update_started') {
+    return (
+      <>
+        <div className="text-[10px] font-semibold mb-0.5 px-1" style={{ color: 'var(--white-dim)' }}>System</div>
+        <div
+          className="px-3 py-2 text-[13px] leading-snug"
+          style={{
+            background: 'var(--surface2)',
+            color: '#fff',
+            border: '1px solid var(--border)',
+            borderRadius: '16px 16px 16px 4px',
+          }}
+        >
+          Graph update {entry.graphUpdateResolved ? 'complete' : 'in progress'}
+        </div>
+        <div className="text-[10px] mt-0.5 px-1" style={{ color: 'var(--white-dim)' }}>{formatChatTime(entry.timestamp)}</div>
+      </>
+    )
+  }
+
+  return (
+    <>
+      <div className="text-[10px] font-semibold mb-0.5 px-1" style={{ color: 'var(--white-dim)' }}>System</div>
+      <div
+        className="px-3 py-2 text-[13px] leading-snug"
+        style={{
+          background: 'var(--surface2)',
+          color: '#fff',
+          border: '1px solid var(--border)',
+          borderRadius: '16px 16px 16px 4px',
+        }}
+      >
+        {actionSummary(entry)}
+      </div>
+      <div className="text-[10px] mt-0.5 px-1" style={{ color: 'var(--white-dim)' }}>{formatChatTime(entry.timestamp)}</div>
+    </>
+  )
+}
+
+export default function ChatView({ mode = 'page' }: { mode?: 'page' | 'panel' }) {
+  const panelMode = mode === 'panel'
+  const [sessionId, setSessionId] = useState(panelMode ? 'personal' : 'default')
   const [entries, setEntries] = useState<ChatEntry[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -744,13 +1021,15 @@ export default function ChatView() {
   const suggestionHideTimeoutRef = useRef<number | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const textAreaRef = useRef<HTMLTextAreaElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   function handleAttach(file: File, kind: 'image' | 'file') {
     const prefix = kind === 'image' ? '📷' : '📎'
     setInput((prev) => (prev ? prev + ' ' : '') + `${prefix} ${file.name}`)
-    inputRef.current?.focus()
+    if (panelMode) textAreaRef.current?.focus()
+    else inputRef.current?.focus()
   }
 
   async function loadSession(sid: string) {
@@ -855,6 +1134,14 @@ export default function ChatView() {
   }, [entries.length])
 
   useEffect(() => {
+    if (!panelMode) return
+    const el = textAreaRef.current
+    if (!el) return
+    el.style.height = '40px'
+    el.style.height = `${Math.min(el.scrollHeight, 100)}px`
+  }, [input, panelMode])
+
+  useEffect(() => {
     return () => {
       if (suggestionHideTimeoutRef.current !== null) {
         window.clearTimeout(suggestionHideTimeoutRef.current)
@@ -912,74 +1199,127 @@ export default function ChatView() {
     }).catch((err) => setError(err instanceof Error ? err.message : String(err)))
   }
 
-  return (
-    <section className="mx-auto flex w-full max-w-3xl flex-col" style={{ height: 'calc(100vh - 9rem)' }}>
-      <header className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white">Chat</h1>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-white/40">session</span>
-          <input
-            type="text"
-            className="w-32 rounded border border-[#333] px-2 py-1 text-xs text-white/70 focus:border-white/50 focus:outline-none"
-            value={sessionId}
-            onChange={(e) => setSessionId(e.target.value)}
-            onBlur={(e) => { if (!e.target.value.trim()) setSessionId('default') }}
-          />
-          <button
-            type="button"
-            className="rounded border border-[#333] px-3 py-1 text-xs font-medium text-white/70 hover:border-white/50 hover:bg-[#1a1a1a] disabled:cursor-not-allowed disabled:border-[#2a2a2a] disabled:text-white/30"
-            onClick={() => void loadSession(sessionId)}
-            disabled={reloading}
-          >
-            {reloading ? (
-              <span className="inline-flex items-center gap-1">
-                {[0, 1, 2].map((dot) => (
-                  <span
-                    key={dot}
-                    className="size-1.5 rounded-full bg-neutral-500 animate-bounce"
-                    style={{ animationDelay: `${dot * 140}ms` }}
-                  />
-                ))}
-              </span>
-            ) : (
-              'Reload'
-            )}
-          </button>
-        </div>
-      </header>
+  const handleSuggestion = (entry: ChatEntry, suggestion: string) => {
+    if (sending) return
+    const suggestionIndex = entry.suggestions?.indexOf(suggestion) ?? 0
+    pendingSuggestionHighlightsRef.current.push({
+      text: suggestion,
+      color: SUGGESTION_HIGHLIGHT_COLORS[suggestionIndex % SUGGESTION_HIGHLIGHT_COLORS.length],
+    })
+    setEntries((prev) => markSuggestionSelected(prev, entry.id, suggestion))
+    setInput(suggestion)
+    void send(suggestion)
+  }
 
-      <div className="flex-1 space-y-3 overflow-y-auto pb-4">
+  return (
+    <section className={`mx-auto flex w-full flex-col ${panelMode ? 'max-w-none h-full' : 'max-w-3xl'}`} style={panelMode ? undefined : { height: 'calc(100vh - 9rem)' }}>
+      {!panelMode && (
+        <header className="mb-4 flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-white">Chat</h1>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-white/40">session</span>
+            <input
+              type="text"
+              className="w-32 rounded border border-[#333] px-2 py-1 text-xs text-white/70 focus:border-white/50 focus:outline-none"
+              value={sessionId}
+              onChange={(e) => setSessionId(e.target.value)}
+              onBlur={(e) => { if (!e.target.value.trim()) setSessionId('default') }}
+            />
+            <button
+              type="button"
+              className="rounded border border-[#333] px-3 py-1 text-xs font-medium text-white/70 hover:border-white/50 hover:bg-[#1a1a1a] disabled:cursor-not-allowed disabled:border-[#2a2a2a] disabled:text-white/30"
+              onClick={() => void loadSession(sessionId)}
+              disabled={reloading}
+            >
+              {reloading ? (
+                <span className="inline-flex items-center gap-1">
+                  {[0, 1, 2].map((dot) => (
+                    <span
+                      key={dot}
+                      className="size-1.5 rounded-full bg-neutral-500 animate-bounce"
+                      style={{ animationDelay: `${dot * 140}ms` }}
+                    />
+                  ))}
+                </span>
+              ) : (
+                'Reload'
+              )}
+            </button>
+          </div>
+        </header>
+      )}
+
+      <div className={`flex-1 space-y-3 overflow-y-auto ${panelMode ? 'px-4 pt-4 pb-4' : 'pb-4'}`}>
         {entries.length === 0 && (
           <p className="mt-12 text-center text-sm text-white/40">
             No messages yet. Say something.
           </p>
         )}
-        {entries.map((entry) => {
+        {panelMode ? entries.map((entry) => {
+          if (entry.kind === 'user') {
+            return (
+              <div key={entry.id} className="flex flex-col max-w-[78%] self-end items-end ml-auto">
+                <div
+                  className="px-3 py-2 text-[13px] leading-snug"
+                  style={{
+                    background: '#fff',
+                    color: '#000',
+                    borderRadius: '16px 16px 4px 16px',
+                  }}
+                >
+                  {entry.content}
+                </div>
+                <div className="text-[10px] mt-0.5 px-1" style={{ color: 'var(--white-dim)' }}>{formatChatTime(entry.timestamp)}</div>
+              </div>
+            )
+          }
+
+          return (
+            <div key={entry.id} className="flex flex-col max-w-[78%] self-start items-start">
+              <PanelAssistantContent entry={entry} sending={sending} onSuggestion={(_, suggestion) => handleSuggestion(entry, suggestion)} onResolve={resolvePermission} />
+            </div>
+          )
+        }) : entries.map((entry) => {
           if (entry.kind === 'user') return <UserBubble key={entry.id} entry={entry} />
           if (entry.kind === 'assistant') return (
             <AssistantBubble
               key={entry.id}
               entry={entry}
-              onSuggestion={(entryId, suggestion) => {
-                if (sending) return
-                const suggestionIndex = entry.suggestions?.indexOf(suggestion) ?? 0
-                pendingSuggestionHighlightsRef.current.push({
-                  text: suggestion,
-                  color: SUGGESTION_HIGHLIGHT_COLORS[suggestionIndex % SUGGESTION_HIGHLIGHT_COLORS.length],
-                })
-                setEntries((prev) => markSuggestionSelected(prev, entryId, suggestion))
-                setInput(suggestion)
-                void send(suggestion)
-              }}
+              onSuggestion={(_, suggestion) => handleSuggestion(entry, suggestion)}
             />
           )
           if (entry.kind === 'permission')
             return <PermissionBubble key={entry.id} entry={entry} onResolve={resolvePermission} />
+          if (entry.kind === 'reminder_permission')
+            return <ReminderPermissionBubble key={entry.id} entry={entry} onResolve={resolvePermission} />
           if (entry.eventType === 'graph_update_started')
             return <GraphUpdateBubble key={entry.id} resolved={entry.graphUpdateResolved ?? false} />
           return <ActionBubble key={entry.id} entry={entry} />
         })}
-        {thinking && <ThinkingBubble />}
+        {thinking && (panelMode ? (
+          <div className="flex flex-col max-w-[78%] self-start items-start">
+            <div className="text-[10px] font-semibold mb-0.5 px-1" style={{ color: 'var(--white-dim)' }}>Personal</div>
+            <div
+              className="px-3 py-2 text-[13px] leading-snug"
+              style={{
+                background: 'var(--surface2)',
+                color: '#fff',
+                border: '1px solid var(--border)',
+                borderRadius: '16px 16px 16px 4px',
+              }}
+            >
+              <span className="inline-flex items-center gap-1">
+                {[0, 1, 2].map((dot) => (
+                  <span
+                    key={dot}
+                    className="size-1.5 rounded-full bg-neutral-400 animate-bounce"
+                    style={{ animationDelay: `${dot * 140}ms` }}
+                  />
+                ))}
+              </span>
+            </div>
+          </div>
+        ) : <ThinkingBubble />)}
         <div ref={bottomRef} />
       </div>
 
@@ -1068,13 +1408,17 @@ export default function ChatView() {
         }}
       />
 
-      <div className="flex items-center gap-2 border-t border-[#2a2a2a] pt-3">
+      <div className={panelMode ? 'px-3.5 py-3 flex gap-2 items-end flex-shrink-0' : 'flex items-center gap-2 border-t border-[#2a2a2a] pt-3'} style={panelMode ? { borderTop: '1px solid var(--border)' } : undefined}>
         {/* + button */}
         <button
           type="button"
           onClick={() => setMenuOpen((v) => !v)}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#333] text-white/55 transition-all hover:bg-[#1a1a1a] hover:text-white/80"
-          style={menuOpen ? { borderColor: 'rgba(255,255,255,0.3)', color: 'rgba(255,255,255,0.9)', background: '#1a1a1a' } : {}}
+          className={panelMode
+            ? 'w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer flex-shrink-0 active:opacity-85'
+            : 'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#333] text-white/55 transition-all hover:bg-[#1a1a1a] hover:text-white/80'}
+          style={panelMode
+            ? { background: 'var(--surface2)', border: '1px solid var(--border)', color: '#fff' }
+            : (menuOpen ? { borderColor: 'rgba(255,255,255,0.3)', color: 'rgba(255,255,255,0.9)', background: '#1a1a1a' } : {})}
         >
           <svg
             width="16" height="16" viewBox="0 0 16 16" fill="none"
@@ -1089,24 +1433,45 @@ export default function ChatView() {
           </svg>
         </button>
 
-        <input
-          ref={inputRef}
-          type="text"
-          className="flex-1 rounded-xl border border-[#333] px-4 py-2.5 text-sm text-white placeholder-white/40 focus:border-white/50 focus:outline-none disabled:bg-[#1a1a1a] disabled:text-white/40"
-          placeholder={sending ? 'Waiting for response...' : 'Message...'}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              void send()
-            }
-          }}
-          disabled={sending}
-        />
+        {panelMode ? (
+          <textarea
+            ref={textAreaRef}
+            rows={1}
+            className="flex-1 rounded-xl px-3.5 py-2.5 text-[13px] outline-none resize-none h-10 max-h-[100px]"
+            style={{ background: 'var(--surface2)', border: '1px solid var(--border-light)', color: '#fff' }}
+            placeholder={sending ? 'Waiting for response...' : 'Write a message...'}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                void send()
+              }
+            }}
+            disabled={sending}
+          />
+        ) : (
+          <input
+            ref={inputRef}
+            type="text"
+            className="flex-1 rounded-xl border border-[#333] px-4 py-2.5 text-sm text-white placeholder-white/40 focus:border-white/50 focus:outline-none disabled:bg-[#1a1a1a] disabled:text-white/40"
+            placeholder={sending ? 'Waiting for response...' : 'Message...'}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                void send()
+              }
+            }}
+            disabled={sending}
+          />
+        )}
         <button
           type="button"
-          className="rounded-xl bg-[#111] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#e0e0e0] disabled:cursor-not-allowed disabled:bg-[#2a2a2a] disabled:text-white/40"
+          className={panelMode
+            ? 'w-10 h-10 bg-white rounded-xl flex items-center justify-center cursor-pointer flex-shrink-0 active:opacity-85 disabled:cursor-not-allowed disabled:bg-[#2a2a2a]'
+            : 'rounded-xl bg-[#111] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#e0e0e0] disabled:cursor-not-allowed disabled:bg-[#2a2a2a] disabled:text-white/40'}
           onClick={() => void send()}
           disabled={!input.trim() || sending}
         >
@@ -1115,11 +1480,16 @@ export default function ChatView() {
               {[0, 1, 2].map((dot) => (
                 <span
                   key={dot}
-                  className="size-1.5 rounded-full bg-[#111] animate-bounce"
+                  className={`size-1.5 rounded-full animate-bounce ${panelMode ? 'bg-black' : 'bg-[#111]'}`}
                   style={{ animationDelay: `${dot * 140}ms` }}
                 />
               ))}
             </span>
+          ) : panelMode ? (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13" />
+              <polygon points="22 2 15 22 11 13 2 9 22 2" />
+            </svg>
           ) : (
             'Send'
           )}

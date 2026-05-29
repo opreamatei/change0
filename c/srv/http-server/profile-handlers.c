@@ -3,6 +3,7 @@
 #include "profile/user-profile.h"
 #include "user-management.h"
 #include "connections.h"
+#include "journal.h"
 #include "util.h"
 
 #include <string.h>
@@ -22,6 +23,7 @@ void handle_get_profile(int fd, User *user)
 	char  *esc_name;
 	char  *esc_derived;
 	char  *esc_desc;
+	char  *memories;
 
 	InitString(&derived,  2048);
 	InitString(&response, 4096);
@@ -31,17 +33,20 @@ void handle_get_profile(int fd, User *user)
 	esc_name    = json_escape_dup(user->name.p        ? user->name.p        : "");
 	esc_derived = json_escape_dup(derived.p            ? derived.p            : "");
 	esc_desc    = json_escape_dup(user->description.p  ? user->description.p  : "");
+	memories    = JournalBuildImageMemoriesJson(user);
 
 	CatTemplateString(&response,
 		"{\"ok\":true,\"name\":\"%s\",\"user_id\":\"%s\",\"derived\":\"%s\","
-		"\"discoverable\":%s,\"description\":\"%s\"}",
+		"\"discoverable\":%s,\"description\":\"%s\",\"memories\":%s}",
 		esc_name, user->id, esc_derived,
 		user->discoverable ? "true" : "false",
-		esc_desc);
+		esc_desc,
+		memories ? memories : "[]");
 
 	free(esc_name);
 	free(esc_derived);
 	free(esc_desc);
+	free(memories);
 
 	http_send_json(fd, 200, "OK", response.p);
 

@@ -4,6 +4,8 @@ import DailyBriefView from './section/daily-brief-view'
 import SettingsView from './section/settings-view'
 import TogetherView from './section/together-view'
 import JournalView from './section/journal-view'
+import RemindersView from './section/reminders-view'
+import ChatView from './section/chat-view'
 import LoginView, { type LocalUser } from './section/login-view'
 import LoadingOrb from './components/loading-orb'
 import NavBar, { type NavPanel } from './components/nav-bar'
@@ -69,6 +71,8 @@ function App() {
   const [localUser, setLocalUser] = useState<LocalUser | null>(() => readStoredLocalUser())
   const [clientBaseUrl, setClientBaseUrlState] = useState<string | null>(() => getClientBaseUrl())
   const [devPanelOpen, setDevPanelOpen] = useState(false)
+  const [journalOpenEntryId, setJournalOpenEntryId] = useState<string | null>(null)
+  const [journeyChatOpen, setJourneyChatOpen] = useState(false)
   const pendingActionRef = useRef<{ goalId: string; goalIndex: number } | null>(null)
 
   function handleLogin(user: LocalUser, baseUrl: string) {
@@ -106,6 +110,19 @@ function App() {
 
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+
+  useEffect(() => {
+    function onOpenJournalEntry(event: Event) {
+      const custom = event as CustomEvent<{ entryId?: string }>
+      const entryId = custom.detail?.entryId?.trim()
+      if (!entryId) return
+      setGoalPanel('journal')
+      setJournalOpenEntryId(entryId)
+    }
+
+    window.addEventListener('open-journal-entry', onOpenJournalEntry as EventListener)
+    return () => window.removeEventListener('open-journal-entry', onOpenJournalEntry as EventListener)
   }, [])
 
   async function refreshGoals(options?: { silent?: boolean }) {
@@ -543,13 +560,62 @@ function App() {
             <TogetherView userId={localUser?.id ?? ''} />
           ) : goalPanel === 'schedule' ? (
             <DailyBriefView />
+          ) : goalPanel === 'reminders' ? (
+            <RemindersView />
           ) : goalPanel === 'profile' ? (
             <SettingsView />
           ) : (
-            <JournalView />
+            <JournalView openEntryId={journalOpenEntryId} />
           )}
         </div>
+        {goalPanel === 'journey' && (
+          <button
+            type="button"
+            onClick={() => setJourneyChatOpen(true)}
+            className="fixed z-[99] flex items-center justify-center"
+            style={{
+              bottom: 112,
+              right: 20,
+              width: 52,
+              height: 52,
+              borderRadius: '50%',
+              border: '1px solid rgba(255,255,255,.18)',
+              background: 'rgba(20,20,20,.92)',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+              boxShadow: '0 4px 16px rgba(0,0,0,.5)',
+              color: 'rgba(255,255,255,.85)',
+            }}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+          </button>
+        )}
         <NavBar panel={goalPanel} onSetPanel={setGoalPanel} />
+        <div
+          className="fixed inset-0 z-[201] flex flex-col transition-transform"
+          style={{ background: 'var(--bg)', transform: journeyChatOpen ? 'translateX(0)' : 'translateX(100%)' }}
+        >
+          <div className="px-6 pt-[52px] pb-4 flex items-center gap-3.5 flex-shrink-0" style={{ borderBottom: '1px solid var(--border)' }}>
+            <div
+              onClick={() => setJourneyChatOpen(false)}
+              className="w-[34px] h-[34px] rounded-[11px] flex items-center justify-center cursor-pointer flex-shrink-0"
+              style={{ background: 'var(--surface2)', border: '1px solid var(--border)' }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </div>
+            <div>
+              <div className="text-lg font-bold tracking-tight">Personal</div>
+              <div className="text-[11px] mt-0.5" style={{ color: 'var(--white-dim)' }}>Private chat</div>
+            </div>
+          </div>
+          <div className="flex-1 overflow-hidden">
+            {journeyChatOpen && <ChatView mode="panel" />}
+          </div>
+        </div>
       </main>
     )
   }

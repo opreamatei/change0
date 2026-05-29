@@ -48,12 +48,12 @@ void handle_post_journal_create(int fd, const HttpRequest *req, User *user)
 	}
 
 	char title[JOURNAL_TITLE_SIZE] = {0};
-	char tags[JOURNAL_TAGS_SIZE]   = {0};
 
 	json_get_string_field(req->body, "title", title, sizeof(title));
-	json_get_string_field(req->body, "tags",  tags,  sizeof(tags));
 
+	int mood_index = -1;
 	int icon_index = 0;
+	json_get_int_field(req->body, "mood_index", &mood_index);
 	json_get_int_field(req->body, "icon_index", &icon_index);
 
 	/* text may be large — use a heap buffer */
@@ -66,7 +66,7 @@ void handle_post_journal_create(int fd, const HttpRequest *req, User *user)
 	}
 
 	JournalMeta m;
-	int rc = JournalCreate(user, title, text ? text : "", tags, icon_index, &m);
+	int rc = JournalCreate(user, title, text ? text : "", mood_index, icon_index, &m);
 	free(text);
 
 	if (rc != 0) {
@@ -92,18 +92,16 @@ void handle_get_journal_list(int fd, User *user)
 		if (i > 0) CatString(&out, ",", 1);
 
 		char *esc_title = json_escape_dup(list[i].title);
-		char *esc_tags  = json_escape_dup(list[i].tags);
 
 		CatTemplateString(&out,
-			"{\"id\":\"%s\",\"title\":\"%s\",\"tags\":\"%s\",\"last_updated\":%ld,\"icon_index\":%d}",
+			"{\"id\":\"%s\",\"title\":\"%s\",\"mood_index\":%d,\"last_updated\":%ld,\"icon_index\":%d}",
 			list[i].id,
 			esc_title ? esc_title : "",
-			esc_tags  ? esc_tags  : "",
+			list[i].mood_index,
 			(long)list[i].last_updated,
 			list[i].icon_index);
 
 		free(esc_title);
-		free(esc_tags);
 	}
 
 	CatString(&out, "]", 1);
@@ -143,20 +141,19 @@ void handle_get_journal_entry(int fd, const HttpRequest *req, User *user)
 
 	char *esc_id    = json_escape_dup(m.id);
 	char *esc_title = json_escape_dup(m.title);
-	char *esc_tags  = json_escape_dup(m.tags);
 	char *esc_text  = json_escape_dup(text ? text : "");
 
 	CatTemplateString(&out,
-		"{\"ok\":true,\"meta\":{\"id\":\"%s\",\"title\":\"%s\",\"tags\":\"%s\",\"last_updated\":%ld,\"icon_index\":%d},"
+		"{\"ok\":true,\"meta\":{\"id\":\"%s\",\"title\":\"%s\",\"mood_index\":%d,\"last_updated\":%ld,\"icon_index\":%d},"
 		"\"text\":\"%s\",\"files\":[",
 		esc_id ? esc_id : "",
 		esc_title ? esc_title : "",
-		esc_tags  ? esc_tags  : "",
+		m.mood_index,
 		(long)m.last_updated,
 		m.icon_index,
 		esc_text ? esc_text : "");
 
-	free(esc_id); free(esc_title); free(esc_tags); free(esc_text);
+	free(esc_id); free(esc_title); free(esc_text);
 
 	for (size_t i = 0; i < fcount; i++) {
 		if (i > 0) CatString(&out, ",", 1);
@@ -189,13 +186,13 @@ void handle_post_journal_update(int fd, const HttpRequest *req, User *user)
 
 	char id[JOURNAL_ID_SIZE]       = {0};
 	char title[JOURNAL_TITLE_SIZE] = {0};
-	char tags[JOURNAL_TAGS_SIZE]   = {0};
 
 	json_get_string_field(req->body, "id",    id,    sizeof(id));
 	json_get_string_field(req->body, "title", title, sizeof(title));
-	json_get_string_field(req->body, "tags",  tags,  sizeof(tags));
 
-	int icon_index = -1; /* -1 = don't change */
+	int mood_index = -2;  /* sentinel: not provided */
+	int icon_index = -1;  /* -1 = don't change */
+	json_get_int_field(req->body, "mood_index", &mood_index);
 	json_get_int_field(req->body, "icon_index", &icon_index);
 
 	char *text = NULL;
@@ -209,7 +206,7 @@ void handle_post_journal_update(int fd, const HttpRequest *req, User *user)
 	int rc = JournalUpdate(user, id,
 		title[0] ? title : NULL,
 		(text && text[0]) ? text : NULL,
-		tags[0]  ? tags  : NULL,
+		mood_index,
 		icon_index);
 	free(text);
 
@@ -321,6 +318,34 @@ void handle_get_journal_file(int fd, const HttpRequest *req, User *user)
 	http_send_all(fd, header, (size_t)hlen);
 	if (data && len) http_send_all(fd, data, len);
 	free(data);
+}
+
+/* ── POST /journal/embed/delete ── */
+
+void handle_post_journal_embed_delete(int fd, const HttpRequest *req, User *user)
+{
+	if (!req->body) {
+		http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_body\"}");
+		return;
+	}
+
+	char id[JOURNAL_ID_SIZE] = {0};
+	int  index = -1;
+
+	json_get_string_field(req->body, "id",    id,    sizeof(id));
+	json_get_int_field   (req->body, "index", &index);
+
+	if (!id[0] || index < 0) {
+		http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_fields\"}");
+		return;
+	}
+
+	if (JournalRemoveEmbed(user, id, index) != 0) {
+		http_send_json(fd, 404, "Not Found", "{\"ok\":false,\"error\":\"not_found\"}");
+		return;
+	}
+
+	http_send_json(fd, 200, "OK", "{\"ok\":true}");
 }
 
 /* ── POST /journal/embed ── */

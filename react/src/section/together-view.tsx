@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CENTRAL_ENDPOINTS, SERVER_ENDPOINTS } from '../config/server'
 import { PathCanvas } from '../components/path-canvas'
 import type { PathNodeData, NodeState } from '../components/path-canvas'
-import ChatView from './chat-view'
 import ConnectionsView from './connections-view'
 
 const UNASSIGNED = 255
@@ -320,11 +319,15 @@ function CollabJourneyView({
         ? goalMap.get(leaf.parent)?.title
         : undefined
       prevParentIdx = leaf.parent
-      // colour by assigned participant
       const tintColor = (leaf.assigned_to !== UNASSIGNED && leaf.assigned_to >= 0)
         ? PARTICIPANT_COLORS[leaf.assigned_to % PARTICIPANT_COLORS.length]
         : undefined
-      return { key: leaf.localIndex, title: leaf.title, nodeState, num: num++, isMystery: false, chapterTitle, tintColor }
+      // for a 2-user journey: user 0 → left side, user 1 → right side
+      const sideOverride: PathNodeData['sideOverride'] =
+        leaf.assigned_to === 0 ? -1 :
+        leaf.assigned_to === 1 ?  1 :
+        undefined
+      return { key: leaf.localIndex, title: leaf.title, nodeState, num: num++, isMystery: false, chapterTitle, tintColor, sideOverride }
     })
   }, [orderedLeaves, goalMap])
 
@@ -339,10 +342,8 @@ function CollabJourneyView({
     return idx
   }, [collabNodes])
 
-  /** The node where the "current front" is — used to show the assigned user's avatar. */
   const userOverlay = useMemo(() => {
     if (!detail) return undefined
-    // find the active node, or the first idle node
     let frontIdx = collabNodes.findIndex((n) => n.nodeState === 'active')
     if (frontIdx < 0) frontIdx = collabNodes.findIndex((n) => n.nodeState === 'idle')
     if (frontIdx < 0) return undefined
@@ -439,13 +440,23 @@ function CollabJourneyView({
           <div className="text-base font-bold tracking-tight truncate">{summary.title}</div>
           <div className="text-[11px] text-white/40">{doneCount}/{collabNodes.length} done</div>
         </div>
-        <button
-          type="button"
-          onClick={() => void load()}
-          className="rounded-xl border border-white/[0.08] px-3 py-1.5 text-xs text-white/40"
-        >
-          Refresh
-        </button>
+
+        {/* user legend */}
+        {detail && detail.users.length >= 2 && (
+          <div className="flex items-center gap-2 shrink-0">
+            {detail.users.slice(0, 2).map((u, i) => (
+              <div key={u.id} className="flex items-center gap-1">
+                <div
+                  className="w-2 h-2 rounded-full"
+                  style={{ background: PARTICIPANT_COLORS[i] }}
+                />
+                <span className="text-[11px]" style={{ color: 'rgba(255,255,255,.45)' }}>
+                  {u.display_name}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* proposals */}
@@ -605,14 +616,15 @@ function JourneysContent({ userId, onSelect }: { userId: string; onSelect: (j: J
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <div className="flex -space-x-2">
-                  {j.participants.slice(0, 4).map((p) => (
+                  {j.participants.slice(0, 4).map((p, i) => (
                     <div
                       key={p.id}
                       title={p.display_name}
-                      className={[
-                        'flex h-7 w-7 items-center justify-center rounded-full border-2 border-white text-[10px] font-semibold',
-                        p.id === userId ? 'bg-[#111] text-white' : 'bg-[#2a2a2a] text-white/70',
-                      ].join(' ')}
+                      className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-black text-[10px] font-semibold"
+                      style={{
+                        background: PARTICIPANT_COLORS[i % PARTICIPANT_COLORS.length] + '33',
+                        color: PARTICIPANT_COLORS[i % PARTICIPANT_COLORS.length],
+                      }}
                     >
                       {(p.display_name || '?').slice(0, 1).toUpperCase()}
                     </div>
@@ -632,32 +644,11 @@ function JourneysContent({ userId, onSelect }: { userId: string; onSelect: (j: J
 /* ─── main together view ─────────────────────────────────────────────────── */
 
 export default function TogetherView({ userId }: { userId: string }) {
-  const [tab, setTab] = useState<'together' | 'chat'>('together')
   const [peopleOpen, setPeopleOpen] = useState(false)
   const [selectedJourney, setSelectedJourney] = useState<JourneyListItem | null>(null)
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* sub-tab strip — hidden when journey detail is open */}
-      {!selectedJourney && (
-        <div className="flex flex-shrink-0 border-b border-white/[0.06]">
-          {(['together', 'chat'] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTab(t)}
-              className={`flex-1 py-3 text-sm font-medium capitalize transition-colors ${
-                tab === t
-                  ? 'text-white border-b-2 border-white'
-                  : 'text-white/35 border-b-2 border-transparent'
-              }`}
-            >
-              {t === 'together' ? 'Together' : 'Chat'}
-            </button>
-          ))}
-        </div>
-      )}
-
       {selectedJourney ? (
         <div className="flex-1 overflow-hidden">
           <CollabJourneyView
@@ -666,8 +657,6 @@ export default function TogetherView({ userId }: { userId: string }) {
             onBack={() => setSelectedJourney(null)}
           />
         </div>
-      ) : tab === 'chat' ? (
-        <ChatView key={userId} />
       ) : (
         <div className="flex-1 overflow-y-auto no-scrollbar">
           <JourneysContent userId={userId} onSelect={setSelectedJourney} />

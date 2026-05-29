@@ -218,20 +218,14 @@ export default function CurrentGoalsView({
 
   return (
     <div className="flex h-full flex-col pt-12 pb-24">
-      <header className="mb-3 flex shrink-0 items-center justify-between px-4">
-        <div>
-          <h1 className="text-xl font-bold text-white">Journey</h1>
-          {statusMessage
-            ? <p className="mt-0.5 text-xs text-white/40">{statusMessage}</p>
-            : pathNodes.length > 0 && (
-                <p className="mt-0.5 text-xs text-white/40">
-                  {doneCount}/{knownCount} done
-                  {mysteryCount > 0 && <span className="text-violet-300/50"> · beyond the fog</span>}
-                </p>
-              )
-          }
-        </div>
-      </header>
+      {pathNodes.length > 0 && !statusMessage && (
+        <header className="mb-1 shrink-0 flex items-center justify-end px-5 pt-1">
+          <p className="text-[10px] text-white/25">
+            {doneCount}/{knownCount} done
+            {mysteryCount > 0 && <span className="text-violet-300/30"> · beyond the fog</span>}
+          </p>
+        </header>
+      )}
 
       <div ref={wrapperRef} className="relative w-full flex-1">
         {dim.w > 0 && dim.h > 0 && (
