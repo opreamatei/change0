@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { SERVER_ENDPOINTS } from '../config/server'
+import { CENTRAL_ENDPOINTS, SERVER_ENDPOINTS } from '../config/server'
 import {
   findGoalByGlobalIndex,
   inferGoalState,
@@ -898,6 +898,159 @@ function MemoryPanel({
   )
 }
 
+const SUBMITTED_GOALS_KEY = 'change.submittedGoals'
+
+function loadSubmittedGoals(): Record<string, string> {
+  try { return JSON.parse(localStorage.getItem(SUBMITTED_GOALS_KEY) ?? '{}') } catch { return {} }
+}
+
+function saveSubmittedGoals(m: Record<string, string>) {
+  localStorage.setItem(SUBMITTED_GOALS_KEY, JSON.stringify(m))
+}
+
+function VerifyGoalModal({
+  goalId, goalName, onClose, onDone,
+}: {
+  goalId: string
+  goalName: string
+  onClose: () => void
+  onDone: (submissionId: string) => void
+}) {
+  const [files, setFiles] = useState<File[]>([])
+  const [desc, setDesc] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [result, setResult] = useState<{ aiLabel: string; aiDesc: string } | null>(null)
+  const [error, setError] = useState('')
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const canSubmit = files.length > 0 || desc.trim().length > 0
+
+  async function submit() {
+    if (!canSubmit || submitting) return
+    setSubmitting(true)
+    setError('')
+    try {
+      const createRes = await fetch(SERVER_ENDPOINTS.submissionsCreate, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goal_id: goalId, user_description: desc.trim() || undefined }),
+      })
+      const createData = await createRes.json() as { ok: boolean; id?: string; ai_label?: string; ai_description?: string; error?: string }
+      if (!createData.ok || !createData.id) {
+        setError(createData.error ?? 'Submission failed')
+        return
+      }
+      const subId = createData.id
+      for (const file of files) {
+        const buf = await file.arrayBuffer()
+        const params = new URLSearchParams({ id: subId, f: file.name })
+        await fetch(`${SERVER_ENDPOINTS.submissionsFile}?${params}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: buf,
+        })
+      }
+      setResult({ aiLabel: createData.ai_label ?? '', aiDesc: createData.ai_description ?? '' })
+      onDone(subId)
+    } catch (e) {
+      setError('Network error — please try again')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[210] flex flex-col" style={{ background: '#000' }}>
+      <div className="flex flex-shrink-0 items-center gap-3 px-5 pt-[52px] pb-4" style={{ borderBottom: '1px solid rgba(255,255,255,.07)' }}>
+        <button type="button" onClick={onClose}
+          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl"
+          style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.1)' }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+        </button>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[16px] font-bold text-white">Verify Goal</div>
+          <div className="truncate text-[11px]" style={{ color: 'rgba(255,255,255,.4)' }}>{goalName}</div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto no-scrollbar px-5 pt-5 pb-8">
+        {result ? (
+          <div className="flex flex-col items-center text-center pt-6 gap-4">
+            <div className="text-[48px]">✨</div>
+            <div className="text-[20px] font-bold text-white">Submitted for review</div>
+            <div className="rounded-2xl px-4 py-3 text-[13px] text-left w-full" style={{ background: 'rgba(255,200,50,.07)', border: '1px solid rgba(255,200,50,.18)' }}>
+              <div className="text-[11px] font-bold uppercase tracking-wider mb-1" style={{ color: 'rgba(255,200,50,.7)' }}>Reviewers will see you as</div>
+              <div className="text-[15px] font-bold text-white mb-1">{result.aiLabel}</div>
+              <div className="text-[13px] leading-[1.6]" style={{ color: 'rgba(255,255,255,.6)' }}>{result.aiDesc}</div>
+            </div>
+            <div className="text-[12px]" style={{ color: 'rgba(255,255,255,.3)' }}>
+              A peer reviewer will rate your work. A score of 4+ marks it as authentic.
+            </div>
+            <button type="button" onClick={onClose}
+              className="mt-2 w-full rounded-2xl py-4 text-[15px] font-bold text-black bg-white">
+              Done
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="mb-4 text-[13px] leading-[1.6]" style={{ color: 'rgba(255,255,255,.45)' }}>
+              Add proof of your work — images, PDFs, 3D models, or audio — along with an optional note. At least one is required.
+            </div>
+
+            <input ref={fileRef} type="file" multiple accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.glb,.mp3"
+              className="hidden" onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
+
+            <div onClick={() => fileRef.current?.click()}
+              className="mb-4 flex flex-col items-center justify-center rounded-2xl cursor-pointer py-8 gap-2"
+              style={{ border: '1.5px dashed rgba(255,255,255,.18)', background: 'rgba(255,255,255,.03)' }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.4 }}>
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+              <span className="text-[13px]" style={{ color: 'rgba(255,255,255,.35)' }}>
+                {files.length === 0 ? 'Tap to add files' : `${files.length} file${files.length > 1 ? 's' : ''} selected`}
+              </span>
+            </div>
+
+            {files.length > 0 && (
+              <div className="mb-4 flex flex-wrap gap-1.5">
+                {files.map((f, i) => (
+                  <div key={i} className="flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-[12px]"
+                    style={{ background: 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.1)', color: 'rgba(255,255,255,.7)' }}>
+                    {f.name}
+                    <span onClick={(e) => { e.stopPropagation(); setFiles((fs) => fs.filter((_, j) => j !== i)) }}
+                      className="cursor-pointer text-[11px]" style={{ color: 'rgba(255,255,255,.3)' }}>✕</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="mb-2 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgba(255,255,255,.3)' }}>Optional note</div>
+            <textarea
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              placeholder="Describe what you accomplished…"
+              rows={4}
+              className="w-full resize-none rounded-2xl px-4 py-3.5 text-[14px] leading-[1.6] outline-none mb-5"
+              style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'rgba(255,255,255,.85)', caretColor: 'white' }}
+            />
+
+            {error && <div className="mb-3 text-[13px]" style={{ color: '#f87171' }}>{error}</div>}
+
+            <button type="button" onClick={() => void submit()}
+              disabled={!canSubmit || submitting}
+              className="w-full rounded-2xl py-[18px] text-[16px] font-bold tracking-tight transition-opacity active:opacity-80"
+              style={{ background: '#fff', color: '#000', opacity: canSubmit && !submitting ? 1 : 0.35 }}>
+              {submitting ? 'Submitting…' : 'Submit for review →'}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 async function postUpdate(key: string, value: string, extra?: Record<string, string>) {
   const res = await fetch(SERVER_ENDPOINTS.profileUpdate, {
     method: 'POST',
@@ -910,6 +1063,7 @@ async function postUpdate(key: string, value: string, extra?: Record<string, str
 export default function SettingsView() {
   const [fields, setFields] = useState<ProfileField[]>([])
   const [userName, setUserName] = useState('')
+  const [userId, setUserId] = useState('')
   const [discoverable, setDiscoverable] = useState(false)
   const [description, setDescription] = useState('')
   const [loading, setLoading] = useState(true)
@@ -919,6 +1073,9 @@ export default function SettingsView() {
   const [memoryOpen, setMemoryOpen] = useState(false)
   const [activeMemoryIdx, setActiveMemoryIdx] = useState(0)
   const [view, setView] = useState<'spiral' | 'goals'>('spiral')
+  const [submittedGoals, setSubmittedGoals] = useState<Record<string, string>>(loadSubmittedGoals)
+  const [authenticGoals, setAuthenticGoals] = useState<Set<string>>(new Set())
+  const [verifyingGoalId, setVerifyingGoalId] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -930,6 +1087,7 @@ export default function SettingsView() {
       if (!profileRes.ok) throw new Error(`Profile fetch failed: ${profileRes.status}`)
       const data = (await profileRes.json()) as ProfileResponse
       setUserName(data.name ?? '')
+      setUserId(data.user_id ?? '')
       setDiscoverable(data.discoverable ?? false)
       setDescription(data.description ?? '')
       setFields(parseDerived(data.derived ?? ''))
@@ -941,6 +1099,26 @@ export default function SettingsView() {
   }, [])
 
   useEffect(() => { void refresh() }, [refresh])
+
+  useEffect(() => {
+    const subIds = Object.values(submittedGoals)
+    if (subIds.length === 0) return
+    let cancelled = false
+    async function checkStatus() {
+      const next = new Set<string>()
+      for (const [goalId, subId] of Object.entries(submittedGoals)) {
+        try {
+          const r = await fetch(CENTRAL_ENDPOINTS.submissionStatus(subId), { cache: 'no-store' })
+          const d = await r.json() as { ok: boolean; authentic?: boolean }
+          if (d.ok && d.authentic) next.add(goalId)
+        } catch { /* ignore */ }
+      }
+      if (!cancelled) setAuthenticGoals(next)
+    }
+    void checkStatus()
+    const id = setInterval(() => void checkStatus(), 30000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [submittedGoals])
 
   const fieldVal = (key: string) => fields.find((f) => f.key === key)?.value ?? ({ work_day_start: '09:00', daily_work_hours: '8' }[key] ?? '')
   const profileFields = fields.filter((f) => !DS_KEYS.has(f.key) && !SCHEDULE_KEYS.includes(f.key))
@@ -957,7 +1135,7 @@ export default function SettingsView() {
       const prog = calcRootProgress(g, goals)
       return prog.total > 0 && prog.done === prog.total
     })
-    .map((g) => ({ name: g.title, total: calcRootProgress(g, goals).total }))
+    .map((g) => ({ id: g.id, name: g.title, total: calcRootProgress(g, goals).total }))
 
   const featuredMemory = memories[0] ?? null
   const sameMonthMemories = useMemo(() => {
@@ -1125,26 +1303,45 @@ export default function SettingsView() {
             </div>
           ) : (
             <div className="flex flex-col gap-2.5 px-6">
-              {achievements.map((a) => (
-                <div
-                  key={a.name}
-                  className="flex items-center gap-4 p-3.5 rounded-2xl"
-                  style={{ background: 'var(--surface2)', border: '1px solid rgba(255,255,255,.1)' }}
-                >
-                  <div className="w-11 h-11 rounded-[13px] flex items-center justify-center flex-shrink-0" style={{ background: '#fff' }}>
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M6 9H4a2 2 0 0 1-2-2V5h4" /><path d="M18 9h2a2 2 0 0 0 2-2V5h-4" />
-                      <path d="M12 17v4" /><path d="M8 21h8" /><path d="M6 2h12v7a6 6 0 0 1-12 0V2z" />
-                    </svg>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[15px] font-bold truncate">{a.name}</div>
-                    <div className="text-xs mt-0.5" style={{ color: 'var(--white-dim)' }}>
-                      100% · {a.total} goals completed
+              {achievements.map((a) => {
+                const isAuthentic = authenticGoals.has(a.id)
+                const isSubmitted = !!submittedGoals[a.id]
+                return (
+                  <div
+                    key={a.name}
+                    className="flex items-center gap-4 p-3.5 rounded-2xl"
+                    style={{ background: 'var(--surface2)', border: `1px solid ${isAuthentic ? 'rgba(255,200,50,.35)' : 'rgba(255,255,255,.1)'}` }}
+                  >
+                    <div className="w-11 h-11 rounded-[13px] flex items-center justify-center flex-shrink-0"
+                      style={{ background: isAuthentic ? 'rgba(255,200,50,.15)' : '#fff' }}>
+                      {isAuthentic ? (
+                        <span className="text-[22px]">⭐</span>
+                      ) : (
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M6 9H4a2 2 0 0 1-2-2V5h4" /><path d="M18 9h2a2 2 0 0 0 2-2V5h-4" />
+                          <path d="M12 17v4" /><path d="M8 21h8" /><path d="M6 2h12v7a6 6 0 0 1-12 0V2z" />
+                        </svg>
+                      )}
                     </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[15px] font-bold truncate">{a.name}</div>
+                      <div className="text-xs mt-0.5 flex items-center gap-1.5" style={{ color: 'var(--white-dim)' }}>
+                        <span>100% · {a.total} goals completed</span>
+                        {isAuthentic && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(255,200,50,.15)', color: 'rgba(255,200,50,.9)' }}>Authentic</span>}
+                        {!isAuthentic && isSubmitted && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,.08)', color: 'rgba(255,255,255,.4)' }}>In review</span>}
+                      </div>
+                    </div>
+                    {!isSubmitted && !isAuthentic && (
+                      <button type="button"
+                        onClick={() => setVerifyingGoalId(a.id)}
+                        className="flex-shrink-0 rounded-xl px-3 py-1.5 text-[12px] font-bold"
+                        style={{ background: 'rgba(255,200,50,.12)', color: 'rgba(255,200,50,.9)', border: '1px solid rgba(255,200,50,.25)' }}>
+                        Verify
+                      </button>
+                    )}
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
@@ -1236,6 +1433,22 @@ export default function SettingsView() {
           </div>
         </div>
       </div>
+
+      {verifyingGoalId && (() => {
+        const goal = achievements.find((a) => a.id === verifyingGoalId)
+        return (
+          <VerifyGoalModal
+            goalId={verifyingGoalId}
+            goalName={goal?.name ?? ''}
+            onClose={() => setVerifyingGoalId(null)}
+            onDone={(subId) => {
+              const next = { ...submittedGoals, [verifyingGoalId]: subId }
+              setSubmittedGoals(next)
+              saveSubmittedGoals(next)
+            }}
+          />
+        )
+      })()}
     </div>
   )
 }

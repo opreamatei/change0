@@ -8,6 +8,16 @@
 
 // AI GENERATED Mostly
 
+/* The "derived" profile section is an internal key=value\n text store, NOT JSON.
+ * Values must be persisted RAW here — JSON-escaping only happens at the actual
+ * JSON boundary (the OpenAI request body). Escaping on store + reading back
+ * without unescaping caused backslashes to double on every save (2^n growth). */
+#define DERIVED_MAX_LATEST_INPUT 2048
+#define DERIVED_MAX_SOURCE       256
+#define DERIVED_MAX_GOAL_EVENT   256
+#define DERIVED_MAX_GOAL_ID      64
+#define DERIVED_MAX_GOAL_TITLE   512
+
 static void init_profile_file_if_missing(User *u)
 {
 	char directory[USER_DIRECTORY_SIZE];
@@ -126,6 +136,56 @@ static void set_string_from_line(String *dst, const char *value)
 		CatString(dst, (char *)value, strlen(value));
 }
 
+/* Sanitize a value for the plain-text derived store on WRITE: only newlines are
+ * illegal (they delimit lines), so replace them with spaces. No JSON escaping. */
+static char *sanitize_inline_dup(const char *src)
+{
+	const char *s = src ? src : "";
+	size_t len = strlen(s);
+	char *out = malloc(len + 1);
+	change_assert(out, "Could not allocate while sanitizing derived field for write.\n");
+	for (size_t i = 0; i < len; i++) {
+		char c = s[i];
+		out[i] = (c == '\n' || c == '\r') ? ' ' : c;
+	}
+	out[len] = '\0';
+	return out;
+}
+
+/* Set a derived field on LOAD, healing legacy corruption: collapse runs of
+ * backslashes (escape-doubling artifacts) to a single backslash, neutralize
+ * newlines, and clamp length so a poisoned field can never dominate a prompt. */
+static void set_string_from_line_clamped(String *dst, const char *value, size_t max)
+{
+	EmptyString(dst);
+	if (!value)
+		return;
+
+	size_t srclen = strlen(value);
+	char *buf = malloc(srclen + 1);
+	change_assert(buf, "Could not allocate while sanitizing derived field on load.\n");
+
+	size_t n = 0;
+	_Bool prev_backslash = 0;
+	for (size_t i = 0; i < srclen && n < max; i++) {
+		char c = value[i];
+		if (c == '\n' || c == '\r')
+			c = ' ';
+		if (c == '\\') {
+			if (prev_backslash)
+				continue; /* drop consecutive backslashes */
+			prev_backslash = 1;
+		} else {
+			prev_backslash = 0;
+		}
+		buf[n++] = c;
+	}
+	buf[n] = '\0';
+
+	CatString(dst, buf, n);
+	free(buf);
+}
+
 static void parse_derived_line(UserProfileDerivedState *state, char *line)
 {
 	char *eq = strchr(line, '=');
@@ -136,37 +196,37 @@ static void parse_derived_line(UserProfileDerivedState *state, char *line)
 	eq++;
 
 	if (strcmp(line, "latest_input_source") == 0) {
-		set_string_from_line(&state->latest_input_source, eq);
+		set_string_from_line_clamped(&state->latest_input_source, eq, DERIVED_MAX_SOURCE);
 		return;
 	}
 
 	if (strcmp(line, "latest_input") == 0) {
-		set_string_from_line(&state->latest_input, eq);
+		set_string_from_line_clamped(&state->latest_input, eq, DERIVED_MAX_LATEST_INPUT);
 		return;
 	}
 
 	if (strcmp(line, "last_goal_event") == 0) {
-		set_string_from_line(&state->last_goal_event, eq);
+		set_string_from_line_clamped(&state->last_goal_event, eq, DERIVED_MAX_GOAL_EVENT);
 		return;
 	}
 
 	if (strcmp(line, "last_goal_id") == 0) {
-		set_string_from_line(&state->last_goal_id, eq);
+		set_string_from_line_clamped(&state->last_goal_id, eq, DERIVED_MAX_GOAL_ID);
 		return;
 	}
 
 	if (strcmp(line, "last_goal_title") == 0) {
-		set_string_from_line(&state->last_goal_title, eq);
+		set_string_from_line_clamped(&state->last_goal_title, eq, DERIVED_MAX_GOAL_TITLE);
 		return;
 	}
 
 	if (strcmp(line, "current_focus_goal_id") == 0) {
-		set_string_from_line(&state->current_focus_goal_id, eq);
+		set_string_from_line_clamped(&state->current_focus_goal_id, eq, DERIVED_MAX_GOAL_ID);
 		return;
 	}
 
 	if (strcmp(line, "current_focus_goal_title") == 0) {
-		set_string_from_line(&state->current_focus_goal_title, eq);
+		set_string_from_line_clamped(&state->current_focus_goal_title, eq, DERIVED_MAX_GOAL_TITLE);
 		return;
 	}
 }
@@ -237,13 +297,14 @@ static void write_derived_state(String *derived_section, UserProfileDerivedState
 
 	snprintf(time_buffer, sizeof(time_buffer), "%s", change_ctime(&state->updated_at));
 	trim_newline_inplace(time_buffer);
-	esc_latest_input_source = json_escape_dup(state->latest_input_source.p);
-	esc_latest_input = json_escape_dup(state->latest_input.p);
-	esc_last_goal_event = json_escape_dup(state->last_goal_event.p);
-	esc_last_goal_id = json_escape_dup(state->last_goal_id.p);
-	esc_last_goal_title = json_escape_dup(state->last_goal_title.p);
-	esc_current_focus_goal_id = json_escape_dup(state->current_focus_goal_id.p);
-	esc_current_focus_goal_title = json_escape_dup(state->current_focus_goal_title.p);
+	/* Store RAW (newline-sanitized) — not JSON-escaped. See note at top of file. */
+	esc_latest_input_source = sanitize_inline_dup(state->latest_input_source.p);
+	esc_latest_input = sanitize_inline_dup(state->latest_input.p);
+	esc_last_goal_event = sanitize_inline_dup(state->last_goal_event.p);
+	esc_last_goal_id = sanitize_inline_dup(state->last_goal_id.p);
+	esc_last_goal_title = sanitize_inline_dup(state->last_goal_title.p);
+	esc_current_focus_goal_id = sanitize_inline_dup(state->current_focus_goal_id.p);
+	esc_current_focus_goal_title = sanitize_inline_dup(state->current_focus_goal_title.p);
 
 	/* Save a copy of old custom lines before overwriting. */
 	if (derived_section->len > 0) {
@@ -365,10 +426,16 @@ void UserProfileRecordInput(User *u, const char *source, const char *text)
 	state.updated_at = now;
 	EmptyString(&state.latest_input_source);
 	EmptyString(&state.latest_input);
-	if (source)
-		CatString(&state.latest_input_source, (char *)source, strlen(source));
-	if (text)
-		CatString(&state.latest_input, (char *)text, strlen(text));
+	if (source) {
+		size_t slen = strlen(source);
+		if (slen > DERIVED_MAX_SOURCE) slen = DERIVED_MAX_SOURCE;
+		CatString(&state.latest_input_source, (char *)source, slen);
+	}
+	if (text) {
+		size_t tlen = strlen(text);
+		if (tlen > DERIVED_MAX_LATEST_INPUT) tlen = DERIVED_MAX_LATEST_INPUT;
+		CatString(&state.latest_input, (char *)text, tlen);
+	}
 
 	write_derived_state(&derived, &state);
 	write_profile_sections(u, &inputs, &goals, &derived);
@@ -421,7 +488,7 @@ static void rewrite_derived_field(User *u, const char *key, const char *value, _
 			if (strncmp(line, key, key_len) == 0 && line[key_len] == '=') {
 				found = 1;
 				if (keep_field) {
-					esc_value = json_escape_dup(value ? value : "");
+					esc_value = sanitize_inline_dup(value ? value : "");
 					CatTemplateString(&new_derived, "%s=%s\n", key, esc_value);
 					free(esc_value);
 					esc_value = NULL;
@@ -437,7 +504,7 @@ static void rewrite_derived_field(User *u, const char *key, const char *value, _
 	}
 
 	if (keep_field && !found) {
-		esc_value = json_escape_dup(value ? value : "");
+		esc_value = sanitize_inline_dup(value ? value : "");
 		CatTemplateString(&new_derived, "%s=%s\n", key, esc_value);
 		free(esc_value);
 	}

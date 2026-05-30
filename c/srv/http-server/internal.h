@@ -85,4 +85,8 @@ void handle_get_reminders(int fd, User *user);
 void handle_post_reminders_save(int fd, const HttpRequest *req, User *user);
 void handle_post_reminders_delete(int fd, const HttpRequest *req, User *user);
 
+/* ── review handlers (review-handlers.c) ── */
+void handle_post_submission_create(int fd, const HttpRequest *req, User *user);
+void handle_post_submission_file(int fd, const HttpRequest *req, User *user);
+
 #endif

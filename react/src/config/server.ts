@@ -104,6 +104,9 @@ export const SERVER_ENDPOINTS = {
   get reminders()        { return path('/reminders')() },
   get remindersSave()    { return path('/reminders/save')() },
   get remindersDelete()  { return path('/reminders/delete')() },
+
+  get submissionsCreate() { return path('/submissions/create')() },
+  get submissionsFile()   { return path('/submissions/file')() },
 }
 
 export const CENTRAL_ENDPOINTS = {
@@ -131,6 +134,13 @@ export const CENTRAL_ENDPOINTS = {
   journeyProposeRoot:  (journeyId: string) => `${CENTRAL_BASE_URL}/journey/${encodeURIComponent(journeyId)}/propose-root`,
   journeyApproveRoot:  (journeyId: string) => `${CENTRAL_BASE_URL}/journey/${encodeURIComponent(journeyId)}/approve-root`,
   journeyDeclineRoot:  (journeyId: string) => `${CENTRAL_BASE_URL}/journey/${encodeURIComponent(journeyId)}/decline-root`,
+
+  submissionsPending: (userId: string, label: string) =>
+    `${CENTRAL_BASE_URL}/submissions/pending?user_id=${encodeURIComponent(userId)}&label=${encodeURIComponent(label)}`,
+  submissionReview: (subId: string) => `${CENTRAL_BASE_URL}/submissions/${encodeURIComponent(subId)}/review`,
+  submissionFile: (subId: string, fname: string) =>
+    `${CENTRAL_BASE_URL}/submissions/file?id=${encodeURIComponent(subId)}&f=${encodeURIComponent(fname)}`,
+  submissionStatus: (subId: string) => `${CENTRAL_BASE_URL}/submissions/${encodeURIComponent(subId)}/status`,
 }
 
 export function buildGoalDecomposeUrl(baseUrl = clientBaseUrl ?? '') {

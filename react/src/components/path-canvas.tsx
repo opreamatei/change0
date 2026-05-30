@@ -23,6 +23,9 @@ const LABEL_MAX_W = 130
 const LABEL_LINES = 2
 const HIT_PAD = 14
 const CHAPTER_EXTRA = 90
+// Scroll headroom reserved above the final node when a mystery zone exists, so
+// the fade has room to breathe and the path visibly extends as goals decompose.
+const MYSTERY_HEADROOM = PATH_SY * 2.5
 
 /* ── colour helpers ──────────────────────────────────────────────────────── */
 // Append an alpha to a #rrggbb hex (canvas accepts #rrggbbaa). White strings
@@ -137,7 +140,12 @@ export function PathCanvas({
   const mountedRef  = useRef(false)
 
   const n = nodes.length
-  const contentH = useMemo(() => calcContentH(nodes, height), [nodes, height])
+  const contentH = useMemo(() => {
+    const base = calcContentH(nodes, height)
+    // Reserve headroom above the final node so the mystery fade never clips the
+    // topmost real node and the y-map grows as new (decomposed) nodes appear.
+    return hasMysteryZone && nodes.length > 0 ? base + MYSTERY_HEADROOM : base
+  }, [nodes, height, hasMysteryZone])
   const maxOffset = Math.max(0, contentH - height)
   const clamp = useCallback((v: number) => Math.max(0, Math.min(maxOffset, v)), [maxOffset])
 
@@ -391,8 +399,10 @@ export function PathCanvas({
       }
       ctx.setLineDash([])
 
-      const fadeFrom = topY + PATH_NR
-      const fadeTo   = Math.max(0, topY - PATH_SY * 2.5)
+      // Begin the fade just above the topmost real node so the node and its label
+      // stay fully lit — only the empty space beyond it dims into the unknown.
+      const fadeFrom = topY - PATH_NR - 18
+      const fadeTo   = Math.max(0, fadeFrom - PATH_SY * 2.5)
       if (fadeFrom > fadeTo) {
         const grad = ctx.createLinearGradient(0, fadeFrom, 0, fadeTo)
         grad.addColorStop(0,    'rgba(0,0,0,0)')

@@ -320,14 +320,17 @@ add_library(http-server SHARED
 	${CMAKE_SOURCE_DIR}/c/srv/http-server/middleware-handlers.c
 	${CMAKE_SOURCE_DIR}/c/srv/http-server/profile-handlers.c
 	${CMAKE_SOURCE_DIR}/c/srv/http-server/dev-handlers.c
+	${CMAKE_SOURCE_DIR}/c/srv/http-server/review-handlers.c
 )
 target_include_directories(http-server PUBLIC
 	${CMAKE_SOURCE_DIR}/c
 	${CMAKE_SOURCE_DIR}/c/ne
 	${CMAKE_SOURCE_DIR}/c/lib/util
 	${CMAKE_SOURCE_DIR}/c/lib/jsonp
+	${CMAKE_SOURCE_DIR}/c/lib/openai
 	${CMAKE_SOURCE_DIR}/c/srv
 	${CMAKE_SOURCE_DIR}/c/srv/http-server
+	${CMAKE_SOURCE_DIR}/c/srv/match-system
 	${CMAKE_SOURCE_DIR}/c/srv/user
 	${CMAKE_SOURCE_DIR}/c/journal
 )
@@ -350,6 +353,7 @@ add_library(central-server SHARED
 	${CMAKE_SOURCE_DIR}/c/srv/match-system/shared-journey.c
 	${CMAKE_SOURCE_DIR}/c/srv/central-server/central-users.c
 	${CMAKE_SOURCE_DIR}/c/srv/central-server/central-conn.c
+	${CMAKE_SOURCE_DIR}/c/srv/central-server/central-reviews.c
 )
 target_include_directories(central-server PUBLIC
 	${CMAKE_SOURCE_DIR}/c
@@ -455,6 +459,7 @@ add_library(connections SHARED
 	${CMAKE_SOURCE_DIR}/c/srv/match-system/connections.c
 	${CMAKE_SOURCE_DIR}/c/srv/match-system/ai-matching.c
 	${CMAKE_SOURCE_DIR}/c/srv/match-system/disk-storage.c
+	${CMAKE_SOURCE_DIR}/c/srv/match-system/reviews.c
 )
 target_include_directories(connections PUBLIC
 	${CMAKE_SOURCE_DIR}/c

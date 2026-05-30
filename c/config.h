@@ -1117,5 +1117,46 @@
 "When failing, feedback must be one concise actionable correction under 40 words. " \
 "When passing, feedback must be an empty string."
 
+/* ── Review / Goal Authenticity System ── */
+
+#define MAX_DAILY_REVIEWS     3
+#define SUBMISSIONS_DIR       PROJECT_ROOT "submissions/"
+#define SUBMISSIONS_DAILY_DIR PROJECT_ROOT "submissions/.daily/"
+
+/*
+ * REVIEW_LABEL_PROMPT — 1-3 word expertise label for a completed goal.
+ * Placeholders: goal_title, goal_extra_info, child_context.
+ */
+#define REVIEW_LABEL_PROMPT \
+"You are categorizing a completed goal for an anonymous peer review system. " \
+"Based on the goal below, output a short 1-3 word expertise label describing " \
+"the kind of person who typically accomplishes this kind of work. " \
+"Examples: Software Engineer, Athlete, Writer, Musician, Designer, Entrepreneur, Student. " \
+"Goal title: [%s]. Goal description: [%s]. Related tasks: [%s]. " \
+"Return a single label. No explanation, no punctuation, no extra words."
+
+#define REVIEW_LABEL_SCHEMA \
+"{\"type\":\"object\"," \
+"\"properties\":{\"label\":{\"type\":\"string\"}}," \
+"\"required\":[\"label\"]," \
+"\"additionalProperties\":false}"
+
+/*
+ * REVIEW_DESCRIPTION_PROMPT — 2-3 sentence anonymous description.
+ * Placeholders: goal_title, goal_extra_info, child_context.
+ */
+#define REVIEW_DESCRIPTION_PROMPT \
+"You are writing a brief anonymous description of a completed goal for peer review. " \
+"The reviewer will never see the submitter's name or any personal details. " \
+"Write 2-3 sentences describing what this goal was roughly about. " \
+"Be specific enough to give the reviewer a fair sense of the effort involved, " \
+"but vague enough to preserve privacy — no names, locations, or unique identifiers. " \
+"Goal title: [%s]. Goal description: [%s]. Related tasks: [%s]."
+
+#define REVIEW_DESCRIPTION_SCHEMA \
+"{\"type\":\"object\"," \
+"\"properties\":{\"description\":{\"type\":\"string\"}}," \
+"\"required\":[\"description\"]," \
+"\"additionalProperties\":false}"
 
 #endif

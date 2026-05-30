@@ -5,6 +5,7 @@
 #include "http-util.h"
 #include "user-management.h"
 #include "connections.h"
+#include "reviews.h"
 #include "util.h"
 #include "config.h"
 #include "globals.h"
@@ -159,6 +160,22 @@ static void dispatch(int fd, CentralRequest *req)
 	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/messages/send") == 0)  { handle_msg_send(fd, req); return; }
 	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/messages") == 0)       { handle_msg_list(fd, query); return; }
 
+	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/submissions/pending") == 0) { handle_get_submissions_pending(fd, query); return; }
+	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/submissions/file")    == 0) { handle_get_submission_file(fd, query); return; }
+	if (strncmp(clean_path, "/submissions/", 13) == 0) {
+		const char *rest = clean_path + 13;
+		const char *slash = strchr(rest, '/');
+		if (slash) {
+			char sub_id[SUBMISSION_ID_SIZE] = {0};
+			size_t id_len = (size_t)(slash - rest);
+			if (id_len >= sizeof(sub_id)) id_len = sizeof(sub_id) - 1;
+			memcpy(sub_id, rest, id_len);
+			const char *sub = slash + 1;
+			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "review") == 0) { handle_post_submission_review(fd, sub_id, req); return; }
+			if (strcmp(req->method, "GET")  == 0 && strcmp(sub, "status") == 0) { handle_get_submission_status(fd, sub_id); return; }
+		}
+	}
+
 	http_send_json(fd, 404, "Not Found", "{\"ok\":false,\"error\":\"route_not_found\"}");
 }
 
@@ -243,6 +260,7 @@ void start_central_server(int port)
 	InitUserSystem();
 	InitConnectionSystem();
 	init_shared_journeys();
+	InitReviewSystem();
 
 	central_started = 1;
 	pthread_create(&central_thread, NULL, central_thread_main, NULL);

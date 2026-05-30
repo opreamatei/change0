@@ -5,6 +5,7 @@ import type { PathNodeData, NodeState } from '../components/path-canvas'
 import { SwipeDeck } from '../components/swipe-deck'
 import ConnectionsView from './connections-view'
 import ReviewsPanel from './reviews-panel'
+import type { FocusTarget } from './focus-session'
 
 const UNASSIGNED = 255
 
@@ -243,11 +244,12 @@ function CollabNodeDetail({
 /* ─── collab journey detail view ─────────────────────────────────────────── */
 
 function CollabJourneyView({
-  summary, userId, onBack, journeyCount = 1, journeyIndex = 0, onSelectJourney,
+  summary, userId, onBack, onOpenFocus, journeyCount = 1, journeyIndex = 0, onSelectJourney,
 }: {
   summary: JourneyListItem
   userId: string
   onBack: () => void
+  onOpenFocus: (target: FocusTarget) => void
   journeyCount?: number
   journeyIndex?: number
   onSelectJourney?: (idx: number) => void
@@ -422,6 +424,36 @@ function CollabJourneyView({
     } finally { setProposalBusy(false) }
   }
 
+  // Tapping a leaf I own and can act on drops me into the shared focus session —
+  // the same renderer the solo journey uses. Anything else (a partner's task,
+  // reassigning, a finished node) still opens the detail sheet.
+  function handleSelect(idx: number) {
+    const leaf = orderedLeaves[idx]
+    if (!leaf || !detail) { setSelectedIdx(idx); return }
+    const state = classifyLeaf(leaf)
+    const owner = leaf.assigned_to === UNASSIGNED ? undefined : detail.users[leaf.assigned_to]
+    const mine = owner?.id === userId
+    const startable = canStartLeaf(leaf, goalMap)
+    if (mine && (state === 'started' || (state === 'idle' && startable))) {
+      const accent = (leaf.assigned_to !== UNASSIGNED && leaf.assigned_to >= 0)
+        ? PARTICIPANT_COLORS[leaf.assigned_to % PARTICIPANT_COLORS.length]
+        : undefined
+      onOpenFocus({
+        id: leaf.id,
+        title: leaf.title,
+        extraInfo: leaf.extra_info || undefined,
+        requiredTimeSeconds: leaf.required_time,
+        state: state === 'started' ? 'active' : 'idle',
+        canStart: startable,
+        accent,
+        onStart: () => { void onLeafAction(leaf.id, 'start') },
+        onComplete: () => { void onLeafAction(leaf.id, 'end') },
+      })
+      return
+    }
+    setSelectedIdx(idx)
+  }
+
   const doneCount = collabNodes.filter((n) => n.nodeState === 'done').length
   const selectedLeaf = selectedIdx !== null ? orderedLeaves[selectedIdx] : null
 
@@ -540,7 +572,7 @@ function CollabJourneyView({
             height={dim.h}
             hasMysteryZone={false}
             initialFocusIdx={focusIdx}
-            onSelect={setSelectedIdx}
+            onSelect={handleSelect}
             userOverlay={userOverlay}
           />
         )}
@@ -730,7 +762,7 @@ function JourneysContent({
 
 /* ─── main together view ─────────────────────────────────────────────────── */
 
-export default function TogetherView({ userId }: { userId: string }) {
+export default function TogetherView({ userId, onOpenFocus }: { userId: string; onOpenFocus: (target: FocusTarget) => void }) {
   const [peopleOpen, setPeopleOpen] = useState(false)
   const [reviewsOpen, setReviewsOpen] = useState(false)
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
@@ -785,6 +817,7 @@ export default function TogetherView({ userId }: { userId: string }) {
                 summary={journeys[i]}
                 userId={userId}
                 onBack={() => setSelectedIdx(null)}
+                onOpenFocus={onOpenFocus}
                 journeyCount={journeys.length}
                 journeyIndex={i}
                 onSelectJourney={setSelectedIdx}
@@ -831,7 +864,7 @@ export default function TogetherView({ userId }: { userId: string }) {
         </button>
       )}
 
-      <ReviewsPanel open={reviewsOpen} onClose={() => setReviewsOpen(false)} />
+      <ReviewsPanel open={reviewsOpen} onClose={() => setReviewsOpen(false)} userId={userId} />
 
       {/* People overlay — slides in from right */}
       <div

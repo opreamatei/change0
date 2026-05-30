@@ -38,6 +38,12 @@ void handle_decline_root_goal(int fd, const char *journey_id, CentralRequest *re
 void handle_finalize_root_goal(int fd, const char *journey_id, CentralRequest *req);
 void handle_list_root_proposals(int fd, const char *journey_id, const char *query);
 
+/* review handlers — central-reviews.c */
+void handle_get_submissions_pending(int fd, const char *query);
+void handle_post_submission_review(int fd, const char *sub_id, CentralRequest *req);
+void handle_get_submission_status(int fd, const char *sub_id);
+void handle_get_submission_file(int fd, const char *query);
+
 /* user handlers — central-users.c */
 void handle_list_users(int fd);
 void handle_create_user(int fd, CentralRequest *req);

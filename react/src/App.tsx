@@ -8,6 +8,8 @@ import ChatView from './section/chat-view'
 import LoginView, { type LocalUser } from './section/login-view'
 import LoadingOrb from './components/loading-orb'
 import NavBar, { type NavPanel } from './components/nav-bar'
+import FocusSession, { type FocusTarget } from './section/focus-session'
+import type { GoalSelection } from './section/current-goals-view'
 import {
   applyGoalEvent,
   endGoalOnServer,
@@ -72,7 +74,8 @@ function App() {
   const [devPanelOpen, setDevPanelOpen] = useState(false)
   const [journalOpenEntryId, setJournalOpenEntryId] = useState<string | null>(null)
   const [journeyChatOpen, setJourneyChatOpen] = useState(false)
-  const pendingActionRef = useRef<{ goalId: string; goalIndex: number } | null>(null)
+  const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null)
+  const pendingActionRef = useRef<{ goalId: string } | null>(null)
 
   function handleLogin(user: LocalUser, baseUrl: string) {
     setClientBaseUrl(baseUrl)
@@ -257,9 +260,7 @@ function App() {
 
       const pendingAction = pendingActionRef.current
       const matchesPending = pendingAction
-        ? payload.goal_index
-          ? pendingAction.goalIndex === payload.goal_index
-          : pendingAction.goalId === goalIdFromEvent
+        ? pendingAction.goalId === goalIdFromEvent
         : false
 
       if (matchesPending) {
@@ -290,7 +291,7 @@ function App() {
 
   async function runGoalAction(targetGoal: Goal, action: 'start' | 'end') {
     try {
-      pendingActionRef.current = { goalId: targetGoal.id, goalIndex: targetGoal.localIndex }
+      pendingActionRef.current = { goalId: targetGoal.id }
       setPendingGoalIndex(targetGoal.localIndex)
       setError(null)
       setMessage(action === 'start' ? 'Starting goal...' : 'Ending goal...')
@@ -351,6 +352,25 @@ function App() {
     } finally {
       setPendingGoalIndex(null)
     }
+  }
+
+  // Tapping a goal on the journey path opens it as a full-screen focus session.
+  function openGoalFocus(sel: GoalSelection) {
+    const g = sel.goal
+    setFocusTarget({
+      id: g.id,
+      title: g.title,
+      extraInfo: g.extraInfo || undefined,
+      requiredTimeSeconds: g.requiredTime,
+      state: sel.nodeState,
+      isMystery: sel.isMystery,
+      canStart: sel.canStart,
+      pending: pendingGoalIndex === g.localIndex,
+      onStart: () => void runGoalAction(g, 'start'),
+      onComplete: () => void runGoalAction(g, 'end'),
+      onRepair: (reason) => void runRepairGoal(g, reason),
+      onOpen: () => navigateToGoal(g.id),
+    })
   }
 
   async function runDevTimeAction(action: 'reset' | number) {
@@ -442,7 +462,7 @@ function App() {
 
     return (
       <main className="fixed inset-0 flex flex-col text-white overflow-hidden">
-        {devPanelOpen ? (
+        {!focusTarget && (devPanelOpen ? (
           <aside className="fixed right-3 top-3 z-50 rounded-xl border border-[#2a2a2a] bg-[#111]/95 px-3 py-3 shadow-sm backdrop-blur sm:right-5 sm:top-5">
             <div className="mb-2 flex items-center justify-between gap-2">
               <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40">{localUser.name}</p>
@@ -500,7 +520,7 @@ function App() {
           >
             ⚙
           </button>
-        )}
+        ))}
         {dropConfirm && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm">
             <div className="mx-4 w-full max-w-sm rounded-3xl border border-[#2a2a2a] bg-[#111] p-8 text-center shadow-2xl">
@@ -549,14 +569,10 @@ function App() {
             <CurrentGoalsView
               goals={goals}
               statusMessage={error ?? message}
-              pendingGoalIndex={pendingGoalIndex}
-              onNavigate={navigateToGoal}
-              onStartGoal={(targetGoal) => void runGoalAction(targetGoal, 'start')}
-              onEndGoal={(targetGoal) => void runGoalAction(targetGoal, 'end')}
-              onRepairGoal={(targetGoal, reason) => void runRepairGoal(targetGoal, reason)}
+              onSelectGoal={openGoalFocus}
             />
           ) : goalPanel === 'collab' ? (
-            <TogetherView userId={localUser?.id ?? ''} />
+            <TogetherView userId={localUser?.id ?? ''} onOpenFocus={setFocusTarget} />
           ) : goalPanel === 'schedule' ? (
             <SchedulePanel />
           ) : goalPanel === 'profile' ? (
@@ -565,7 +581,7 @@ function App() {
             <JournalView openEntryId={journalOpenEntryId} />
           )}
         </div>
-        {goalPanel === 'journey' && (
+        {goalPanel === 'journey' && !focusTarget && (
           <button
             type="button"
             onClick={() => setJourneyChatOpen(true)}
@@ -589,7 +605,7 @@ function App() {
             </svg>
           </button>
         )}
-        <NavBar panel={goalPanel} onSetPanel={setGoalPanel} />
+        {!focusTarget && <NavBar panel={goalPanel} onSetPanel={setGoalPanel} />}
         <div
           className="fixed inset-0 z-[201] flex flex-col transition-transform"
           style={{ background: 'var(--bg)', transform: journeyChatOpen ? 'translateX(0)' : 'translateX(100%)' }}
@@ -613,6 +629,9 @@ function App() {
             {journeyChatOpen && <ChatView mode="panel" />}
           </div>
         </div>
+        {focusTarget && (
+          <FocusSession target={focusTarget} onClose={() => setFocusTarget(null)} />
+        )}
       </main>
     )
   }

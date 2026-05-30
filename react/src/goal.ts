@@ -265,7 +265,6 @@ async function postGoalStatusAction(url: string, payload: GoalStatusActionPayloa
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      ...(payload.goalIndex ? { 'goal-index': payload.goalIndex } : {}),
       ...(payload.goalId ? { 'goal-id': payload.goalId } : {}),
     }),
   })
@@ -278,11 +277,11 @@ async function postGoalStatusAction(url: string, payload: GoalStatusActionPayloa
 }
 
 export async function startGoalOnServer(goal: Goal, baseUrl = getClientBaseUrl() ?? "") {
-  return postGoalStatusAction(buildGoalStartUrl(baseUrl), { goalId: goal.id, goalIndex: goal.localIndex })
+  return postGoalStatusAction(buildGoalStartUrl(baseUrl), { goalId: goal.id })
 }
 
 export async function endGoalOnServer(goal: Goal, baseUrl = getClientBaseUrl() ?? "") {
-  return postGoalStatusAction(buildGoalEndUrl(baseUrl), { goalId: goal.id, goalIndex: goal.localIndex })
+  return postGoalStatusAction(buildGoalEndUrl(baseUrl), { goalId: goal.id })
 }
 
 export async function repairGoalOnServer(goal: Goal, reason: string, baseUrl = getClientBaseUrl() ?? "") {
@@ -301,8 +300,7 @@ export async function repairGoalOnServer(goal: Goal, reason: string, baseUrl = g
 
 export function applyGoalEvent(goals: Goal[], goalId: string, payload: GoalEventPayload) {
   return goals.map((goal) => {
-    const goalIndex = payload.goal_index
-    const matchesGoal = goalIndex ? goal.localIndex === goalIndex : goal.id === goalId
+    const matchesGoal = goal.id === goalId
 
     if (!matchesGoal) {
       return goal

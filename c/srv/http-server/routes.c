@@ -81,6 +81,9 @@ static int handle_request(int fd, const HttpRequest *req, User *user)
 	if (POST("/reminders/save"))        { handle_post_reminders_save(fd, req, user);       return 0; }
 	if (POST("/reminders/delete"))      { handle_post_reminders_delete(fd, req, user);     return 0; }
 
+	if (POST("/submissions/create"))    { handle_post_submission_create(fd, req, user);    return 0; }
+	if (POST("/submissions/file"))      { handle_post_submission_file(fd, req, user);      return 0; }
+
 #undef GET
 #undef POST
 

@@ -1,64 +1,52 @@
-import { useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { CENTRAL_ENDPOINTS } from '../config/server'
 
-/**
- * Peer-to-peer review surface, ported from ui-2's CollabPage ReviewsPanel.
- * Visual only for now — swipe through pending reviews, open one, leave a
- * rating + note. Submitting is stubbed (marks the item done locally).
- */
-
-interface ReviewItem {
+interface SubmissionItem {
   id: string
-  user: string
-  avatarBg: string
-  gradient: string
-  journey: string
-  desc: string
-  time: string
-  photos: string[]
+  ai_label: string
+  ai_description: string
+  file_count: number
+  files: string[]
+  submitted_at: number
 }
 
-const MOCK_REVIEWS: ReviewItem[] = [
-  {
-    id: 'mock-1',
-    user: 'Jordan K.',
-    avatarBg: '#10b981',
-    gradient: 'linear-gradient(160deg,#052e16 0%,#064e3b 60%,#0a3a2a 100%)',
-    journey: 'TypeScript Mastery',
-    desc: 'Pushed through advanced generics, conditional types, and mapped types. Rebuilt a legacy codebase from scratch using strict TypeScript, removing all `any` types. Contributed two PRs to an open-source project with 4k+ stars.',
-    time: '6 weeks',
-    photos: ['linear-gradient(135deg,#064e3b,#0ea5e9)', 'linear-gradient(135deg,#065f46,#14b8a6)', 'linear-gradient(135deg,#047857,#6ee7b7)'],
-  },
-  {
-    id: 'mock-2',
-    user: 'Chris L.',
-    avatarBg: '#f59e0b',
-    gradient: 'linear-gradient(160deg,#1c0a00 0%,#431407 60%,#7c2d12 100%)',
-    journey: 'Senior Developer',
-    desc: 'Led the first project sprint end-to-end: daily standups, sprint planning, and code reviews for a team of 4. Introduced pair programming sessions and a PR review checklist that cut bug rate by 30%. Great communication throughout.',
-    time: '2 months',
-    photos: ['linear-gradient(135deg,#78350f,#f59e0b)', 'linear-gradient(135deg,#92400e,#fbbf24)', 'linear-gradient(135deg,#451a03,#d97706)'],
-  },
-  {
-    id: 'mock-3',
-    user: 'Maria C.',
-    avatarBg: '#8b5cf6',
-    gradient: 'linear-gradient(160deg,#1e1b4b 0%,#312e81 60%,#1e1b4b 100%)',
-    journey: 'Marathon 42km',
-    desc: 'Followed an 18-week build plan, logged 600+ km, and finished the full marathon under 4 hours. Stayed consistent through winter with early-morning runs and a strict recovery routine.',
-    time: '18 weeks',
-    photos: ['linear-gradient(135deg,#4c1d95,#7c3aed)', 'linear-gradient(135deg,#5b21b6,#a78bfa)', 'linear-gradient(135deg,#3730a3,#818cf8)'],
-  },
-]
+interface ReviewsPanelProps {
+  open: boolean
+  onClose: () => void
+  userId: string
+  userLabel?: string
+}
 
-export default function ReviewsPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+export default function ReviewsPanel({ open, onClose, userId, userLabel = '' }: ReviewsPanelProps) {
+  const [items, setItems] = useState<SubmissionItem[]>([])
+  const [loading, setLoading] = useState(false)
   const [idx, setIdx] = useState(0)
   const [reviewingId, setReviewingId] = useState<string | null>(null)
-  const [reviewTexts, setReviewTexts] = useState<Record<string, string>>({})
-  const [submitted, setSubmitted] = useState<Record<string, boolean>>({})
   const [localStars, setLocalStars] = useState(0)
+  const [submitted, setSubmitted] = useState<Record<string, boolean>>({})
+  const [dailyLimitHit, setDailyLimitHit] = useState(false)
   const swipeStartX = useRef(0)
 
-  const items = MOCK_REVIEWS
+  const load = useCallback(async () => {
+    if (!userId) return
+    setLoading(true)
+    try {
+      const r = await fetch(CENTRAL_ENDPOINTS.submissionsPending(userId, userLabel), { cache: 'no-store' })
+      if (!r.ok) return
+      const data = await r.json() as { ok: boolean; submissions: SubmissionItem[] }
+      if (data.ok) {
+        setItems(data.submissions.filter((s) => !submitted[s.id]))
+        setIdx(0)
+      }
+    } catch { /* ignore */ } finally {
+      setLoading(false)
+    }
+  }, [userId, userLabel, submitted])
+
+  useEffect(() => {
+    if (open) void load()
+  }, [open, load])
+
   const total = items.length
   const reviewingItem = reviewingId ? items.find((x) => x.id === reviewingId) : null
 
@@ -66,6 +54,7 @@ export default function ReviewsPanel({ open, onClose }: { open: boolean; onClose
     if (reviewingId) return
     setIdx(Math.max(0, Math.min(total - 1, i)))
   }
+
   const handleSwipe = (e: React.TouchEvent) => {
     if (reviewingId) return
     const dx = e.changedTouches[0].clientX - swipeStartX.current
@@ -73,19 +62,49 @@ export default function ReviewsPanel({ open, onClose }: { open: boolean; onClose
   }
 
   const startReview = (id: string) => { setReviewingId(id); setLocalStars(0) }
-  const confirmReview = () => {
+
+  const confirmReview = async () => {
     if (localStars === 0 || !reviewingItem) return
-    setSubmitted((s) => ({ ...s, [reviewingItem.id]: true }))
-    setReviewingId(null)
-    setLocalStars(0)
-    if (idx < total - 1) setTimeout(() => setIdx((i) => i + 1), 300)
+    try {
+      const r = await fetch(CENTRAL_ENDPOINTS.submissionReview(reviewingItem.id), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewer_id: userId, score: localStars }),
+      })
+      const data = await r.json() as { ok: boolean; error?: string }
+      if (!r.ok && data.error === 'daily_limit') {
+        setDailyLimitHit(true)
+        setReviewingId(null)
+        return
+      }
+      setSubmitted((s) => ({ ...s, [reviewingItem.id]: true }))
+      setItems((prev) => prev.filter((x) => x.id !== reviewingItem.id))
+      setReviewingId(null)
+      setLocalStars(0)
+    } catch { /* ignore */ }
   }
 
   if (!open) return null
 
+  // ── daily limit notice ──
+  if (dailyLimitHit) {
+    return (
+      <div className="fixed inset-0 z-[230] flex flex-col items-center justify-center px-8 text-center" style={{ background: '#000000' }}>
+        <div className="text-[48px] mb-4">🕐</div>
+        <div className="text-[20px] font-bold text-white mb-2">That's enough for today</div>
+        <div className="text-[14px] leading-[1.6]" style={{ color: 'rgba(255,255,255,.45)' }}>
+          You've reviewed {3} goals today. Come back tomorrow for more.
+        </div>
+        <button type="button" onClick={onClose}
+          className="mt-8 px-6 py-3 rounded-2xl text-[15px] font-bold text-black bg-white">
+          Got it
+        </button>
+      </div>
+    )
+  }
+
   // ── review detail ──
   if (reviewingItem) {
-    const text = reviewTexts[reviewingItem.id] ?? ''
     const done = submitted[reviewingItem.id] ?? false
     return (
       <div className="fixed inset-0 z-[230] flex flex-col" style={{ background: '#000000' }}>
@@ -98,61 +117,51 @@ export default function ReviewsPanel({ open, onClose }: { open: boolean; onClose
             </svg>
           </button>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[16px] font-bold text-white">{reviewingItem.user}</div>
-            <div className="truncate text-[11px]" style={{ color: 'rgba(255,255,255,.4)' }}>{reviewingItem.journey}</div>
+            <div className="truncate text-[16px] font-bold text-white">Anonymous Work</div>
+            <div className="truncate text-[11px]" style={{ color: 'rgba(255,255,255,.4)' }}>{reviewingItem.ai_label}</div>
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto no-scrollbar">
-          <div className="relative mx-4 mt-3 overflow-hidden rounded-3xl" style={{ height: 200, background: reviewingItem.gradient }}>
-            <div className="absolute inset-0" style={{ background: 'linear-gradient(to top,rgba(0,0,0,.55) 0%,transparent 60%)' }} />
-            <div className="absolute bottom-4 left-5 right-5">
-              <div className="text-[22px] font-extrabold tracking-tight text-white">{reviewingItem.journey}</div>
-              <div className="mt-1 text-[12px]" style={{ color: 'rgba(255,255,255,.55)' }}>{reviewingItem.time}</div>
+          <div className="mx-4 mt-3 overflow-hidden rounded-3xl p-5" style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)' }}>
+            <div className="mb-1 inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-[11px] font-bold"
+              style={{ background: 'rgba(255,200,50,.1)', color: 'rgba(255,200,50,.9)', border: '1px solid rgba(255,200,50,.2)' }}>
+              {reviewingItem.ai_label}
+            </div>
+            <div className="mt-3 text-[14px] leading-[1.65]" style={{ color: 'rgba(255,255,255,.7)' }}>
+              {reviewingItem.ai_description}
             </div>
           </div>
 
-          <div className="px-5 pt-5 pb-4">
-            <div className="mb-2 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgba(255,255,255,.3)' }}>Description</div>
-            <div className="text-[14px] leading-[1.65]" style={{ color: 'rgba(255,255,255,.7)' }}>{reviewingItem.desc}</div>
-          </div>
-
-          <div className="px-5 pb-5">
-            <div className="mb-2.5 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgba(255,255,255,.3)' }}>Proof</div>
-            <div className="flex gap-2.5">
-              {reviewingItem.photos.map((g, pi) => (
-                <div key={pi} className="relative flex-1 overflow-hidden rounded-2xl" style={{ height: 90, background: g }}>
-                  <div className="absolute inset-0 flex items-center justify-center" style={{ color: 'rgba(255,255,255,.35)' }}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" />
-                    </svg>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="px-5 pb-5">
-            <div className="mb-2.5 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgba(255,255,255,.3)' }}>Your review</div>
-            {done ? (
-              <div className="rounded-2xl p-4 text-[14px] font-medium" style={{ background: 'rgba(52,199,89,.08)', border: '1px solid rgba(52,199,89,.2)', color: 'rgba(52,199,89,.9)' }}>
-                ✓ Review submitted
+          {reviewingItem.file_count > 0 && (
+            <div className="px-5 pt-5 pb-3">
+              <div className="mb-2.5 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgba(255,255,255,.3)' }}>Proof</div>
+              <div className="flex gap-2.5">
+                {reviewingItem.files.slice(0, 3).map((fname, pi) => {
+                  const url = CENTRAL_ENDPOINTS.submissionFile(reviewingItem.id, fname)
+                  const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(fname)
+                  return (
+                    <div key={pi} className="relative flex-1 overflow-hidden rounded-2xl" style={{ height: 90, background: 'rgba(255,255,255,.05)' }}>
+                      {isImage ? (
+                        <img src={url} alt="" className="absolute inset-0 h-full w-full object-cover" />
+                      ) : (
+                        <a href={url} target="_blank" rel="noreferrer" className="absolute inset-0 flex items-center justify-center flex-col gap-1" style={{ color: 'rgba(255,255,255,.5)' }}>
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" />
+                          </svg>
+                          <span className="text-[9px]">{fname.split('.').pop()?.toUpperCase()}</span>
+                        </a>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
-            ) : (
-              <textarea
-                value={text}
-                onChange={(e) => setReviewTexts((t) => ({ ...t, [reviewingItem.id]: e.target.value }))}
-                placeholder="Share your thoughts on their progress, effort, and achievement…"
-                rows={4}
-                className="w-full resize-none rounded-2xl px-4 py-3.5 text-[14px] leading-[1.6] outline-none"
-                style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'rgba(255,255,255,.85)', caretColor: 'white' }}
-              />
-            )}
-          </div>
+            </div>
+          )}
 
           {!done && (
-            <div className="px-5 pb-7">
-              <div className="mb-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgba(255,255,255,.3)' }}>Rating</div>
+            <div className="px-5 pt-5 pb-7">
+              <div className="mb-3 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgba(255,255,255,.3)' }}>Rate authenticity</div>
               <div className="flex gap-3">
                 {[1, 2, 3, 4, 5].map((n) => (
                   <span key={n} onClick={() => setLocalStars(n)}
@@ -162,13 +171,22 @@ export default function ReviewsPanel({ open, onClose }: { open: boolean; onClose
                   </span>
                 ))}
               </div>
+              <div className="mt-2 text-[11px]" style={{ color: 'rgba(255,255,255,.3)' }}>
+                {localStars >= 4 ? '4–5 stars marks this work as authentic' : 'Below 4 stars — work will not be marked authentic'}
+              </div>
+            </div>
+          )}
+
+          {done && (
+            <div className="mx-5 mt-5 rounded-2xl p-4 text-[14px] font-medium" style={{ background: 'rgba(52,199,89,.08)', border: '1px solid rgba(52,199,89,.2)', color: 'rgba(52,199,89,.9)' }}>
+              ✓ Review submitted
             </div>
           )}
         </div>
 
         {!done && (
           <div className="flex-shrink-0 px-5 pt-3 pb-10" style={{ borderTop: '1px solid rgba(255,255,255,.07)' }}>
-            <button type="button" onClick={confirmReview}
+            <button type="button" onClick={() => void confirmReview()}
               className="w-full rounded-2xl py-[18px] text-[16px] font-bold tracking-tight transition-opacity active:opacity-80"
               style={{ background: '#fff', color: '#000', opacity: localStars > 0 ? 1 : 0.35 }}>
               Submit review →
@@ -193,7 +211,7 @@ export default function ReviewsPanel({ open, onClose }: { open: boolean; onClose
         <div className="text-center">
           <div className="text-[17px] font-bold tracking-tight text-white">Reviews</div>
           <div className="text-[11px]" style={{ color: 'rgba(255,255,255,.35)' }}>
-            {total === 0 ? 'No reviews' : `${idx + 1} of ${total}`}
+            {loading ? 'Loading…' : total === 0 ? 'No pending reviews' : `${idx + 1} of ${total}`}
           </div>
         </div>
         <div className="flex min-w-[52px] items-center justify-end gap-1.5">
@@ -204,45 +222,61 @@ export default function ReviewsPanel({ open, onClose }: { open: boolean; onClose
         </div>
       </div>
 
-      <div className="relative flex-1 overflow-hidden"
-        onTouchStart={(e) => { swipeStartX.current = e.touches[0].clientX }}
-        onTouchEnd={handleSwipe}>
-        {items.map((item, i) => (
-          <div key={item.id} className="absolute inset-0 flex flex-col px-4 pt-2 pb-6"
-            style={{ transform: `translateX(${(i - idx) * 100}%)`, transition: 'transform .32s cubic-bezier(.32,1,.54,1)' }}>
-            <div className="relative flex-shrink-0 overflow-hidden rounded-3xl" style={{ height: '52%', background: item.gradient }}>
-              <div className="absolute inset-0" style={{ background: 'linear-gradient(to top,rgba(0,0,0,.6) 0%,transparent 55%)' }} />
-              <div className="absolute bottom-5 left-5 right-5">
-                <div className="mb-2 inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-[11px] font-bold"
-                  style={{ background: 'rgba(255,200,50,.15)', color: 'rgba(255,200,50,.9)', border: '1px solid rgba(255,200,50,.25)' }}>
-                  Awaiting your review
-                </div>
-                <div className="text-[26px] font-extrabold leading-tight tracking-tight text-white">{item.journey}</div>
-              </div>
-            </div>
+      {loading && (
+        <div className="flex-1 flex items-center justify-center text-[14px]" style={{ color: 'rgba(255,255,255,.35)' }}>
+          Loading…
+        </div>
+      )}
 
-            <div className="flex items-center gap-3 pt-5 pb-3">
-              <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full text-[15px] font-bold text-white" style={{ background: item.avatarBg }}>
-                {item.user[0]}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-[16px] font-bold text-white">{item.user}</div>
-                <div className="text-[12px]" style={{ color: 'rgba(255,255,255,.4)' }}>{item.time}</div>
-              </div>
-            </div>
-
-            <div className="mb-auto text-[14px] leading-[1.6]"
-              style={{ color: 'rgba(255,255,255,.55)', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' as never, overflow: 'hidden' }}>
-              {item.desc}
-            </div>
-
-            <button type="button" onClick={() => startReview(item.id)}
-              className="mt-6 w-full rounded-2xl bg-white py-[18px] text-[16px] font-bold tracking-tight text-black active:opacity-85">
-              Review →
-            </button>
+      {!loading && total === 0 && (
+        <div className="flex-1 flex flex-col items-center justify-center px-8 text-center gap-3">
+          <div className="text-[40px]">✨</div>
+          <div className="text-[16px] font-bold text-white">All caught up</div>
+          <div className="text-[13px] leading-[1.6]" style={{ color: 'rgba(255,255,255,.4)' }}>
+            No work awaiting your review right now. Check back later.
           </div>
-        ))}
-      </div>
+        </div>
+      )}
+
+      {!loading && total > 0 && (
+        <div className="relative flex-1 overflow-hidden"
+          onTouchStart={(e) => { swipeStartX.current = e.touches[0].clientX }}
+          onTouchEnd={handleSwipe}>
+          {items.map((item, i) => (
+            <div key={item.id} className="absolute inset-0 flex flex-col px-4 pt-2 pb-6"
+              style={{ transform: `translateX(${(i - idx) * 100}%)`, transition: 'transform .32s cubic-bezier(.32,1,.54,1)' }}>
+              <div className="relative flex-shrink-0 overflow-hidden rounded-3xl flex flex-col justify-end px-5 pb-5"
+                style={{ height: '48%', background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)' }}>
+                <div className="mb-2 inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-[11px] font-bold self-start"
+                  style={{ background: 'rgba(255,200,50,.15)', color: 'rgba(255,200,50,.9)', border: '1px solid rgba(255,200,50,.25)' }}>
+                  {item.ai_label}
+                </div>
+                <div className="text-[13px] leading-[1.55]" style={{ color: 'rgba(255,255,255,.6)', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical' as never, overflow: 'hidden' }}>
+                  {item.ai_description}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-4 pb-3">
+                <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-[13px] font-bold text-white"
+                  style={{ background: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.1)' }}>
+                  ?
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[15px] font-bold text-white">Anonymous Work</div>
+                  <div className="text-[12px]" style={{ color: 'rgba(255,255,255,.4)' }}>
+                    {item.file_count > 0 ? `${item.file_count} attachment${item.file_count > 1 ? 's' : ''}` : 'No attachments'}
+                  </div>
+                </div>
+              </div>
+
+              <button type="button" onClick={() => startReview(item.id)}
+                className="mt-auto w-full rounded-2xl bg-white py-[18px] text-[16px] font-bold tracking-tight text-black active:opacity-85">
+                Review →
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
