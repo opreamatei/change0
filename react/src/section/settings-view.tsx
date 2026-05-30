@@ -1064,6 +1064,9 @@ export default function SettingsView() {
   const [fields, setFields] = useState<ProfileField[]>([])
   const [userName, setUserName] = useState('')
   const [userId, setUserId] = useState('')
+  const [avatarVersion, setAvatarVersion] = useState(0)
+  const [avatarFailed, setAvatarFailed] = useState(false)
+  const avatarInputRef = useRef<HTMLInputElement>(null)
   const [discoverable, setDiscoverable] = useState(false)
   const [description, setDescription] = useState('')
   const [loading, setLoading] = useState(true)
@@ -1099,6 +1102,29 @@ export default function SettingsView() {
   }, [])
 
   useEffect(() => { void refresh() }, [refresh])
+
+  const avatarUrl = `${SERVER_ENDPOINTS.profileAvatar}?id=${encodeURIComponent(userId)}&v=${avatarVersion}`
+
+  async function onPickAvatar(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) {
+      const rawExt = (file.type.split('/')[1] || file.name.split('.').pop() || '').toLowerCase()
+      const ext = rawExt === 'jpeg' ? 'jpg' : rawExt
+      try {
+        const buf = await file.arrayBuffer()
+        const res = await fetch(`${SERVER_ENDPOINTS.profileAvatar}?ext=${encodeURIComponent(ext)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': file.type || 'application/octet-stream' },
+          body: buf,
+        })
+        if (res.ok) {
+          setAvatarFailed(false)
+          setAvatarVersion((v) => v + 1)
+        }
+      } catch { /* ignore */ }
+    }
+    if (avatarInputRef.current) avatarInputRef.current.value = ''
+  }
 
   useEffect(() => {
     const subIds = Object.values(submittedGoals)
@@ -1154,11 +1180,32 @@ export default function SettingsView() {
     <div className="overflow-hidden flex flex-col h-full anim-pg-in">
       <div className="px-6 pt-[52px] pb-6 flex items-center gap-4 flex-shrink-0">
         <div
-          className="w-[52px] h-[52px] rounded-full flex items-center justify-center text-xl font-bold flex-shrink-0"
+          onClick={() => avatarInputRef.current?.click()}
+          className="group relative w-[52px] h-[52px] rounded-full flex items-center justify-center text-xl font-bold flex-shrink-0 overflow-hidden cursor-pointer"
           style={{ background: 'var(--surface2)', border: '2px solid var(--border-light)' }}
+          title="Change profile picture"
         >
-          {initial}
+          {!avatarFailed ? (
+            <img
+              src={avatarUrl}
+              onError={() => setAvatarFailed(true)}
+              className="w-full h-full object-cover"
+              alt=""
+            />
+          ) : (
+            <span>{initial}</span>
+          )}
+          <div className="absolute inset-0 flex items-center justify-center bg-black/45 text-[9px] font-semibold uppercase tracking-wide opacity-0 group-hover:opacity-100 transition-opacity">
+            Edit
+          </div>
         </div>
+        <input
+          ref={avatarInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          onChange={onPickAvatar}
+          className="hidden"
+        />
         <div>
           <div className="text-[22px] font-bold tracking-tight">{userName || 'You'}</div>
         </div>

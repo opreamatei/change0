@@ -610,14 +610,9 @@ function AssistantBubble({
 }
 
 function ActionBubble({ entry }: { entry: ChatEntry }) {
-  const loading = isLoadingAction(entry.eventType)
   return (
-    <div className="flex justify-start">
-      <div className="flex items-center gap-1.5 rounded-full border border-[#2a2a2a] bg-[#111] px-3 py-1 text-xs text-white/55">
-        {loading && <span className="size-1.5 animate-pulse rounded-full bg-neutral-400" />}
-        {!loading && <span className="size-1.5 rounded-full bg-neutral-300" />}
-        <span>{actionSummary(entry)}</span>
-      </div>
+    <div className="flex justify-start max-w-[72%]">
+      <PanelActionCard entry={entry} />
     </div>
   )
 }
@@ -820,6 +815,152 @@ function ThinkingBubble() {
   )
 }
 
+function PanelActionCard({ entry }: { entry: ChatEntry }) {
+  const { eventType, content } = entry
+
+  if (eventType === 'goal_created') {
+    let title = ''
+    try { title = (JSON.parse(content) as GoalCreatedData).title } catch {}
+    return (
+      <div className="px-3 py-2.5" style={{ background: 'rgba(22,163,74,.1)', border: '1px solid rgba(22,163,74,.26)', borderRadius: '16px 16px 16px 4px' }}>
+        <div className="flex items-center gap-1.5 mb-1">
+          <div className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(22,163,74,.22)' }}>
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#4ade80" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="1.5 5 4 7.5 8.5 2" />
+            </svg>
+          </div>
+          <span className="text-[10px] font-semibold uppercase tracking-[1.4px]" style={{ color: '#4ade80' }}>Goal created</span>
+        </div>
+        {title && <div className="text-[13px] font-medium text-white/85 ml-[22px]">{title}</div>}
+      </div>
+    )
+  }
+
+  if (eventType === 'goal_create_started') {
+    return (
+      <div className="px-3 py-2.5 flex items-center gap-2" style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '16px 16px 16px 4px' }}>
+        {[0, 1, 2].map((i) => (
+          <span key={i} className="size-1.5 rounded-full bg-neutral-400 animate-bounce" style={{ animationDelay: `${i * 140}ms` }} />
+        ))}
+        <span className="text-[13px] text-white/50">Creating goal…</span>
+      </div>
+    )
+  }
+
+  if (eventType === 'profile_updated') {
+    return (
+      <div className="px-3 py-2.5" style={{ background: 'rgba(14,165,233,.1)', border: '1px solid rgba(14,165,233,.26)', borderRadius: '16px 16px 16px 4px' }}>
+        <div className="flex items-center gap-1.5 mb-1">
+          <div className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(14,165,233,.2)' }}>
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#38bdf8" strokeWidth="1.7" strokeLinecap="round">
+              <circle cx="5" cy="3.5" r="1.8" />
+              <path d="M1 9.5c0-1.9 1.8-3.5 4-3.5s4 1.6 4 3.5" />
+            </svg>
+          </div>
+          <span className="text-[10px] font-semibold uppercase tracking-[1.4px]" style={{ color: '#38bdf8' }}>Profile updated</span>
+        </div>
+        {content && <div className="text-[12px] text-white/60 ml-[22px] font-mono">{content}</div>}
+      </div>
+    )
+  }
+
+  if (eventType === 'goal_delayed') {
+    let title = '', suffix = ''
+    try {
+      const data = JSON.parse(content) as { title: string; added_seconds: number }
+      title = data.title
+      const days = Math.round(data.added_seconds / 86400)
+      suffix = days >= 1 ? `+${days}d` : `+${data.added_seconds}s`
+    } catch {}
+    return (
+      <div className="px-3 py-2.5" style={{ background: 'rgba(234,88,12,.1)', border: '1px solid rgba(234,88,12,.26)', borderRadius: '16px 16px 16px 4px' }}>
+        <div className="flex items-center gap-1.5">
+          <div className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(234,88,12,.2)' }}>
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#fb923c" strokeWidth="1.7" strokeLinecap="round">
+              <circle cx="5" cy="5" r="4" />
+              <path d="M5 3v2.2l1.4 1.4" />
+            </svg>
+          </div>
+          <span className="text-[10px] font-semibold uppercase tracking-[1.4px]" style={{ color: '#fb923c' }}>Goal delayed</span>
+          {suffix && (
+            <span className="ml-auto text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(234,88,12,.18)', color: '#fb923c' }}>
+              {suffix}
+            </span>
+          )}
+        </div>
+        {title && <div className="text-[13px] font-medium text-white/80 mt-1 ml-[22px]">{title}</div>}
+      </div>
+    )
+  }
+
+  if (eventType === 'goal_priority_changed') {
+    return (
+      <div className="px-3 py-2 flex items-center gap-2" style={{ background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.22)', borderRadius: '16px 16px 16px 4px' }}>
+        <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="5" y1="9" x2="5" y2="1" />
+          <polyline points="1 5 5 1 9 5" />
+        </svg>
+        <span className="text-[12px] text-white/65">Priority updated</span>
+        {content && !content.startsWith('{') && <span className="text-[12px] font-mono text-white/40">{content}</span>}
+      </div>
+    )
+  }
+
+  if (eventType === 'deep_search_started') {
+    return (
+      <div className="px-3 py-2.5" style={{ background: 'rgba(124,58,237,.1)', border: '1px solid rgba(124,58,237,.26)', borderRadius: '16px 16px 16px 4px' }}>
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(124,58,237,.22)' }}>
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#a78bfa" strokeWidth="1.7" strokeLinecap="round">
+              <circle cx="4.5" cy="4.5" r="3" />
+              <line x1="7" y1="7" x2="9.5" y2="9.5" />
+            </svg>
+          </div>
+          <span className="text-[13px]" style={{ color: 'rgba(167,139,250,.85)' }}>Searching…</span>
+          <div className="ml-auto flex items-end gap-0.5">
+            {[3, 5, 7, 5, 3].map((h, i) => (
+              <span key={i} className="w-[3px] rounded-sm animate-pulse" style={{ height: h, background: '#a78bfa', opacity: 0.55, animationDelay: `${i * 110}ms` }} />
+            ))}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (eventType === 'deep_search_done') {
+    return (
+      <div className="px-3 py-2 flex items-center gap-1.5" style={{ background: 'rgba(124,58,237,.07)', border: '1px solid rgba(124,58,237,.18)', borderRadius: '16px 16px 16px 4px' }}>
+        <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="1.5 5 4 7.5 8.5 2" />
+        </svg>
+        <span className="text-[12px]" style={{ color: 'rgba(167,139,250,.7)' }}>Search complete</span>
+      </div>
+    )
+  }
+
+  if (eventType === 'middleware_retry') {
+    return (
+      <div className="px-3 py-2 flex items-center gap-1.5" style={{ background: 'rgba(245,158,11,.07)', border: '1px solid rgba(245,158,11,.18)', borderRadius: '16px 16px 16px 4px' }}>
+        <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="#fbbf24" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M8.5 5A3.5 3.5 0 0 1 2 5a3.5 3.5 0 0 1 3.5-3.5 3.47 3.47 0 0 1 2.47 1.03L9.5 4" />
+          <polyline points="9.5 1.5 9.5 4 7 4" />
+        </svg>
+        <span className="text-[12px] text-white/50">Retrying…</span>
+      </div>
+    )
+  }
+
+  const loading = isLoadingAction(eventType)
+  return (
+    <div className="px-3 py-2 flex items-center gap-2" style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '16px 16px 16px 4px' }}>
+      {loading
+        ? [0, 1, 2].map((i) => <span key={i} className="size-1.5 rounded-full bg-neutral-400 animate-bounce" style={{ animationDelay: `${i * 140}ms` }} />)
+        : <span className="size-1.5 rounded-full bg-neutral-400/60" />}
+      <span className="text-[12px] text-white/50">{actionSummary(entry)}</span>
+    </div>
+  )
+}
+
 const HIDDEN_EVENT_TYPES = new Set(['sse_connected', 'permission_resolved', 'suggested_replies', 'graph_updated'])
 
 function formatChatTime(timestamp: number) {
@@ -977,42 +1118,17 @@ function PanelAssistantContent({
     )
   }
 
-  const loading = isLoadingAction(entry.eventType)
   return (
     <>
       <div className="text-[10px] font-semibold mb-0.5 px-1" style={{ color: 'var(--white-dim)' }}>System</div>
-      <div
-        className="px-3 py-2 text-[13px] leading-snug"
-        style={{
-          background: 'var(--surface2)',
-          color: '#fff',
-          border: '1px solid var(--border)',
-          borderRadius: '16px 16px 16px 4px',
-        }}
-      >
-        <span className="inline-flex items-center gap-2">
-          {loading && (
-            <span className="inline-flex items-center gap-1">
-              {[0, 1, 2].map((dot) => (
-                <span
-                  key={dot}
-                  className="size-1.5 rounded-full bg-neutral-400 animate-bounce"
-                  style={{ animationDelay: `${dot * 140}ms` }}
-                />
-              ))}
-            </span>
-          )}
-          <span>{actionSummary(entry)}</span>
-        </span>
-      </div>
+      <PanelActionCard entry={entry} />
       <div className="text-[10px] mt-0.5 px-1" style={{ color: 'var(--white-dim)' }}>{formatChatTime(entry.timestamp)}</div>
     </>
   )
 }
 
-export default function ChatView({ mode = 'page' }: { mode?: 'page' | 'panel' }) {
+export default function ChatView({ mode = 'page', sessionId }: { mode?: 'page' | 'panel'; sessionId: string }) {
   const panelMode = mode === 'panel'
-  const [sessionId, setSessionId] = useState(panelMode ? 'personal' : 'default')
   const [entries, setEntries] = useState<ChatEntry[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -1217,38 +1333,8 @@ export default function ChatView({ mode = 'page' }: { mode?: 'page' | 'panel' })
   return (
     <section className={`mx-auto flex w-full flex-col ${panelMode ? 'max-w-none h-full' : 'max-w-3xl'}`} style={panelMode ? undefined : { height: 'calc(100vh - 9rem)' }}>
       {!panelMode && (
-        <header className="mb-4 flex items-center justify-between">
+        <header className="mb-4">
           <h1 className="text-2xl font-bold text-white">Chat</h1>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-white/40">session</span>
-            <input
-              type="text"
-              className="w-32 rounded border border-[#333] px-2 py-1 text-xs text-white/70 focus:border-white/50 focus:outline-none"
-              value={sessionId}
-              onChange={(e) => setSessionId(e.target.value)}
-              onBlur={(e) => { if (!e.target.value.trim()) setSessionId('default') }}
-            />
-            <button
-              type="button"
-              className="rounded border border-[#333] px-3 py-1 text-xs font-medium text-white/70 hover:border-white/50 hover:bg-[#1a1a1a] disabled:cursor-not-allowed disabled:border-[#2a2a2a] disabled:text-white/30"
-              onClick={() => void loadSession(sessionId)}
-              disabled={reloading}
-            >
-              {reloading ? (
-                <span className="inline-flex items-center gap-1">
-                  {[0, 1, 2].map((dot) => (
-                    <span
-                      key={dot}
-                      className="size-1.5 rounded-full bg-neutral-500 animate-bounce"
-                      style={{ animationDelay: `${dot * 140}ms` }}
-                    />
-                  ))}
-                </span>
-              ) : (
-                'Reload'
-              )}
-            </button>
-          </div>
         </header>
       )}
 

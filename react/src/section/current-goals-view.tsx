@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   findGoalByGlobalIndex,
+  getRootGoalProgressPct,
   getRootGoals,
   Goal,
   inferGoalState,
@@ -52,6 +53,7 @@ interface JourneyData {
   doneCount: number
   knownCount: number
   mysteryCount: number
+  progressPct: number
 }
 
 // Build the path nodes for a single journey (one root goal's subtree).
@@ -103,7 +105,7 @@ function buildJourneyData(root: Goal, goals: Goal[]): JourneyData {
   const doneCount = pathNodes.filter((nd) => nd.nodeState === 'done').length
   const knownCount = pathNodes.filter((nd) => !nd.isMystery).length
 
-  return { root, pathNodes, focusIdx, doneCount, knownCount, mysteryCount }
+  return { root, pathNodes, focusIdx, doneCount, knownCount, mysteryCount, progressPct: getRootGoalProgressPct(goals, root) }
 }
 
 export default function CurrentGoalsView({
@@ -189,6 +191,17 @@ export default function CurrentGoalsView({
         style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0) 100%)' }}>
         <div className="min-w-0">
           <h1 className="text-2xl font-bold leading-tight tracking-tight text-white line-clamp-2 break-words">{activeJourney.root.title}</h1>
+          <div className="mt-2 flex items-center gap-2.5">
+            <div className="h-[3px] w-36 overflow-hidden rounded-full" style={{ background: 'rgba(255,255,255,.15)' }}>
+              <div
+                className="h-full rounded-full transition-all"
+                style={{ width: `${activeJourney.progressPct}%`, background: 'rgba(255,255,255,.55)' }}
+              />
+            </div>
+            <span className="text-[11px] tabular-nums" style={{ color: 'rgba(255,255,255,.4)' }}>
+              {activeJourney.progressPct}%
+            </span>
+          </div>
         </div>
         {journeys.length > 1 && (
           <div className="pointer-events-auto flex shrink-0 items-center gap-[5px] pb-1.5">

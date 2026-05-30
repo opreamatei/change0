@@ -9,7 +9,6 @@
 #define MAX_USERS 8
 #define USER_ID_SIZE 32
 #define USER_MAX_JOURNEYS 5
-#define DEFAULT_USER_NAME "andrei"
 
 typedef char user_id_like[USER_ID_SIZE];
 
@@ -50,7 +49,7 @@ User* FindUserByName(const char *name);
 User* NewUser(const String *name);
 void FreeUser(User *user);
 
-/* On startup, scan user-data/ and rebuild the in-memory table. */
+/* On startup, scan data/users/ and rebuild the in-memory table. */
 void InitUserSystem(void);
 void FreeUserSystem(void);
 
@@ -62,6 +61,16 @@ void GetUserGraphExportPath(const User *u, char *path);
 void GetUserJourneyPath(const User *u, const char *journey_id, char *out);
 void GetUserProfileExportPath(const User *u, char *path);
 void GetUserMetaPath(const User *u, char *path);
+
+/*
+ * Profile avatar, stored raw under the user's data dir (data/users/<id>/avatar)
+ * plus a sibling "avatar.ext" holding the image extension. Keyed by user id so
+ * both the client server (own avatar) and the central server (other users'
+ * avatars, for collab) can save/serve from the shared disk layout.
+ * Return 0 on success, non-zero on failure. ReadUserAvatar mallocs *out.
+ */
+int SaveUserAvatar(const char *user_id, const char *ext, const void *data, size_t len);
+int ReadUserAvatar(const char *user_id, void **out, size_t *out_len, char *ext_out, size_t ext_cap);
 
 void AddToJourney(User *u, const Journey *j);
 

@@ -32,9 +32,10 @@
 
 /* Don't change unless you know what you are doing */
 ///////////////////////////////////////////////////////////
-#define USER_DATA_DIRECTORY PROJECT_ROOT "user-data/"
-#define DEFAULT_MOCK_DIRECTORY PROJECT_ROOT "mocks/"
-#define DEFAULT_DUMP_DIRECTORY PROJECT_ROOT "dumps/"
+#define DATA_ROOT_DIRECTORY    PROJECT_ROOT "data/"
+#define USER_DATA_DIRECTORY    PROJECT_ROOT "data/users/"
+#define DEFAULT_MOCK_DIRECTORY PROJECT_ROOT "data/mocks/"
+#define DEFAULT_DUMP_DIRECTORY PROJECT_ROOT "data/dumps/"
 
 /* Per-user file names. Combined with USER_DATA_DIRECTORY <id>/ at runtime. */
 #define USER_GRAPH_EXPORT_FILENAME "graph-copy.json"
@@ -118,11 +119,11 @@
 "- what is emotionally salient" \
 "- what currently dominates their cognition" \
 "The graph contains five psychological contexts:" \
-"- profesie" \
-"- emotie" \
-"- pasiuni" \
-"- generalitati" \
-"- subiectiv" \
+"- profession" \
+"- emotion" \
+"- passions" \
+"- generalities" \
+"- subjective" \
 "Important:" \
 "The same node label may appear in multiple contexts." \
 "Each occurrence is a separate local entity." \
@@ -223,11 +224,11 @@
 "  - weight" \
 "- context:" \
 "  must be exactly one of:" \
-"  - profesie" \
-"  - emotie" \
-"  - pasiuni" \
-"  - generalitati" \
-"  - subiectiv" \
+"  - profession" \
+"  - emotion" \
+"  - passions" \
+"  - generalities" \
+"  - subjective" \
 "- intent:" \
 "  short operational explanation" \
 "Interpretation:" \
@@ -244,11 +245,11 @@
 "  exact starting node label" \
 "- context:" \
 "  must be exactly one of:" \
-"  - profesie" \
-"  - emotie" \
-"  - pasiuni" \
-"  - generalitati" \
-"  - subiectiv" \
+"  - profession" \
+"  - emotion" \
+"  - passions" \
+"  - generalities" \
+"  - subjective" \
 "- percA:" \
 "  integer from 0 to 100" \
 "  lower values = stronger activation filtering" \
@@ -486,7 +487,7 @@
 "this graph will later be traversed by an ai investigation engine." \
 "return exactly one valid json object and nothing else." \
 "do not output markdown. do not output explanations. do not output commentary." \
-"the root json object must contain exactly these five top-level keys and no others: profesie, emotie, pasiuni, generalitati, subiectiv." \
+"the root json object must contain exactly these five top-level keys and no others: profession, emotion, passions, generalities, subjective." \
 "each of these five keys must map to an object containing exactly these keys: nodes, connections." \
 "for each context object:" \
 "nodes must be an array of semantic concepts relevant only to that context." \
@@ -651,7 +652,26 @@
  *
  * - you may alter just as much as you like.
  * */
+
+/*
+ * Shared preamble for every goal agent. It teaches each AI how the goal system
+ * works at a high level so the agent stays inside its own lane. It contains no
+ * printf placeholders, so it is safe to prepend to any agent prompt (including
+ * the ones built with sprintf + sizeof). Each agent then states its own
+ * responsibility and boundaries after this block.
+ */
+#define GOAL_AGENT_SYSTEM_CONTEXT \
+"SYSTEM CONTEXT (read first). You are one specialized agent inside CHANGE, a personal goal system. " \
+"A user's work lives in a journey: a single root goal that is recursively decomposed into an ordered tree of child goals, down to small concrete leaf actions (roughly 15 to 30 minutes each). " \
+"Every goal carries required_time: realistic elapsed seconds to complete it, including natural friction, not pure focus time. A parent's time is the sum of its children. " \
+"The root's total estimate drives how deep the tree grows (it is split until leaves are small), so that estimate must be realistic for THIS user and THIS goal from the start. " \
+"Two guardrails keep the tree honest: a root realism judge anchors the starting estimate when the goal is created, and a growth judge checks at each decomposition that a split does not inflate time beyond a size-based tolerance. " \
+"Goals must be concrete real actions the user actually performs (agency), never meta-process, notes, handoffs, audits, or busywork. Step granularity must scale with the goal's real stakes: a small or beginner goal gets a few simple steps, not a professional pipeline. " \
+"Stay strictly within the responsibility and boundaries stated below for your role. Do not take over another agent's job or change parts outside your scope. "
+
 #define GOAL_ADAPTATION_PROMPT \
+GOAL_AGENT_SYSTEM_CONTEXT \
+"YOUR RESPONSIBILITY: investigate the user and adapt the proposed goal into a single concrete root goal with a realistic total time. YOUR BOUNDARIES: do not pre-build the step breakdown — decomposition is a later agent's job. " \
 "This goal is being created within the journey titled [%s], described as: [%s]. " \
 "A journey is a thematic collection of goals. " \
 "If this is the default journey, it represents the user's general ambitions and broad life directions rather than a specific project. " \
@@ -735,6 +755,8 @@
  * that fits both participants without forcing it.
  */
 #define SHARED_GOAL_ADAPTATION_PROMPT \
+GOAL_AGENT_SYSTEM_CONTEXT \
+"YOUR RESPONSIBILITY: adapt the proposed goal into one concrete shared root goal with a realistic total time across all participants. YOUR BOUNDARIES: do not pre-build the step breakdown or assign work to participants — decomposition and assignment are later agents' jobs. " \
 "This goal is being created within the SHARED journey titled [%s], described as: [%s]. " \
 "A shared journey is a thematic collection of goals worked on jointly by two or more participants. " \
 "Adapt the proposed goal [%s], with extrainfo [%s], so it fits ALL listed participants. " \
@@ -777,6 +799,8 @@
  * with two long personalization reports.
  */
 #define SHARED_DECOMPOSE_GOAL_AI_PROMPT \
+GOAL_AGENT_SYSTEM_CONTEXT \
+"YOUR RESPONSIBILITY: split ONE shared goal into the next ordered layer of concrete child goals whose total time stays close to the parent's estimate. YOUR BOUNDARIES: only this one level; do not recurse, do not re-estimate the parent, do not touch sibling or uncle branches. " \
 "You are a SHARED-journey goal-decomposition agent. Your job is to split one existing shared goal into a clear ordered sequence of child goals worked on jointly by the listed participants. " \
 "The goal to decompose is titled [%s], with extrainfo [%s]. " \
 "The goal estimated time is [%zu] seconds. Treat this as an approximate scale signal, not an exact budget. " \
@@ -805,11 +829,14 @@
 "All child goals together must fully cover the parent goal intent without introducing unrelated work. " \
 "Each title must be concise and action-oriented. " \
 "Each extrainfo must include: scope, success condition, boundary relative to siblings, and handoff to next child. " \
+"Each child must also include a short 'tips' string: a one or two sentence, coaching-toned UI summary of what to actually do and what 'done' looks like — pragmatic, direct, and encouraging, like a coach in your corner. A friendlier, much shorter distillation of extrainfo, not a copy. " \
 "Return JSON only with exactly this structure and no extra text: " \
-"{\"subgoals\":[{\"title\":\"string\",\"extrainfo\":\"string\",\"estimated_time\":1,\"min_pause_to_next\":0,\"pause_to_next\":0,\"assigned_to\":255}]}"
+"{\"subgoals\":[{\"title\":\"string\",\"extrainfo\":\"string\",\"tips\":\"string\",\"estimated_time\":1,\"min_pause_to_next\":0,\"pause_to_next\":0,\"assigned_to\":255}]}"
 
 // This model is responsible for extracting what the above model produces, I don't think it need to be modified.
 #define GOAL_JSON_EXTRACT_PROMPT \
+GOAL_AGENT_SYSTEM_CONTEXT \
+"YOUR RESPONSIBILITY: extract the final goal as strict JSON (title, extrainfo, estimated_time, priority). YOUR BOUNDARIES: do not invent steps or decompose; estimated_time is the realistic total elapsed time for the whole goal. " \
 "You are a strict extraction agent."\
 "Extract exactly one valid RFC8259 JSON object from the provided message."\
 "Return no explanations, markdown, comments, or additional text."\
@@ -898,6 +925,8 @@
  * The main prompt for decomposing a goal
  */
 #define DECOMPOSE_GOAL_AI_PROMPT \
+GOAL_AGENT_SYSTEM_CONTEXT \
+"YOUR RESPONSIBILITY: split ONE goal into the next ordered layer of concrete child goals whose total time stays close to the parent's estimate. YOUR BOUNDARIES: only this one level; do not recurse into grandchildren, do not re-estimate the parent, do not touch sibling or uncle branches. " \
 "You are a personalized goal-decomposition agent. Your job is to split one existing goal into a clear ordered sequence of child goals. "\
 "The goal to decompose is titled [%s], with extrainfo [%s]. "\
 "The goal estimated time is [%zu] seconds. Treat this as an approximate scale signal, not an exact budget. "\
@@ -911,7 +940,9 @@
 "Dependencies are strictly sequential: child 2 depends on child 1, child 3 depends on child 2, and so on. "\
 "The array order defines execution order and must not be changed. "\
 "Do NOT create branching, parallel, optional, conditional, or circular dependencies. "\
-"Each child goal must reduce scope compared to the parent goal while remaining meaningful (avoid overly trivial tasks). "\
+"Each child goal must be a concrete real-world action the user actually performs. For example, for a beginner Instagram reel: 'Pick 3-5 stock clips that match your idea', 'Add a music track and trim it to the reel length', 'Drop 2-3 sound effects on the main cuts', 'Export and watch it back once and fix the most obvious thing'. "\
+"Do NOT emit meta-process steps whose only output is notes, handoffs, prioritization, or coverage audits. For example, avoid 'Prepare the raw timing handoff for prioritization', 'Group timing notes by section and problem type', or 'Validate the final timing note handoff'. The goal is user agency and real progress, not busywork. "\
+"Match step granularity and process rigor to the real stakes of the goal: a low-stakes personal or beginner goal should become a short, flat list of simple concrete actions, while professional-grade pipelines and review scaffolding are reserved for high-stakes goals. Each child goal must reduce scope compared to the parent while staying a meaningful real action. "\
 "Use this priority order for decisions: (1) parent goal chain, (2) current goal intent, (3) user personalization context. "\
 "If personalization conflicts with goal hierarchy or sibling/uncle constraints, ignore personalization for that case. "\
 "Estimated_time values are required, must be positive integers, and represent approximate real-world elapsed seconds needed to complete that child goal itself. "\
@@ -943,14 +974,15 @@
 "Each child goal must have a unique responsibility and a clear transition to the next child goal when applicable. "\
 "Do NOT use vague titles such as 'work on it', 'continue', 'improve', or 'finish'. "\
 "Prefer between 3 and 7 child goals depending on complexity; do not force a fixed number. "\
-"If you cannot produce realistic pauses without creating overlarge child goals, that is a sign the decomposition is too coarse; split the work further. "\
+"Only split a step further when it genuinely cannot fit in one sitting AND splitting produces distinct real actions — never split merely to manufacture process steps or to fill time. If splitting would only add meta-process or filler, keep the step whole. "\
 "The first child goal should handle clarification, setup, or preparation if needed. "\
 "Middle child goals should perform the main transformation or work steps in order. "\
 "The final child goal should handle validation, integration, review, or usability preparation. "\
 "Each title must be concise and action-oriented. "\
 "Each extrainfo must include: scope of the child goal, success condition, boundary relative to sibling/uncle goals, and handoff to next child goal if applicable. "\
+"Each child must also include a short 'tips' string: a one or two sentence, coaching-toned UI summary that tells the user, plainly and warmly, what to actually do in this step and what 'done' looks like. Keep it pragmatic, direct, and encouraging — like a good coach in your corner, not a manual. It is a friendlier, much shorter distillation of extrainfo, never a copy of it. No jargon, no meta-process. "\
 "Return JSON only with exactly this structure and no extra text: "\
-"{\"subgoals\":[{\"title\":\"string\",\"extrainfo\":\"string\",\"estimated_time\":1,\"min_pause_to_next\":0,\"pause_to_next\":0}]}"\
+"{\"subgoals\":[{\"title\":\"string\",\"extrainfo\":\"string\",\"tips\":\"string\",\"estimated_time\":1,\"min_pause_to_next\":0,\"pause_to_next\":0}]}"\
 
 /*
  *
@@ -968,9 +1000,49 @@
  * %s  (8) : current_layer_goal_chain_with_extrainfo
  */
 
+/*
+ * Root realism judge prompt.
+ * Placeholders: %s goal_title, %s goal_extrainfo, %lld proposed_estimate_seconds, %s profile_signals.
+ */
+#define GOAL_ROOT_REALISM_JUDGE_PROMPT \
+GOAL_AGENT_SYSTEM_CONTEXT \
+"YOUR RESPONSIBILITY: judge ONLY whether the proposed TOTAL time estimate for this brand-new root goal is realistic for this user and goal, and propose a corrected total if not. The goal has not been decomposed yet. "\
+"YOUR BOUNDARIES: do not invent or list steps, do not decompose, do not rewrite the goal — calibrate only the single total number. "\
+"You are a realism judge for a goal's total time estimate. Return JSON only. "\
+"Goal title: [%s]. Goal details (scope, the user's starting skill level, prior experience, materials they already have): [%s]. "\
+"Proposed total estimate: [%lld] seconds of real elapsed effort across all sessions. "\
+"User profile signals (may be empty): [%s]. Use daily available hours, stated constraints, and skill level to calibrate. "\
+"Judge whether the proposed estimate is realistic for THIS user and THIS goal — neither inflated nor unrealistically short. "\
+"A beginner, low-stakes, or hobby goal (for example a first Instagram reel from stock footage) should usually land in single-digit hours over a day or two, not tens of hours. A serious multi-week or multi-month project may legitimately be large. "\
+"Pass when the estimate is within a sensible band for the goal's real stakes and the user's context. "\
+"Fail when it is clearly inflated (professional-scale time for a casual goal) or clearly too short to be achievable. "\
+"When you fail, set suggested_estimated_time to a realistic positive number of seconds; when you pass, set suggested_estimated_time to the same proposed value. "\
+"Feedback must be one concise sentence under 30 words explaining the calibration, or an empty string when passing. "\
+"Return JSON only: {\"pass\":true,\"suggested_estimated_time\":1,\"feedback\":\"string\"}"
+
+/*
+ * Decompose growth judge prompt.
+ * Placeholders: %s parent_title, %s parent_extrainfo, %lld old_estimate, %lld new_total, %s children_serialized, %s profile_signals.
+ */
+#define GOAL_DECOMPOSE_GROWTH_JUDGE_PROMPT \
+GOAL_AGENT_SYSTEM_CONTEXT \
+"YOUR RESPONSIBILITY: this single decomposition expanded the total time above the parent's prior estimate. Judge ONLY whether that expansion is acceptable for a goal of this size and stakes, or excessive. You MAY permit the expansion. "\
+"YOUR BOUNDARIES: you do NOT have the surrounding tree context, and it is NOT your job to judge whether the children are correct, well-ordered, well-named, complete, or consistent with the rest of the goal structure. The children's titles and details are given ONLY as extra signal to gauge whether the extra time is plausible. Never ask for structural or content changes — only for leaner time. "\
+"Return JSON only. "\
+"Parent goal title: [%s]. Parent details: [%s]. "\
+"Parent's prior total estimate: [%lld] seconds. New total after this decomposition (sum of the children): [%lld] seconds. "\
+"Children, as signal only (title, estimate, scope): [%s]. "\
+"User profile signals (may be empty): [%s]. "\
+"Pass when the extra time plausibly reflects real necessary work for a goal of this size, or when the growth is modest. "\
+"Fail only when the total balloons well beyond what this goal should take — typically padded or over-estimated children — especially for low-stakes or beginner goals. "\
+"When failing, feedback must be one concise correction under 40 words telling the decomposer to produce leaner children with smaller, realistic time estimates that fit the parent budget. When passing, feedback must be an empty string. "\
+"Return JSON only: {\"pass\":true,\"feedback\":\"string\"}"
+
 #include <stdint.h>
 #include <inttypes.h>
 #define SHORTEN_GOAL_AI_PROMPT \
+GOAL_AGENT_SYSTEM_CONTEXT \
+"YOUR RESPONSIBILITY: rewrite ONE active goal to a smaller, more achievable scope while keeping its direction and place in the tree. YOUR BOUNDARIES: do not change its hierarchy role or time context, and do not decompose it. " \
 "You are a goal scope-calibration agent. Your job is to rewrite one active goal so it becomes more achievable in terms of workload and complexity without changing its direction, hierarchy role, or time context. " \
 "The user is currently attempting this goal: title [%s], extrainfo [%s]. " \
 "This rewrite was triggered because the current goal appears too ambitious, inefficient, overdue, or unrealistic for the available time. " \
@@ -992,6 +1064,26 @@
 "The estimated_time field is required for schema compatibility. It may be 0 on this shorten flow if no meaningful positive remaining time exists. If remaining time is positive, use it; otherwise use 0. " \
 "When estimated_time is positive on this shorten flow, it still means realistic elapsed duration for completing the shortened goal, not pure work time. " \
 "The priority field is required for schema compatibility. Use 0 because shortening a non-root or already-positioned goal must not change root priority. " \
+"Return JSON only, with this exact structure and no extra text: " \
+"{\"title\":\"string\",\"extrainfo\":\"string\",\"estimated_time\":0,\"priority\":0}"\
+
+/*
+ * Reshape (recontextualize) a single leaf goal the user is stuck on, WITHOUT
+ * losing coherence with the rest of the tree. Placeholders: %s leaf_title,
+ * %s leaf_extrainfo, %lld current_required_time_seconds, %s parent_chain,
+ * %s sibling_goals, %s uncle_goals.
+ */
+#define RESHAPE_GOAL_LEAF_PROMPT \
+GOAL_AGENT_SYSTEM_CONTEXT \
+"YOUR RESPONSIBILITY: the user is stuck on this one leaf task and asked to reshape it. Recontextualize it — rewrite its title and extrainfo so it becomes a concrete, doable action that still moves the same work forward — as a compromise that fits its exact position in the tree. YOUR BOUNDARIES: do not decompose it, do not touch sibling/parent/uncle goals, do not change its role in the sequence; only rewrite THIS leaf. " \
+"The leaf to reshape: title [%s], extrainfo [%s]. Current estimated time: [%lld] seconds. " \
+"Parent goal chain (the objective this leaf serves): [%s]. " \
+"Sibling goals at the same level (what comes before/after — do not overlap or duplicate them): [%s]. " \
+"Uncle goals (adjacent branches — stay out of their scope): [%s]. " \
+"Keep strict coherence: the reshaped leaf must still hand off cleanly to its siblings and serve the same parent objective. It must remain a single concrete real action the user performs, not meta-process or filler. " \
+"You may make it simpler, more concrete, or approached from a different angle if the user is stuck — but it must still produce the real progress its position requires. " \
+"estimated_time: keep the current value unless the reshaped scope clearly needs a different realistic elapsed estimate; only then adjust it. priority: always 0. " \
+"The title must be concise and action-oriented. The extrainfo must state the concrete scope, the success condition, and how it hands off to the next sibling. " \
 "Return JSON only, with this exact structure and no extra text: " \
 "{\"title\":\"string\",\"extrainfo\":\"string\",\"estimated_time\":0,\"priority\":0}"\
 
@@ -1120,8 +1212,8 @@
 /* ── Review / Goal Authenticity System ── */
 
 #define MAX_DAILY_REVIEWS     3
-#define SUBMISSIONS_DIR       PROJECT_ROOT "submissions/"
-#define SUBMISSIONS_DAILY_DIR PROJECT_ROOT "submissions/.daily/"
+#define SUBMISSIONS_DIR       PROJECT_ROOT "data/submissions/"
+#define SUBMISSIONS_DAILY_DIR PROJECT_ROOT "data/submissions/.daily/"
 
 /*
  * REVIEW_LABEL_PROMPT — 1-3 word expertise label for a completed goal.

@@ -43,7 +43,7 @@
       "\"items\":{" \
         "\"type\":\"object\"," \
         "\"additionalProperties\":false," \
-        "\"required\":[\"title\",\"extrainfo\",\"estimated_time\",\"min_pause_to_next\",\"pause_to_next\"]," \
+        "\"required\":[\"title\",\"extrainfo\",\"tips\",\"estimated_time\",\"min_pause_to_next\",\"pause_to_next\"]," \
         "\"properties\":{" \
           "\"title\":{" \
             "\"type\":\"string\"," \
@@ -52,6 +52,10 @@
           "\"extrainfo\":{" \
             "\"type\":\"string\"," \
             "\"minLength\":10" \
+          "}," \
+          "\"tips\":{" \
+            "\"type\":\"string\"," \
+            "\"minLength\":3" \
           "}," \
           "\"estimated_time\":{" \
             "\"type\":\"integer\"," \
@@ -89,7 +93,7 @@
       "\"items\":{" \
         "\"type\":\"object\"," \
         "\"additionalProperties\":false," \
-        "\"required\":[\"title\",\"extrainfo\",\"estimated_time\",\"min_pause_to_next\",\"pause_to_next\",\"assigned_to\"]," \
+        "\"required\":[\"title\",\"extrainfo\",\"tips\",\"estimated_time\",\"min_pause_to_next\",\"pause_to_next\",\"assigned_to\"]," \
         "\"properties\":{" \
           "\"title\":{" \
             "\"type\":\"string\"," \
@@ -98,6 +102,10 @@
           "\"extrainfo\":{" \
             "\"type\":\"string\"," \
             "\"minLength\":10" \
+          "}," \
+          "\"tips\":{" \
+            "\"type\":\"string\"," \
+            "\"minLength\":3" \
           "}," \
           "\"estimated_time\":{" \
             "\"type\":\"integer\"," \
@@ -127,8 +135,8 @@ void SetGoalShortenPrompt(Goal* g, String* prompt, time_t now);
 void SetGoalDecompositionPrompt(Goal* g, String* prompt, time_t now, User *user);
 String *CallGoalDecompositionAI(String *prompt);
 String *CallSharedGoalDecompositionAI(String *prompt);
-void ParseDecompositionSubgoal(json_value *item,String *title,String *extrainfo,size_t *estimated_time,time_t *min_pause_to_next,time_t *pause_to_next);
-void ParseSharedDecompositionSubgoal(json_value *item,String *title,String *extrainfo,size_t *estimated_time,time_t *min_pause_to_next,time_t *pause_to_next,uint8_t *assigned_to);
+void ParseDecompositionSubgoal(json_value *item,String *title,String *extrainfo,String *tips,size_t *estimated_time,time_t *min_pause_to_next,time_t *pause_to_next);
+void ParseSharedDecompositionSubgoal(json_value *item,String *title,String *extrainfo,String *tips,size_t *estimated_time,time_t *min_pause_to_next,time_t *pause_to_next,uint8_t *assigned_to);
 
 /*
  * Build the goal-adaptation prompt (the root-goal creation prompt).

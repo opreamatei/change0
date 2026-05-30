@@ -15,8 +15,8 @@ export const CENTRAL_BASE_URL = `http://${DEFAULT_SERVER_HOST}:${CENTRAL_SERVER_
 
 const STORAGE_KEY = 'change.clientBaseUrl'
 
-let clientBaseUrl: string | null =
-  (typeof window !== 'undefined' && window.localStorage?.getItem(STORAGE_KEY)) || null
+let clientBaseUrl: string | null = null
+if (typeof window !== 'undefined') window.localStorage?.removeItem(STORAGE_KEY)
 
 type Listener = (next: string | null) => void
 const listeners = new Set<Listener>()
@@ -27,10 +27,6 @@ export function getClientBaseUrl(): string | null {
 
 export function setClientBaseUrl(next: string | null) {
   clientBaseUrl = next
-  if (typeof window !== 'undefined') {
-    if (next) window.localStorage?.setItem(STORAGE_KEY, next)
-    else window.localStorage?.removeItem(STORAGE_KEY)
-  }
   for (const l of listeners) l(next)
 }
 
@@ -80,11 +76,14 @@ export const SERVER_ENDPOINTS = {
   get scheduleRefresh() { return path('/schedule/refresh')() },
   get sessionGoals() { return path('/goal/session')() },
   get goalRepair() { return path('/goal/repair')() },
+  get goalExtend() { return path('/goal/extend')() },
+  get goalReshape() { return path('/goal/reshape')() },
   get goalDrop() { return path('/goal/drop')() },
   get goalCreateSharedRoot() { return path('/goal/create-shared-root')() },
   get goalSharedAction() { return path('/goal/shared-action')() },
   get profile() { return path('/profile')() },
   get profileUpdate() { return path('/profile/update')() },
+  get profileAvatar() { return path('/profile/avatar')() },
   get middlewareMessage() { return path('/middleware/message')() },
   get middlewareSession() { return path('/middleware/session')() },
   get middlewareEvents() { return path('/middleware/events')() },
@@ -113,6 +112,7 @@ export const CENTRAL_ENDPOINTS = {
   users: `${CENTRAL_BASE_URL}/users`,
   usersCreate: `${CENTRAL_BASE_URL}/users/create`,
   usersSelect: `${CENTRAL_BASE_URL}/users/select`,
+  userAvatar: (userId: string) => `${CENTRAL_BASE_URL}/users/avatar?id=${encodeURIComponent(userId)}`,
   connections: (userId: string) => `${CENTRAL_BASE_URL}/connections?user_id=${encodeURIComponent(userId)}`,
   connectionsDiscoverable: `${CENTRAL_BASE_URL}/connections/discoverable`,
   connectionsPrivate: `${CENTRAL_BASE_URL}/connections/private`,

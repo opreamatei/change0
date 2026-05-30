@@ -131,6 +131,32 @@ static ai_openai_status ai_tls_connect(ai_tls_conn *conn) {
     return AI_OPENAI_OK;
 }
 
+/* Return a malloc'd copy of `src` with the value of any "Authorization: Bearer sk-..."
+   header line replaced by "sk-REDACTED".  Caller must free. */
+static char *ai_redact_auth(const char *src) {
+    size_t slen = strlen(src);
+    char *out = malloc(slen + 1);
+    if (!out) return NULL;
+    memcpy(out, src, slen + 1);
+
+    char *p = out;
+    while ((p = strstr(p, "Authorization: Bearer "))) {
+        char *val = p + strlen("Authorization: Bearer ");
+        /* Find end of token (space, \r, \n, or NUL) */
+        char *end = val;
+        while (*end && *end != ' ' && *end != '\r' && *end != '\n') end++;
+        /* Replace with "sk-REDACTED" */
+        const char *repl = "sk-REDACTED";
+        size_t rlen = strlen(repl);
+        size_t tail = slen - (size_t)(end - out);
+        memmove(val + rlen, end, tail + 1);
+        memcpy(val, repl, rlen);
+        slen = strlen(out);
+        p = val + rlen;
+    }
+    return out;
+}
+
 static ai_openai_status ai_ssl_write_all(SSL *ssl, const char *buf, size_t len) {
     if (!ssl || !buf) return AI_OPENAI_ERR_ARG;
 
@@ -332,8 +358,12 @@ static ai_openai_status ai_openai_request(
         int code = ai_http_status_code(c_str(&raw));
 
         if (code < 200 || code >= 300) {
-            dump_to_file(PROJECT_ROOT "sent.txt", request, strlen(request));
-            dump_to_file(PROJECT_ROOT "received.txt", c_str(&raw), raw.len);
+            char *redacted = ai_redact_auth(request);
+            dump_to_file(PROJECT_ROOT "data/dumps/sent.txt",
+                         redacted ? redacted : request,
+                         redacted ? strlen(redacted) : strlen(request));
+            free(redacted);
+            dump_to_file(PROJECT_ROOT "data/dumps/received.txt", c_str(&raw), raw.len);
 
             out->raw_http = raw;
 
@@ -708,7 +738,7 @@ String *ai_openai_call_gpt_request(ai_gpt_request *req) {
         ai_openai_response_free(&created);
         free(json_body);
 
-        cassert(0, "Error: OpenAI request failed. Check sent.txt and received.txt\n");
+        cassert(0, "Error: OpenAI request failed. Check data/dumps/sent.txt and data/dumps/received.txt\n");
     }
 
     free(json_body);

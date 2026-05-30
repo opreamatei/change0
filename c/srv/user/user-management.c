@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 User USER_TABLE[MAX_USERS] = {0};
 size_t USER_COUNT = 0;
@@ -92,6 +93,80 @@ void GetUserJourneyPath(const User *u, const char *journey_id, char *out)
 void GetUserProfileExportPath(const User *u, char *path)
 {
 	GetUserFilePath(u, USER_PROFILE_EXPORT_FILENAME, path);
+}
+
+/* user ids are random alphanumerics — reject anything else to avoid traversal. */
+static _Bool avatar_safe_id(const char *id)
+{
+	if (!id || !id[0] || strlen(id) > 64) return 0;
+	for (const char *p = id; *p; p++)
+		if (!isalnum((unsigned char)*p)) return 0;
+	return 1;
+}
+
+int SaveUserAvatar(const char *user_id, const char *ext, const void *data, size_t len)
+{
+	if (!avatar_safe_id(user_id) || !data || len == 0) return -1;
+
+	char path[USER_DIRECTORY_SIZE];
+	int n = snprintf(path, sizeof(path), USER_DATA_DIRECTORY "%s/avatar", user_id);
+	if (n <= 0 || (size_t)n >= sizeof(path)) return -1;
+
+	FILE *f = fopen(path, "wb");
+	if (!f) return -1;
+	size_t w = fwrite(data, 1, len, f);
+	fclose(f);
+	if (w != len) return -1;
+
+	char epath[USER_DIRECTORY_SIZE];
+	n = snprintf(epath, sizeof(epath), USER_DATA_DIRECTORY "%s/avatar.ext", user_id);
+	if (n > 0 && (size_t)n < sizeof(epath)) {
+		FILE *e = fopen(epath, "wb");
+		if (e) { if (ext) fputs(ext, e); fclose(e); }
+	}
+	return 0;
+}
+
+int ReadUserAvatar(const char *user_id, void **out, size_t *out_len, char *ext_out, size_t ext_cap)
+{
+	if (!avatar_safe_id(user_id) || !out || !out_len) return -1;
+
+	char path[USER_DIRECTORY_SIZE];
+	int n = snprintf(path, sizeof(path), USER_DATA_DIRECTORY "%s/avatar", user_id);
+	if (n <= 0 || (size_t)n >= sizeof(path)) return -1;
+
+	FILE *f = fopen(path, "rb");
+	if (!f) return -1;
+	fseek(f, 0, SEEK_END);
+	long sz = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	if (sz <= 0) { fclose(f); return -1; }
+
+	void *buf = malloc((size_t)sz);
+	if (!buf) { fclose(f); return -1; }
+	size_t r = fread(buf, 1, (size_t)sz, f);
+	fclose(f);
+	if (r != (size_t)sz) { free(buf); return -1; }
+
+	*out = buf;
+	*out_len = (size_t)sz;
+
+	if (ext_out && ext_cap) {
+		ext_out[0] = '\0';
+		char epath[USER_DIRECTORY_SIZE];
+		n = snprintf(epath, sizeof(epath), USER_DATA_DIRECTORY "%s/avatar.ext", user_id);
+		if (n > 0 && (size_t)n < sizeof(epath)) {
+			FILE *e = fopen(epath, "rb");
+			if (e) {
+				size_t er = fread(ext_out, 1, ext_cap - 1, e);
+				ext_out[er] = '\0';
+				fclose(e);
+				for (size_t i = 0; i < er; i++)
+					if (ext_out[i] == '\n' || ext_out[i] == '\r' || ext_out[i] == ' ') { ext_out[i] = '\0'; break; }
+			}
+		}
+	}
+	return 0;
 }
 
 void GetUserMetaPath(const User *u, char *path)

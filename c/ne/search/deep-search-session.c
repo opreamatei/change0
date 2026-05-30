@@ -11,6 +11,9 @@
 
 static ds_emit_like_func ds_emit = NULL;
 
+/* Max external judge/retry rounds before accepting the best-effort conclusion. */
+#define DS_MAX_EXTERNAL_ROUNDS 8
+
 _Bool init_ds_memory(DS_memory *d){
 	if (!d) return 0;
 
@@ -69,8 +72,12 @@ static inline void write_feedback(DS_memory* mem, String* out, String* reason){
 
 static _Bool judge_result(String *out, String* reason, Task *task, char *ds_id){
 	ds_emit(ds_id, "judge-start", "{\"judge\":true}", FSIZE("{\"judge\":true}"));
-	
-	size_t len = 0; 
+
+	/* Fresh reason each round — parse_judge_result appends, so without this the
+	 * feedback from every previous round accumulates and pollutes the prompt. */
+	EmptyString(reason);
+
+	size_t len = 0;
 
 	_Bool pass = 0;
 	_Bool received_pass = 0;
@@ -184,15 +191,6 @@ void start_ds_session(Task *task, char* id, String* out, User *user){
 	String reason; InitString(&reason, 1024);
 
 	while (++edepth){
-		change_assert(
-			edepth < 10,
-			"Error: external depth went too high. edepth=%zu idepth=%zu task=[%s] last_reason=[%s]\n",
-			edepth,
-			idepth,
-			task && task->name.p ? task->name.p : "<null>",
-			reason.p ? reason.p : "<empty>"
-		);
-
 		idepth = 1;
 		while(idepth++) {
 			_Bool status = think(&mem, out, idepth, task, id);
@@ -203,8 +201,19 @@ void start_ds_session(Task *task, char* id, String* out, User *user){
 		_Bool success = judge_result(out, &reason, task, id);
 		if (success) break;
 
+		/*
+		 * The judge can stay unsatisfied indefinitely (e.g. it keeps asking for
+		 * "more concrete findings" on a conclusion that is already adequate).
+		 * Rather than crash, accept the best-effort conclusion after a bounded
+		 * number of rounds — `out` already holds the latest finished result.
+		 */
+		if (edepth >= DS_MAX_EXTERNAL_ROUNDS){
+			printf("[ds] judge not satisfied after %zu rounds; accepting best-effort result.\n", edepth);
+			ds_emit(id, "judge-giveup", c_str(&reason), reason.len);
+			break;
+		}
 
-		// failed task 
+		// failed task
 		write_feedback(&mem, out, &reason);
 	}
 

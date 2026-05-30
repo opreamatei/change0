@@ -3,6 +3,26 @@
 #include "srv/user/journey.h"
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
+
+double goal_growth_tolerance(time_t old_estimate)
+{
+	const double small = (double)GOAL_GROWTH_TOL_SMALL_SECONDS;
+	const double big = (double)GOAL_GROWTH_TOL_BIG_SECONDS;
+
+	double old = (double)old_estimate;
+	if (old <= small)
+		return GOAL_GROWTH_TOL_MIN;
+	if (old >= big)
+		return GOAL_GROWTH_TOL_MAX;
+
+	/* log interpolation between the small and big anchors */
+	double frac = log(old / small) / log(big / small);
+	if (frac < 0.0) frac = 0.0;
+	if (frac > 1.0) frac = 1.0;
+
+	return GOAL_GROWTH_TOL_MIN + (GOAL_GROWTH_TOL_MAX - GOAL_GROWTH_TOL_MIN) * frac;
+}
 
 static inline _Bool is_leaf(Goal *g){
 	return g->subgoals_len == 0;
@@ -83,6 +103,8 @@ Goal *CreateGoal(char goalId[], String *input_goal, String *input_extrainfo, siz
 
 	InitString(&g->extra_info, input_extrainfo->len + 1);
 	CopyString(&g->extra_info, input_extrainfo);
+
+	InitString(&g->tips, 1); /* set later by the generating AI */
 
 	g->required_time = estimated_time;
 
@@ -166,6 +188,7 @@ static size_t EstimateGoalsJSONSize(Goal **container, size_t goals_amm) {
 		total += 256;
 		total += g->title.len;
 		total += g->extra_info.len;
+		total += g->tips.len;
 		total += g->subgoals_len * 24;
 	}
 
@@ -190,10 +213,12 @@ void SerializeGoalList(Goal **goals, size_t count, String *buffer) {
 
 		char *esc_title = json_escape_dup(g->title.p ? g->title.p : "");
 		char *esc_extra_info = json_escape_dup(g->extra_info.p ? g->extra_info.p : "");
+		char *esc_tips = json_escape_dup(g->tips.p ? g->tips.p : "");
 		char *esc_id = json_escape_dup(g->id);
 
 		cassert(esc_title, "Failed to escape goal title.\n");
 		cassert(esc_extra_info, "Failed to escape goal extra info.\n");
+		cassert(esc_tips, "Failed to escape goal tips.\n");
 		cassert(esc_id, "Failed to escape goal id.\n");
 
 		if (!first)
@@ -203,6 +228,7 @@ void SerializeGoalList(Goal **goals, size_t count, String *buffer) {
 				"{"
 				"\"title\":\"%s\","
 				"\"extra_info\":\"%s\","
+				"\"tips\":\"%s\","
 				"\"start_date\":%lld,"
 				"\"end_date\":%lld,"
 				"\"required_time\":%lld,"
@@ -221,6 +247,7 @@ void SerializeGoalList(Goal **goals, size_t count, String *buffer) {
 				"\"subgoals\":[",
 				esc_title,
 				esc_extra_info,
+				esc_tips,
 				(long long)g->start_date,
 				(long long)g->end_date,
 				(long long)g->required_time,
@@ -249,6 +276,7 @@ void SerializeGoalList(Goal **goals, size_t count, String *buffer) {
 
 		free(esc_title);
 		free(esc_extra_info);
+		free(esc_tips);
 		free(esc_id);
 	}
 

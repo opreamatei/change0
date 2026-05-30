@@ -143,6 +143,7 @@ void ClearAllJourneyGoals(void) {
 			if (!g) continue;
 			if (g->title.p) FreeString(&g->title);
 			if (g->extra_info.p) FreeString(&g->extra_info);
+			if (g->tips.p) FreeString(&g->tips);
 			free(g->subgoals);
 			free(g);
 			j->goals[k] = NULL;
@@ -176,6 +177,7 @@ static void FreeJourneyEntry(Journey *j) {
 		if (!g) continue;
 		if (g->title.p) FreeString(&g->title);
 		if (g->extra_info.p) FreeString(&g->extra_info);
+			if (g->tips.p) FreeString(&g->tips);
 		free(g->subgoals);
 		free(g);
 	}
@@ -312,6 +314,7 @@ void LoadJourneyFromBuffer(Journey *j, const char *buf, size_t len) {
 		if (!g) continue;
 		if (g->title.p) FreeString(&g->title);
 		if (g->extra_info.p) FreeString(&g->extra_info);
+			if (g->tips.p) FreeString(&g->tips);
 		free(g->subgoals);
 		free(g);
 	}
@@ -330,7 +333,7 @@ void LoadJourneyFromBuffer(Journey *j, const char *buf, size_t len) {
 		g->assigned_to = JOURNEY_USER_UNASSIGNED;
 
 		json_value *subgoals_json = NULL;
-		const char *title = NULL, *extra_info = NULL, *id = NULL;
+		const char *title = NULL, *extra_info = NULL, *id = NULL, *tips = NULL;
 		size_t saved_local_index = 0;
 
 		for (unsigned fi = 0; fi < item->u.object.length; fi++) {
@@ -341,6 +344,8 @@ void LoadJourneyFromBuffer(Journey *j, const char *buf, size_t len) {
 				title = v->u.string.ptr;
 			} else if (!strcmp(e->name, "extra_info")) {
 				extra_info = v->u.string.ptr;
+			} else if (!strcmp(e->name, "tips")) {
+				if (v->type == json_string) tips = v->u.string.ptr;
 			} else if (!strcmp(e->name, "id")) {
 				id = v->u.string.ptr;
 			} else if (!strcmp(e->name, "start_date")) {
@@ -384,6 +389,9 @@ void LoadJourneyFromBuffer(Journey *j, const char *buf, size_t len) {
 
 		InitString(&g->extra_info, strlen(extra_info) + 1);
 		CatString(&g->extra_info, (char *)extra_info, strlen(extra_info));
+
+		InitString(&g->tips, (tips ? strlen(tips) : 0) + 1);
+		if (tips) CatString(&g->tips, (char *)tips, strlen(tips));
 
 		memset(g->id, 0, sizeof(g->id));
 		strncpy(g->id, id, GOAL_ID_SIZE);

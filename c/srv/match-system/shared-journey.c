@@ -16,8 +16,8 @@
 #include <string.h>
 #include <sys/stat.h>
 
-#define SHARED_JOURNEYS_DIR  PROJECT_ROOT "shared-journeys/"
-#define ROOT_PROPOSALS_DIR   PROJECT_ROOT "shared-journeys/proposals/"
+#define SHARED_JOURNEYS_DIR  PROJECT_ROOT "data/shared-journeys/"
+#define ROOT_PROPOSALS_DIR   PROJECT_ROOT "data/shared-journeys/proposals/"
 #define ROOT_PROPOSAL_ID_SIZE 33
 #define MAX_PENDING_ROOT_PROPOSALS 256
 
@@ -91,6 +91,7 @@ void init_shared_journeys(void)
 {
 	memset(SharedJourneyTable, 0, sizeof(SharedJourneyTable));
 	SharedJourneyCount = 0;
+	mkdir(DATA_ROOT_DIRECTORY, 0755);
 	ensure_directory(SHARED_JOURNEYS_DIR);
 	load_directory_journeys(SHARED_JOURNEYS_DIR, SharedJourneyTable, &SharedJourneyCount, MAX_JOURNEYS);
 	init_proposals();

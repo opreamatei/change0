@@ -10,9 +10,9 @@ typedef struct UserType User;
 "{" \
   "\"type\":\"object\"," \
   "\"additionalProperties\":false," \
-  "\"required\":[\"profesie\",\"emotie\",\"pasiuni\",\"generalitati\",\"subiectiv\"]," \
+  "\"required\":[\"profession\",\"emotion\",\"passions\",\"generalities\",\"subjective\"]," \
   "\"properties\":{" \
-    "\"profesie\":{" \
+    "\"profession\":{" \
       "\"type\":\"object\"," \
       "\"additionalProperties\":false," \
       "\"required\":[\"nodes\",\"connections\"]," \
@@ -50,7 +50,7 @@ typedef struct UserType User;
         "}" \
       "}" \
     "}," \
-    "\"emotie\":{" \
+    "\"emotion\":{" \
       "\"type\":\"object\"," \
       "\"additionalProperties\":false," \
       "\"required\":[\"nodes\",\"connections\"]," \
@@ -88,7 +88,7 @@ typedef struct UserType User;
         "}" \
       "}" \
     "}," \
-    "\"pasiuni\":{" \
+    "\"passions\":{" \
       "\"type\":\"object\"," \
       "\"additionalProperties\":false," \
       "\"required\":[\"nodes\",\"connections\"]," \
@@ -126,7 +126,7 @@ typedef struct UserType User;
         "}" \
       "}" \
     "}," \
-    "\"generalitati\":{" \
+    "\"generalities\":{" \
       "\"type\":\"object\"," \
       "\"additionalProperties\":false," \
       "\"required\":[\"nodes\",\"connections\"]," \
@@ -164,7 +164,7 @@ typedef struct UserType User;
         "}" \
       "}" \
     "}," \
-    "\"subiectiv\":{" \
+    "\"subjective\":{" \
       "\"type\":\"object\"," \
       "\"additionalProperties\":false," \
       "\"required\":[\"nodes\",\"connections\"]," \

@@ -17,6 +17,42 @@ const PARTICIPANT_COLORS = [
   '#14b8a6', // teal   (user 3)
 ]
 
+/* Profile avatar for a participant, served from the central server's shared
+ * disk layout. Falls back to the colored initial when the user has no picture. */
+function ParticipantAvatar({
+  id,
+  name,
+  color,
+  className,
+  style,
+}: {
+  id: string
+  name: string
+  color: string
+  className?: string
+  style?: React.CSSProperties
+}) {
+  const [failed, setFailed] = useState(false)
+  const initial = (name || '?').slice(0, 1).toUpperCase()
+  return (
+    <div
+      className={`overflow-hidden flex items-center justify-center ${className ?? ''}`}
+      style={{ background: color, color: '#0a0a0a', ...style }}
+    >
+      {!failed ? (
+        <img
+          src={CENTRAL_ENDPOINTS.userAvatar(id)}
+          onError={() => setFailed(true)}
+          className="h-full w-full object-cover"
+          alt=""
+        />
+      ) : (
+        initial
+      )}
+    </div>
+  )
+}
+
 interface ParticipantSummary {
   index: number
   id: string
@@ -661,18 +697,14 @@ function JourneyPortalCard({
         <div className="mt-2 flex items-center gap-3">
           <div className="flex -space-x-2">
             {journey.participants.slice(0, 4).map((p, i) => (
-              <div
+              <ParticipantAvatar
                 key={p.id}
-                title={p.display_name}
-                className="flex h-7 w-7 items-center justify-center rounded-full border-2 text-[11px] font-bold"
-                style={{
-                  borderColor: 'rgba(0,0,0,.55)',
-                  background: PARTICIPANT_COLORS[i % PARTICIPANT_COLORS.length],
-                  color: '#0a0a0a',
-                }}
-              >
-                {(p.display_name || '?').slice(0, 1).toUpperCase()}
-              </div>
+                id={p.id}
+                name={p.display_name}
+                color={PARTICIPANT_COLORS[i % PARTICIPANT_COLORS.length]}
+                className="h-7 w-7 rounded-full border-2 text-[11px] font-bold"
+                style={{ borderColor: 'rgba(0,0,0,.55)' }}
+              />
             ))}
           </div>
           <span className="text-[12px] font-medium" style={{ color: 'rgba(255,255,255,.6)' }}>

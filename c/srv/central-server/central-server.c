@@ -124,6 +124,7 @@ static void dispatch(int fd, CentralRequest *req)
 	if (strcmp(req->method, "OPTIONS") == 0) { handle_cors_preflight(fd); return; }
 
 	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/users") == 0)          { handle_list_users(fd); return; }
+	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/users/avatar") == 0)   { handle_get_user_avatar(fd, query); return; }
 	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/users/create") == 0)   { handle_create_user(fd, req); return; }
 	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/users/select") == 0)   { handle_select_user(fd, req); return; }
 

@@ -8,6 +8,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 char *extract_string_field(const char *body, size_t body_len, const char *key)
 {
@@ -117,4 +118,48 @@ void handle_select_user(int fd, CentralRequest *req)
 	http_send_json(fd, 200, "OK", c_str(&out));
 	FreeString(&out);
 	free(esc_name);
+}
+
+/* GET /users/avatar?id=<userId> — serves a user's avatar from the shared disk
+ * layout so the collab view can show real profile pictures. */
+static const char *central_avatar_mime(const char *ext)
+{
+	if (!ext) return "application/octet-stream";
+	if (strcasecmp(ext, "jpg") == 0 || strcasecmp(ext, "jpeg") == 0) return "image/jpeg";
+	if (strcasecmp(ext, "png")  == 0) return "image/png";
+	if (strcasecmp(ext, "gif")  == 0) return "image/gif";
+	if (strcasecmp(ext, "webp") == 0) return "image/webp";
+	return "application/octet-stream";
+}
+
+void handle_get_user_avatar(int fd, const char *query)
+{
+	char id[64] = {0};
+	if (!query || !query_get_param(query, "id", id, sizeof(id)) || !id[0]) {
+		http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_id\"}");
+		return;
+	}
+
+	void  *data = NULL;
+	size_t len  = 0;
+	char   ext[16] = {0};
+	if (ReadUserAvatar(id, &data, &len, ext, sizeof(ext)) != 0) {
+		http_send_json(fd, 404, "Not Found", "{\"ok\":false,\"error\":\"no_avatar\"}");
+		return;
+	}
+
+	char header[512];
+	int hlen = snprintf(header, sizeof(header),
+		"HTTP/1.1 200 OK\r\n"
+		"Content-Type: %s\r\n"
+		"Access-Control-Allow-Origin: *\r\n"
+		"Cache-Control: no-cache\r\n"
+		"Content-Length: %zu\r\n"
+		"Connection: close\r\n"
+		"\r\n",
+		central_avatar_mime(ext), len);
+
+	http_send_all(fd, header, (size_t)hlen);
+	if (data && len) http_send_all(fd, data, len);
+	free(data);
 }

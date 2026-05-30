@@ -15,40 +15,22 @@ import {
   endGoalOnServer,
   findGoalById,
   getGoalIdFromEvent,
+  getRootGoalProgressPct,
   type GoalEventEnvelope,
   type GoalEventPayload,
   loadGoalsFromServer,
-  repairGoalOnServer,
+  extendGoalOnServer,
+  reshapeGoalOnServer,
   startGoalOnServer,
   type Goal,
 } from './goal'
 import {
+  CENTRAL_ENDPOINTS,
   SERVER_ENDPOINTS,
-  getClientBaseUrl,
   setClientBaseUrl,
 } from './config/server'
-import { buildGoalPath, getLocationState, ROOT_GOAL_ID, type RouteName } from './config/utils'
+import { buildGoalPath, buildUserPath, getLocationState, ROOT_GOAL_ID, type RouteName } from './config/utils'
 
-const LOCAL_USER_STORAGE_KEY = 'change.localUser'
-
-function readStoredLocalUser(): LocalUser | null {
-  if (typeof window === 'undefined') return null
-  try {
-    const raw = window.localStorage.getItem(LOCAL_USER_STORAGE_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as LocalUser
-    if (parsed && parsed.id && parsed.name) return parsed
-    return null
-  } catch {
-    return null
-  }
-}
-
-function writeStoredLocalUser(user: LocalUser | null) {
-  if (typeof window === 'undefined') return
-  if (user) window.localStorage.setItem(LOCAL_USER_STORAGE_KEY, JSON.stringify(user))
-  else window.localStorage.removeItem(LOCAL_USER_STORAGE_KEY)
-}
 
 interface DevTimeState {
   now: number
@@ -69,29 +51,38 @@ function App() {
   const [dropConfirm, setDropConfirm] = useState<{ goalId: string; title: string } | null>(null)
   const [devTime, setDevTime] = useState<DevTimeState | null>(null)
   const [devTimeBusy, setDevTimeBusy] = useState(false)
-  const [localUser, setLocalUser] = useState<LocalUser | null>(() => readStoredLocalUser())
-  const [clientBaseUrl, setClientBaseUrlState] = useState<string | null>(() => getClientBaseUrl())
+  const [localUser, setLocalUser] = useState<LocalUser | null>(null)
+  const [clientBaseUrl, setClientBaseUrlState] = useState<string | null>(null)
   const [devPanelOpen, setDevPanelOpen] = useState(false)
   const [journalOpenEntryId, setJournalOpenEntryId] = useState<string | null>(null)
   const [journeyChatOpen, setJourneyChatOpen] = useState(false)
   const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null)
   const pendingActionRef = useRef<{ goalId: string } | null>(null)
 
-  function handleLogin(user: LocalUser, baseUrl: string) {
+  // True only while we are restoring a session from the URL on first load.
+  const [restoringSession, setRestoringSession] = useState(initialLocation.userId != null)
+
+  function applySession(user: LocalUser, baseUrl: string) {
     setClientBaseUrl(baseUrl)
     setClientBaseUrlState(baseUrl)
-    writeStoredLocalUser(user)
     setLocalUser(user)
     setError(null)
     setMessage('Loading goals from server...')
   }
 
+  function handleLogin(user: LocalUser, baseUrl: string) {
+    applySession(user, baseUrl)
+    setRoute('user')
+    window.history.pushState({}, '', buildUserPath(user.id))
+  }
+
   function handleLogout() {
     setClientBaseUrl(null)
     setClientBaseUrlState(null)
-    writeStoredLocalUser(null)
     setLocalUser(null)
     setGoals([])
+    setRoute('home')
+    window.history.pushState({}, '', '/')
   }
 
   const selectedParentGoal = useMemo<Goal | null>(() => {
@@ -112,6 +103,42 @@ function App() {
 
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+
+  // Restore the session straight from the URL on first load: /u/<id>[/g/<goalId>]
+  // re-selects the user on the central server (which yields the client port), so a
+  // refresh keeps you where you were instead of bouncing to the login menu.
+  useEffect(() => {
+    const { userId } = initialLocation
+    if (!userId) return
+
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(CENTRAL_ENDPOINTS.usersSelect, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: userId }),
+        })
+        if (!res.ok) throw new Error(`Select failed: ${res.status}`)
+        const payload = (await res.json()) as { id: string; name: string; port: number }
+        if (cancelled) return
+        applySession({ id: payload.id, name: payload.name }, `http://127.0.0.1:${payload.port}`)
+      } catch {
+        if (cancelled) return
+        // Unknown/stale user in the URL — fall back to the login menu.
+        setRoute('home')
+        setGoalId(null)
+        window.history.replaceState({}, '', '/')
+      } finally {
+        if (!cancelled) setRestoringSession(false)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -286,7 +313,7 @@ function App() {
   function navigateToGoal(nextGoalId: string) {
     setGoalId(nextGoalId)
     setRoute('goal')
-    window.history.pushState({}, '', buildGoalPath(nextGoalId))
+    if (localUser) window.history.pushState({}, '', buildGoalPath(localUser.id, nextGoalId))
   }
 
   async function runGoalAction(targetGoal: Goal, action: 'start' | 'end') {
@@ -336,15 +363,24 @@ function App() {
     }
   }
 
-  async function runRepairGoal(targetGoal: Goal, reason: string) {
+  async function runExtendGoal(targetGoal: Goal) {
+    try {
+      setError(null)
+      await extendGoalOnServer(targetGoal)
+      await refreshGoals({ silent: true })
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : String(actionError))
+    }
+  }
+
+  async function runReshapeGoal(targetGoal: Goal) {
     try {
       setPendingGoalIndex(targetGoal.localIndex)
       setError(null)
-      setMessage('Repairing goal...')
-
-      await repairGoalOnServer(targetGoal, reason)
+      setMessage('Reshaping this step...')
+      await reshapeGoalOnServer(targetGoal)
       await refreshGoals({ silent: true })
-      setMessage('Goal repaired.')
+      setMessage('Step reshaped.')
     } catch (actionError) {
       const nextError = actionError instanceof Error ? actionError.message : String(actionError)
       setError(nextError)
@@ -361,14 +397,17 @@ function App() {
       id: g.id,
       title: g.title,
       extraInfo: g.extraInfo || undefined,
+      tips: g.tips || undefined,
       requiredTimeSeconds: g.requiredTime,
       state: sel.nodeState,
       isMystery: sel.isMystery,
       canStart: sel.canStart,
       pending: pendingGoalIndex === g.localIndex,
+      rootProgressPct: getRootGoalProgressPct(goals, g),
       onStart: () => void runGoalAction(g, 'start'),
       onComplete: () => void runGoalAction(g, 'end'),
-      onRepair: (reason) => void runRepairGoal(g, reason),
+      onExtend: () => void runExtendGoal(g),
+      onReshape: () => void runReshapeGoal(g),
       onOpen: () => navigateToGoal(g.id),
     })
   }
@@ -420,6 +459,14 @@ function App() {
   }
 
   if (!localUser || !clientBaseUrl) {
+    // Still resolving the user from the URL — don't flash the login menu.
+    if (restoringSession) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-black text-white/60">
+          <p className="text-sm">Restoring session…</p>
+        </div>
+      )
+    }
     return <LoginView onLogin={handleLogin} />
   }
 
@@ -442,7 +489,7 @@ function App() {
     )
   }
 
-  if (route === 'goal') {
+  if (route === 'goal' || route === 'user') {
     if (goalId !== ROOT_GOAL_ID && !selectedParentGoal) {
       return (
         <main className="min-h-full px-4 py-8 text-white sm:px-6">
@@ -626,7 +673,7 @@ function App() {
             </div>
           </div>
           <div className="flex-1 overflow-hidden">
-            {journeyChatOpen && <ChatView mode="panel" />}
+            {journeyChatOpen && <ChatView mode="panel" sessionId={localUser.id} />}
           </div>
         </div>
         {focusTarget && (

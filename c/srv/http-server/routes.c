@@ -49,6 +49,8 @@ static int handle_request(int fd, const HttpRequest *req, User *user)
 	if (POST("/goal/end"))              { handle_post_goal_end(fd, req, user);               return 0; }
 	if (POST("/goal/decompose"))        { handle_post_goal_decompose(fd, req, user);         return 0; }
 	if (POST("/goal/repair"))           { handle_post_goal_repair(fd, req, user);            return 0; }
+	if (POST("/goal/extend"))           { handle_post_goal_extend(fd, req, user);            return 0; }
+	if (POST("/goal/reshape"))          { handle_post_goal_reshape(fd, req, user);           return 0; }
 	if (POST("/goal/drop"))             { handle_post_goal_drop(fd, req, user);              return 0; }
 	if (POST("/goal/export"))           { handle_post_goal_export(fd, user);                 return 0; }
 	if (GET("/goal/load"))              { handle_get_goal_load(fd, user);                    return 0; }
@@ -58,6 +60,8 @@ static int handle_request(int fd, const HttpRequest *req, User *user)
 
 	if (GET("/profile"))                { handle_get_profile(fd, user);                      return 0; }
 	if (POST("/profile/update"))        { handle_post_profile_update(fd, req, user);         return 0; }
+	if (POST("/profile/avatar"))        { handle_post_profile_avatar(fd, req, user);         return 0; }
+	if (GET("/profile/avatar"))         { handle_get_profile_avatar(fd, req, user);          return 0; }
 
 	if (GET("/dev/time"))               { handle_get_dev_time(fd);                           return 0; }
 	if (POST("/dev/time/advance"))      { handle_post_dev_time_advance(fd, req);             return 0; }

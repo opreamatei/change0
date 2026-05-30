@@ -981,3 +981,78 @@ void handle_get_schedule(int fd, User *user)
 	http_send_json(fd, 200, "OK", c_str(&out));
 	free(out.p);
 }
+
+/* Resolve a goal from the request body (id, then index fallback in journey 0). */
+static Goal *resolve_goal_from_body(const HttpRequest *req, User *user, Journey **owning)
+{
+	char raw[256] = {0};
+	if (!(json_get_string_field(req->body, "goal-id", raw, sizeof(raw)) ||
+	      json_get_string_field(req->body, "goalId",  raw, sizeof(raw)) ||
+	      json_get_string_field(req->body, "id",      raw, sizeof(raw)))) {
+		int idx = 0;
+		if (json_get_int_field(req->body, "goalIndex",  &idx) ||
+		    json_get_int_field(req->body, "localIndex", &idx) ||
+		    json_get_int_field(req->body, "goal-index", &idx)) {
+			if (idx > 0) {
+				Goal *g = FindGoalFromIndex(user->journeys[0], (size_t)idx);
+				if (g) goal_id_to_cstr(g, raw);
+			}
+		}
+	}
+	if (!raw[0]) return NULL;
+	return find_goal_any_journey(raw, user, owning);
+}
+
+/* POST /goal/extend — overtime: add 5..10 min to a leaf the user is working on. */
+void handle_post_goal_extend(int fd, const HttpRequest *req, User *user)
+{
+	if (!req->body) { http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_body\"}"); return; }
+
+	Journey *owning = NULL;
+	Goal *g = resolve_goal_from_body(req, user, &owning);
+	if (!g) { http_send_json(fd, 404, "Not Found", "{\"ok\":false,\"error\":\"goal_not_found\"}"); return; }
+	if (g->subgoals_len != 0) { http_send_json(fd, 409, "Conflict", "{\"ok\":false,\"error\":\"not_a_leaf\"}"); return; }
+
+	ExtendGoalLeaf(g);
+
+	if (owning && owning->is_shared) PushJourneyToCentral(owning);
+	SaveUser(user);
+
+	char gid[GOAL_ID_LEN + 1];
+	goal_id_to_cstr(g, gid);
+
+	char body[256];
+	int n = snprintf(body, sizeof(body),
+		"{\"ok\":true,\"goal-id\":\"%s\",\"goal_index\":%zu,\"required_time\":%lld}",
+		gid, g->localIndex, (long long)CalcGoalRequiredTime(g));
+	goal_emit_event(gid, "goal_extended", body, (n > 0 && (size_t)n < sizeof(body)) ? (size_t)n : 0);
+	http_send_json(fd, 200, "OK", body);
+}
+
+/* POST /goal/reshape — recontextualize a stuck leaf and reset its start. */
+void handle_post_goal_reshape(int fd, const HttpRequest *req, User *user)
+{
+	if (!req->body) { http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_body\"}"); return; }
+
+	Journey *owning = NULL;
+	Goal *g = resolve_goal_from_body(req, user, &owning);
+	if (!g) { http_send_json(fd, 404, "Not Found", "{\"ok\":false,\"error\":\"goal_not_found\"}"); return; }
+	if (g->subgoals_len != 0) { http_send_json(fd, 409, "Conflict", "{\"ok\":false,\"error\":\"not_a_leaf\"}"); return; }
+
+	ReshapeGoalLeaf(g);
+
+	if (owning && owning->is_shared) PushJourneyToCentral(owning);
+	SaveUser(user);
+
+	char gid[GOAL_ID_LEN + 1];
+	goal_id_to_cstr(g, gid);
+
+	char *esc_title = json_escape_dup(g->title.p ? g->title.p : "");
+	char body[512];
+	int n = snprintf(body, sizeof(body),
+		"{\"ok\":true,\"goal-id\":\"%s\",\"goal_index\":%zu,\"title\":\"%s\",\"required_time\":%lld}",
+		gid, g->localIndex, esc_title ? esc_title : "", (long long)CalcGoalRequiredTime(g));
+	free(esc_title);
+	goal_emit_event(gid, "goal_reshaped", body, (n > 0 && (size_t)n < sizeof(body)) ? (size_t)n : 0);
+	http_send_json(fd, 200, "OK", body);
+}

@@ -10,14 +10,18 @@ export interface FocusTarget {
   id: string
   title: string
   extraInfo?: string
+  tips?: string
   requiredTimeSeconds: number
   state: 'idle' | 'active' | 'done'
   isMystery?: boolean
   canStart: boolean
   pending?: boolean
   accent?: string
+  rootProgressPct?: number
   onStart?: () => void
   onComplete?: () => void
+  onExtend?: () => void
+  onReshape?: () => void
   onRepair?: (reason: string) => void
   onOpen?: () => void
 }
@@ -87,7 +91,7 @@ export default function FocusSession({
   target: FocusTarget
   onClose: () => void
 }) {
-  const { title, extraInfo, state: nodeState, isMystery, canStart, pending } = target
+  const { title, extraInfo, tips, state: nodeState, isMystery, canStart, pending, rootProgressPct } = target
   const accent = target.accent
 
   // Session length comes from the goal's estimate, clamped to a sane focus window.
@@ -96,6 +100,7 @@ export default function FocusSession({
     : 25 * 60
 
   const [remaining, setRemaining] = useState(sessionLen)
+  const [elapsed, setElapsed] = useState(0) // total seconds the timer has run, across extensions
   const [running, setRunning] = useState(false)
   const [localStarted, setLocalStarted] = useState(false)
   const [repairOpen, setRepairOpen] = useState(false)
@@ -126,11 +131,15 @@ export default function FocusSession({
     if (!running) return
     timerRef.current = setInterval(() => {
       setRemaining((r) => { if (r <= 1) { setRunning(false); return 0 } return r - 1 })
+      setElapsed((e) => e + 1)
     }, 1000)
     return () => { if (timerRef.current) clearInterval(timerRef.current) }
   }, [running])
 
   const isComplete = remaining === 0
+  // Reshape is the "really stuck" escape hatch — only offer it once the user has
+  // spent at least 50% more than the goal's allotted time (i.e. deep in overtime).
+  const canReshape = elapsed >= sessionLen * 1.5
   const isCelebrating = phase === 'celebrate'
   const progress = isCelebrating ? 1 : (sessionLen - remaining) / sessionLen
   const color =
@@ -168,6 +177,9 @@ export default function FocusSession({
     setRunning(true)
   }
 
+  // A goal only starts and ends — there is no pause. Tapping starts an idle
+  // goal or closes a finished one; while running, a tap does nothing (hold to
+  // complete). When the timer runs out the user extends or reshapes below.
   const toggle = () => {
     if (phase !== 'active') return
     if (effectiveState === 'done') { closeOut(); return }
@@ -175,8 +187,6 @@ export default function FocusSession({
       startSession()
       return
     }
-    if (isComplete) { setRemaining(sessionLen); setRunning(true); return }
-    setRunning((r) => !r)
   }
 
   // hold gesture — start when idle, complete when active
@@ -225,13 +235,14 @@ export default function FocusSession({
   const ringLabel = isCelebrating ? 'Complete'
     : isHolding ? (effectiveState === 'active' ? 'Complete…' : 'Starting…')
     : effectiveState === 'done' ? 'Done'
-    : isComplete ? 'Restart'
-    : running ? 'Pause'
-    : effectiveState === 'active' ? 'Resume' : 'Start'
+    : isComplete ? "Time's up"
+    : running ? 'Focus'
+    : effectiveState === 'active' ? 'Focus' : 'Start'
 
   const hint = isCelebrating ? null
     : effectiveState === 'idle' ? 'Tap or hold to start'
-    : `Tap to ${running ? 'pause' : 'resume'} · hold to complete`
+    : isComplete ? 'Extend or reshape below — or hold to complete'
+    : 'Hold to complete'
 
   return (
     <>
@@ -256,9 +267,22 @@ export default function FocusSession({
           <div className="mb-2 text-center text-[11px] font-bold uppercase tracking-[.7px]" style={{ color: 'rgba(255,255,255,.3)' }}>
             {title}
           </div>
-          {extraInfo && !isCelebrating && (
+          {rootProgressPct !== undefined && !isCelebrating && (
+            <div className="mb-5 flex w-full items-center gap-2.5">
+              <div className="h-[3px] flex-1 overflow-hidden rounded-full" style={{ background: 'rgba(255,255,255,.08)' }}>
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{ width: `${rootProgressPct}%`, background: 'rgba(255,255,255,.35)' }}
+                />
+              </div>
+              <span className="shrink-0 tabular-nums text-[10px]" style={{ color: 'rgba(255,255,255,.3)' }}>
+                {rootProgressPct}%
+              </span>
+            </div>
+          )}
+          {(tips || extraInfo) && !isCelebrating && (
             <div className="mb-7 max-w-[290px] text-center text-[13px] leading-[1.55]" style={{ color: 'rgba(255,255,255,.5)' }}>
-              {extraInfo}
+              {tips || extraInfo}
             </div>
           )}
 
@@ -332,10 +356,13 @@ export default function FocusSession({
 
           {!isCelebrating && (
             <div className="flex items-center gap-4 text-[13px]">
-              {target.onOpen && (
-                <button type="button" onClick={() => { target.onOpen?.(); closeOut() }} className="text-white/45 hover:text-white/70">Open</button>
+              {isComplete && effectiveState !== 'done' && target.onExtend && (
+                <button type="button" disabled={pending} onClick={() => { target.onExtend?.(); setRemaining((r) => r + 5 * 60); setRunning(true) }} className="text-sky-400/70 hover:text-sky-400 disabled:opacity-40">+5 min</button>
               )}
-              {target.onRepair && effectiveState !== 'done' && (
+              {effectiveState !== 'done' && canReshape && target.onReshape && (
+                <button type="button" disabled={pending} onClick={() => target.onReshape?.()} className="text-amber-400/70 hover:text-amber-400 disabled:opacity-40">Reshape</button>
+              )}
+              {effectiveState !== 'done' && canReshape && !target.onReshape && target.onRepair && (
                 <button type="button" disabled={pending} onClick={() => setRepairOpen(true)} className="text-amber-400/70 hover:text-amber-400 disabled:opacity-40">Repair</button>
               )}
             </div>

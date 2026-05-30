@@ -22,61 +22,85 @@ void InitGoalSystem(){
 	// Init system will go here
 }
 
-static void shorten_goal(Goal *g, time_t now){
-	String prompt; InitString(&prompt, 256);
+/*
+ * Overtime extension. The user (or the overdue auto-check) keeps a leaf going:
+ * each attempt adds an incremental 5..10 minutes to required_time, growing with
+ * the number of attempts and capped at 10. Start/end are untouched — the goal
+ * is still the same running session, just with more time.
+ */
+static void extend_goal_leaf(Goal *g)
+{
+	change_assert(g->subgoals_len == 0, "Only leaf goals can be extended [%s]\n", g->title.p);
 
-	SetGoalShortenPrompt(g, &prompt, now);
+	time_t now = change_time_now();
+	time_t minutes = 5 + (time_t)g->retry_depth;
+	if (minutes > 10) minutes = 10;
+	g->retry_depth++;
+
+	time_t old_time = CalcGoalRequiredTime(g);
+	g->required_time = old_time + minutes * 60;
+	CatTemplateString(&g->extra_info, "\n[Extended on [%s] by %lld min: %lld -> %lld]\n",
+		change_ctime(&now), (long long)minutes, (long long)old_time, (long long)g->required_time);
+}
+
+/*
+ * Reshape (recontextualize) a leaf the user is stuck on. A focused AI rewrite
+ * turns it into a doable compromise that stays coherent with its parent chain,
+ * siblings and uncles, may adjust its time, and resets start/end so the user
+ * begins the reshaped version fresh. Structure is never touched — only this leaf.
+ */
+static void reshape_goal_leaf(Goal *g)
+{
+	change_assert(g->subgoals_len == 0, "Only leaf goals can be reshaped [%s]\n", g->title.p);
+
+	String parent_chain; InitString(&parent_chain, 2048); SerializeGoalParentChain(g, &parent_chain);
+	String siblings;     InitString(&siblings, 2048);     SerializeSlibingGoals(g, &siblings);
+	String uncles;       InitString(&uncles, 2048);       SerializeGoalParentSlibings(g, &uncles, 1);
+
+	String prompt; InitString(&prompt, 2048);
+	CatTemplateString(&prompt, RESHAPE_GOAL_LEAF_PROMPT,
+		g->title.p, g->extra_info.p, (long long)CalcGoalRequiredTime(g),
+		parent_chain.p, siblings.p, uncles.p);
 
 	ai_gpt_request req = {0};
 	req.prompt = prompt;
+	req.model = AI_OPENAI_MODEL_GPT_5_4_MINI;
+	req.schema_name = "goal_reshape";
 	InitString(&req.schema, sizeof(OPENAI_GOAL_EXTRACT_SCHEMA_JSON) + 1);
 	CatString(&req.schema, FSTRING_SIZE_PARAMS(OPENAI_GOAL_EXTRACT_SCHEMA_JSON));
 
-	req.model = AI_OPENAI_MODEL_GPT_5_4_MINI;
-	req.schema_name = "goal_extract";
-
 	String *out = ai_openai_call_gpt_request(&req);
+	change_assert(out, "Goal reshape AI call failed.\n");
 
-	String new_title, new_extra_info;
-	time_t new_estimated_time = 0; // this should not matter
+	String new_title, new_extra_info, fb;
+	time_t new_estimated_time = 0;
 	size_t ignored_priority = 0;
-	ExtractGoalFromText(out, &new_title, &new_extra_info, &new_estimated_time, &ignored_priority, 0, NULL);
-	
-	change_assert(new_title.len > 1 && new_extra_info.len > 1, "Goal title or extra info is broken. title : [%s], info : [%s]\n", new_title.p, new_extra_info.p);
-
-	CatTemplateString(&g->extra_info, "\n user failed to finish goal [%s] so was shortened to [%s] in date [%s]\n", g->title.p, new_title.p, change_ctime(&now));
+	InitString(&fb, 128);
+	ExtractGoalFromText(out, &new_title, &new_extra_info, &new_estimated_time, &ignored_priority, 1, &fb);
+	change_assert(new_title.len > 1 && new_extra_info.len > 1, "Reshape produced an empty goal.\n");
 
 	CopyString(&g->title, &new_title);
 	CopyString(&g->extra_info, &new_extra_info);
+	if (new_estimated_time > 0) g->required_time = new_estimated_time;
 
+	/* user restarts the reshaped leaf from scratch */
+	g->start_date = 0;
+	g->end_date = 0;
+	g->retry_depth = 0;
+
+	FreeString(&new_title);
+	FreeString(&new_extra_info);
+	FreeString(&fb);
+	FreeString(&parent_chain);
+	FreeString(&siblings);
+	FreeString(&uncles);
+	FreeString(&req.schema);
+	FreeString(out); free(out);
 	FreeString(&prompt);
-	FreeString(out);
 }
 
-static void repair_goal_leaf(Goal *g)
-{
-	change_assert(g->subgoals_len == 0, "Only leaf goals can be repaired directly [%s]\n", g->title.p);
-	
-	time_t max_end_date = g->start_date + g->required_time * (1 + GOAL_REQUIRED_TIME_ERROR_MARGIN);
-	time_t now = change_time_now();
-
-	time_t delta = (max_end_date - now) * (max_end_date - g->start_date);
-	
-	_Bool shouldExtend = g->retry_depth < 2;
-	g->retry_depth ++;
-
-	if (shouldExtend){
-		// increase goal by 25%
-		time_t old_time = CalcGoalRequiredTime(g);
-		time_t new_time = (old_time * 125) / 100;
-
-		g->required_time = new_time;
-		CatTemplateString(&g->extra_info, "\n[Goal was extended on date [%s] from [%zu] to [%zu]]\n", change_ctime(&now), old_time, new_time);
-	}else{
-		shorten_goal(g, now);
-		g->retry_depth = 0;
-	}
-}
+void ExtendGoalLeaf(Goal *g)  { extend_goal_leaf(g); }
+void ReshapeGoalLeaf(Goal *g) { reshape_goal_leaf(g); }
 
 static void print_goal_data(Goal *g, String *buffer){
 	change_assert(g, "Got invalid goal when printing...\n");
@@ -147,6 +171,8 @@ static void free_goal_tree_and_clear_container_jid(Goal *g, const char *jid)
 		FreeString(&g->title);
 	if (g->extra_info.p)
 		FreeString(&g->extra_info);
+	if (g->tips.p)
+		FreeString(&g->tips);
 	free(g->subgoals);
 
 	RemoveGoalFromJourneys(g);
@@ -739,6 +765,8 @@ static void build_goal_repair_ds_prompt(
 
 	CatTemplateString(
 		prompt,
+		GOAL_AGENT_SYSTEM_CONTEXT
+		"YOUR RESPONSIBILITY: investigate and produce an evidence-grounded repair context report for a downstream goal-creation agent. YOUR BOUNDARIES: do not build the final goal tree yourself and do not invent unsupported user traits. "
 		"You are investigating how to repair an existing goal branch for this specific user. "
 		"The user's requested change is: [%s]. "
 		"Current branch, including progress state and children: [%s]. "
@@ -824,6 +852,8 @@ static void build_goal_repair_judge_prompt(
 ) {
 	CatTemplateString(
 		prompt,
+		GOAL_AGENT_SYSTEM_CONTEXT
+		"YOUR RESPONSIBILITY: judge whether a regenerated goal branch is an acceptable replacement for the old one. YOUR BOUNDARIES: judge only this branch against the user's request and its parent/sibling role; do not redesign it yourself. "
 		"You are judging whether a regenerated goal branch is acceptable. "
 		"Return JSON only. "
 		"User requested branch change: [%s]. "
@@ -1172,7 +1202,7 @@ static Goal *create_goal_from_repair_context(
 static Goal *repair_goal_branch(Goal *old_branch, String *reason, start_ds_session_like_func *start_ds_session, User *user){
 
 	if (old_branch->subgoals_len == 0) {
-		repair_goal_leaf(old_branch);
+		reshape_goal_leaf(old_branch);
 		return old_branch;
 	}
 
@@ -1330,7 +1360,12 @@ void UpdateGoal(Goal *g, time_t now)
 	if (status == GOAL_VALID)
 		return;
 
-	repair_goal_leaf(g);
+	/*
+	 * Overdue leaf: auto-extend a couple of times so it does not get stuck,
+	 * then leave it for the user to extend further or reshape from the session.
+	 */
+	if (g->subgoals_len == 0 && g->retry_depth < 2)
+		extend_goal_leaf(g);
 }
 
 void FreeGoal(Goal *g)
@@ -1347,6 +1382,8 @@ void FreeGoal(Goal *g)
 	if (g->extra_info.p){
 		FreeString(&g->extra_info);
 	}
+	if (g->tips.p)
+		FreeString(&g->tips);
 	if (g->subgoals){
 		free(g->subgoals);
 		g->subgoals = NULL;
@@ -1360,6 +1397,9 @@ void FreeGoals()
 {
 	ClearAllJourneyGoals();
 }
+
+static _Bool run_root_realism_judge(String *title, String *extra_info, time_t proposed,
+		User *user, time_t *suggested_out, String *feedback_out);
 
 // those are mapped to input1 -> title input2 -> extrainfo
 Goal* CreateUserGoal(String *input1, String *input2, const char *journey_id, start_ds_session_like_func* start_ds_session, User *user)
@@ -1399,6 +1439,42 @@ Goal* CreateUserGoal(String *input1, String *input2, const char *journey_id, sta
 			success = 0;
 		}
 
+		/*
+		 * Root realism anchor (control point A). Before committing the root
+		 * estimate, have a judge calibrate it against the user's profile and
+		 * the goal's real stakes. A usable suggestion is adopted in place; an
+		 * unrealistic estimate with no suggestion forces a re-extraction.
+		 */
+		if (success && estimated_time > 0){
+			time_t suggested = 0;
+			String realism_feedback; InitString(&realism_feedback, 256);
+			_Bool realistic = run_root_realism_judge(&title, &extra_info, estimated_time, user, &suggested, &realism_feedback);
+			if (!realistic){
+				if (suggested > 0){
+					printf("[root-realism] adjusting estimate %lld -> %lld seconds\n", (long long)estimated_time, (long long)suggested);
+					String realism_msg; InitString(&realism_msg, 256);
+					CatTemplateString(&realism_msg, "estimate adjusted %lld -> %lld seconds: %s",
+						(long long)estimated_time, (long long)suggested, c_str(&realism_feedback));
+					goal_emit(goalId, "root-realism-adjusted", realism_msg.p, realism_msg.len);
+					FreeString(&realism_msg);
+					estimated_time = suggested;
+				} else {
+					/*
+					 * No usable suggestion — retry extraction. title/extra_info
+					 * are left as-is (re-initialised by the next
+					 * ExtractGoalFromText call, mirroring the estimate==0 path)
+					 * because the loop tail still prints them on failure.
+					 */
+					goal_emit(goalId, "root-realism-rejected", realism_feedback.p, realism_feedback.len);
+					CatTemplateString(&feedback_intervention,
+						"\n\nServer intervention : the proposed total time estimate was judged unrealistic for this user/goal: %s Re-estimate realistically.\n",
+						c_str(&realism_feedback));
+					success = 0;
+				}
+			}
+			FreeString(&realism_feedback);
+		}
+
 		depth_error++;
 		change_assert(depth_error < 10, "Depth went way to high");
 
@@ -1424,6 +1500,167 @@ Goal* CreateUserGoal(String *input1, String *input2, const char *journey_id, sta
 	return created;
 }
 
+/*
+ * One parsed decomposition child held before any Goal object is created. The
+ * growth judge and the retry loop operate purely on these temporaries so a
+ * rejected split never registers goals in the journey container.
+ */
+typedef struct {
+	String title;
+	String extrainfo;
+	String tips;
+	size_t estimated_time;
+	time_t min_pause_to_next;
+	time_t pause_to_next;
+	uint8_t assigned_to;
+} DecompChild;
+
+static void free_decomp_children(DecompChild *children, size_t count){
+	if (!children) return;
+	for (size_t i = 0; i < count; i++){
+		FreeString(&children[i].title);
+		FreeString(&children[i].extrainfo);
+		FreeString(&children[i].tips);
+	}
+	free(children);
+}
+
+static void serialize_decomp_children(DecompChild *children, size_t count, String *out){
+	for (size_t i = 0; i < count; i++){
+		CatTemplateString(out, "%zu) [%s] est=%llds scope=[%s]\n",
+			i + 1,
+			c_str(&children[i].title),
+			(long long)children[i].estimated_time,
+			c_str(&children[i].extrainfo));
+	}
+}
+
+/* Append the user's magnitude-relevant profile signals for time/scope judging. */
+static void append_profile_magnitude_context(User *user, String *out){
+	SerializeUserProfileDerivedSummary(user, out);
+}
+
+/*
+ * Root realism judge (control point A). Returns whether the proposed root
+ * estimate is realistic; on a non-pass, *suggested_out holds a corrected
+ * estimate (may be 0 if the judge declined to suggest) and feedback_out holds
+ * a short calibration note.
+ */
+static _Bool run_root_realism_judge(String *title, String *extra_info, time_t proposed,
+		User *user, time_t *suggested_out, String *feedback_out){
+	*suggested_out = 0;
+	if (feedback_out) EmptyString(feedback_out);
+
+	String profile_ctx; InitString(&profile_ctx, 512);
+	append_profile_magnitude_context(user, &profile_ctx);
+
+	ai_gpt_request req = {0};
+	req.model = AI_OPENAI_MODEL_GPT_5_4_MINI;
+	req.schema_name = "goal_root_realism_judge";
+	InitString(&req.schema, sizeof(OPENAI_GOAL_ROOT_REALISM_JUDGE_SCHEMA_JSON) + 1);
+	CatString(&req.schema, FSTRING_SIZE_PARAMS(OPENAI_GOAL_ROOT_REALISM_JUDGE_SCHEMA_JSON));
+
+	InitString(&req.prompt, title->len + extra_info->len + profile_ctx.len + 2048);
+	CatTemplateString(&req.prompt, GOAL_ROOT_REALISM_JUDGE_PROMPT,
+		c_str(title), c_str(extra_info), (long long)proposed, c_str(&profile_ctx));
+
+	String *result = ai_openai_call_gpt_request(&req);
+	change_assert(result, "OpenAI root realism judge call failed.\n");
+
+	json_value *doc = json_parse(result->p, result->len);
+	change_assert(doc && doc->type == json_object, "Root realism judge response is not a JSON object.\n");
+
+	_Bool pass = 0, got_pass = 0;
+	for (size_t i = 0; i < doc->u.object.length; i++){
+		json_object_entry e = doc->u.object.values[i];
+		if (strcmp(e.name, "pass") == 0 && e.value->type == json_boolean){
+			pass = e.value->u.boolean; got_pass = 1;
+		} else if (strcmp(e.name, "suggested_estimated_time") == 0 && e.value->type == json_integer){
+			*suggested_out = (time_t)e.value->u.integer;
+		} else if (strcmp(e.name, "feedback") == 0 && e.value->type == json_string && feedback_out){
+			CatString(feedback_out, e.value->u.string.ptr, e.value->u.string.length);
+		}
+	}
+	change_assert(got_pass, "Root realism judge did not return pass.\n");
+
+	json_value_free(doc);
+	FreeString(result); free(result);
+	FreeString(&req.prompt);
+	FreeString(&req.schema);
+	FreeString(&profile_ctx);
+	return pass;
+}
+
+/*
+ * Decompose growth judge (control point B). Returns whether the time growth
+ * from a decomposition is warranted; feedback_out holds a correction note on
+ * a non-pass.
+ */
+static _Bool run_decompose_growth_judge(Goal *g, time_t old_estimate, time_t new_total,
+		String *children_ser, User *user, String *feedback_out){
+	if (feedback_out) EmptyString(feedback_out);
+
+	String profile_ctx; InitString(&profile_ctx, 512);
+	append_profile_magnitude_context(user, &profile_ctx);
+
+	ai_gpt_request req = {0};
+	req.model = AI_OPENAI_MODEL_GPT_5_4_MINI;
+	req.schema_name = "goal_decompose_growth_judge";
+	InitString(&req.schema, sizeof(OPENAI_GOAL_DECOMPOSE_GROWTH_JUDGE_SCHEMA_JSON) + 1);
+	CatString(&req.schema, FSTRING_SIZE_PARAMS(OPENAI_GOAL_DECOMPOSE_GROWTH_JUDGE_SCHEMA_JSON));
+
+	InitString(&req.prompt, g->title.len + g->extra_info.len + children_ser->len + profile_ctx.len + 2048);
+	CatTemplateString(&req.prompt, GOAL_DECOMPOSE_GROWTH_JUDGE_PROMPT,
+		c_str(&g->title), c_str(&g->extra_info), (long long)old_estimate, (long long)new_total,
+		c_str(children_ser), c_str(&profile_ctx));
+
+	String *result = ai_openai_call_gpt_request(&req);
+	change_assert(result, "OpenAI decompose growth judge call failed.\n");
+
+	json_value *doc = json_parse(result->p, result->len);
+	change_assert(doc && doc->type == json_object, "Growth judge response is not a JSON object.\n");
+
+	_Bool pass = 0, got_pass = 0;
+	for (size_t i = 0; i < doc->u.object.length; i++){
+		json_object_entry e = doc->u.object.values[i];
+		if (strcmp(e.name, "pass") == 0 && e.value->type == json_boolean){
+			pass = e.value->u.boolean; got_pass = 1;
+		} else if (strcmp(e.name, "feedback") == 0 && e.value->type == json_string && feedback_out){
+			CatString(feedback_out, e.value->u.string.ptr, e.value->u.string.length);
+		}
+	}
+	change_assert(got_pass, "Growth judge did not return pass.\n");
+
+	json_value_free(doc);
+	FreeString(result); free(result);
+	FreeString(&req.prompt);
+	FreeString(&req.schema);
+	FreeString(&profile_ctx);
+	return pass;
+}
+
+/*
+ * Scale child estimates down proportionally so the new total fits within
+ * `target_total`. Pauses are preserved; only estimated_time is compressed.
+ * Terminal fallback when the growth judge keeps rejecting an inflated split.
+ */
+static void scale_decomp_children_to_budget(DecompChild *children, size_t count, time_t target_total){
+	time_t pause_sum = 0, est_sum = 0;
+	for (size_t i = 0; i < count; i++){
+		pause_sum += children[i].pause_to_next;
+		est_sum += (time_t)children[i].estimated_time;
+	}
+	time_t est_budget = target_total - pause_sum;
+	if (est_budget < (time_t)count) est_budget = (time_t)count; /* keep each >= 1s */
+	if (est_sum <= est_budget) return; /* already fits */
+
+	double factor = (double)est_budget / (double)est_sum;
+	for (size_t i = 0; i < count; i++){
+		size_t scaled = (size_t)((double)children[i].estimated_time * factor);
+		children[i].estimated_time = scaled < 1 ? 1 : scaled;
+	}
+}
+
 // AI assisted function
 _Bool DecomposeGoal(Goal *g, User *user){
 
@@ -1436,68 +1673,156 @@ _Bool DecomposeGoal(Goal *g, User *user){
 		return 0;
 	}
 
-	String prompt;
-	InitString(&prompt, 2048);
+	GoalSystemLazyLoad(&goal_emit);
 
-	_Bool shared = BuildDecomposePrompt(g, &prompt, change_time_now(), user);
+	const time_t old_estimate = g->required_time;
+	const double tol = goal_growth_tolerance(old_estimate);
+	const time_t silent_cap = (time_t)((double)old_estimate * (1.0 + tol));
+	const time_t hard_cap   = (time_t)((double)old_estimate * (1.0 + GOAL_GROWTH_TOL_HARD_K * tol));
+
+	String base_prompt;
+	InitString(&base_prompt, 2048);
+
+	_Bool shared = BuildDecomposePrompt(g, &base_prompt, change_time_now(), user);
 	Journey *journey = shared ? FindJourneyByID(g->journey_id) : NULL;
 	change_assert(!shared || journey, "DecomposeGoal: shared goal [%s] has no resolvable journey.\n", g->title.p);
 
-	String *out = shared
-		? CallSharedGoalDecompositionAI(&prompt)
-		: CallGoalDecompositionAI(&prompt);
-	change_assert(out, "Goal decomposition returned NULL.\n");
+	/* Accumulated judge feedback fed back into the decomposition prompt on retry. */
+	String judge_feedback; InitString(&judge_feedback, 256);
 
-	json_value *doc = json_parse(c_str(out), out->len);
-	change_assert(doc && doc->type == json_object, "Goal decomposition result is not a JSON object:\n%s\n", c_str(out));
+	DecompChild *children = NULL;
+	size_t subgoal_count = 0;
 
-	json_value *subgoals_json = json_object_get(doc, "subgoals");
-	change_assert(subgoals_json && subgoals_json->type == json_array, "Goal decomposition JSON has no subgoals array.\n");
+	for (size_t round = 0; round < GOAL_DECOMPOSE_MAX_JUDGE_ROUNDS; round++){
+		String prompt; InitString(&prompt, base_prompt.len + judge_feedback.len + 16);
+		CatString(&prompt, base_prompt.p, base_prompt.len);
+		if (judge_feedback.len)
+			CatString(&prompt, judge_feedback.p, judge_feedback.len);
 
-	size_t subgoal_count = subgoals_json->u.array.length;
+		String *out = shared
+			? CallSharedGoalDecompositionAI(&prompt)
+			: CallGoalDecompositionAI(&prompt);
+		change_assert(out, "Goal decomposition returned NULL.\n");
 
-	change_assert(subgoal_count >= 2, "Goal decomposition must create at least 2 subgoals.\n");
-	change_assert(subgoal_count <= 9, "Goal decomposition created too many subgoals: [%zu].\n", subgoal_count);
+		json_value *doc = json_parse(c_str(out), out->len);
+		change_assert(doc && doc->type == json_object, "Goal decomposition result is not a JSON object:\n%s\n", c_str(out));
+
+		json_value *subgoals_json = json_object_get(doc, "subgoals");
+		change_assert(subgoals_json && subgoals_json->type == json_array, "Goal decomposition JSON has no subgoals array.\n");
+
+		size_t n = subgoals_json->u.array.length;
+		change_assert(n >= 2, "Goal decomposition must create at least 2 subgoals.\n");
+		change_assert(n <= 9, "Goal decomposition created too many subgoals: [%zu].\n", n);
+
+		DecompChild *tmp = malloc(sizeof(DecompChild) * n);
+		cassert(tmp, "Could not allocate decomposition child array.\n");
+
+		time_t new_total = 0;
+		for (size_t i = 0; i < n; i++){
+			json_value *item = subgoals_json->u.array.values[i];
+			size_t estimated_time = 0;
+			time_t min_pause_to_next = 0, pause_to_next = 0;
+			uint8_t assigned_to = JOURNEY_USER_UNASSIGNED;
+
+			if (shared)
+				ParseSharedDecompositionSubgoal(item, &tmp[i].title, &tmp[i].extrainfo, &tmp[i].tips, &estimated_time,
+					&min_pause_to_next, &pause_to_next, &assigned_to);
+			else
+				ParseDecompositionSubgoal(item, &tmp[i].title, &tmp[i].extrainfo, &tmp[i].tips, &estimated_time,
+					&min_pause_to_next, &pause_to_next);
+
+			tmp[i].estimated_time = estimated_time;
+			tmp[i].min_pause_to_next = min_pause_to_next;
+			tmp[i].pause_to_next = pause_to_next;
+			tmp[i].assigned_to = assigned_to;
+
+			new_total += (time_t)estimated_time + pause_to_next;
+		}
+
+		json_value_free(doc);
+		FreeString(out); free(out);
+		FreeString(&prompt);
+
+		/* Zone 1: within the silent deadband — accept the freedom, no judge. */
+		if (new_total <= silent_cap){
+			children = tmp; subgoal_count = n; break;
+		}
+
+		_Bool last_round = (round + 1 >= GOAL_DECOMPOSE_MAX_JUDGE_ROUNDS);
+
+		/* Zone 2: above the deadband but under the hard cap — must be justified. */
+		if (new_total <= hard_cap){
+			String children_ser; InitString(&children_ser, 1024);
+			serialize_decomp_children(tmp, n, &children_ser);
+
+			String jf; InitString(&jf, 256);
+			_Bool pass = run_decompose_growth_judge(g, old_estimate, new_total, &children_ser, user, &jf);
+			FreeString(&children_ser);
+
+			if (pass){
+				FreeString(&jf);
+				children = tmp; subgoal_count = n; break;
+			}
+			if (last_round){
+				/* terminal: accept but compress the split to fit the hard cap */
+				scale_decomp_children_to_budget(tmp, n, hard_cap);
+				goal_emit(g->id, "decompose-scaled", c_str(&jf), jf.len);
+				FreeString(&jf);
+				children = tmp; subgoal_count = n; break;
+			}
+			goal_emit(g->id, "decompose-growth-rejected", c_str(&jf), jf.len);
+			EmptyString(&judge_feedback);
+			CatTemplateString(&judge_feedback,
+				" The previous decomposition inflated the total to %lld seconds, above the parent budget of about %lld seconds, and was rejected: %s Produce fewer, leaner, concrete child actions that fit the budget.",
+				(long long)new_total, (long long)old_estimate, c_str(&jf));
+			FreeString(&jf);
+			free_decomp_children(tmp, n);
+			continue;
+		}
+
+		/* Zone 3: above the hard cap — the judge cannot approve this much growth. */
+		if (last_round){
+			scale_decomp_children_to_budget(tmp, n, hard_cap);
+			const char *scaled_msg = "growth exceeded the hard cap; children scaled to fit the parent budget";
+			goal_emit(g->id, "decompose-scaled", scaled_msg, strlen(scaled_msg));
+			children = tmp; subgoal_count = n; break;
+		}
+		const char *leaner_msg = "growth exceeded the hard cap; requesting a leaner split";
+		goal_emit(g->id, "decompose-growth-rejected", leaner_msg, strlen(leaner_msg));
+		EmptyString(&judge_feedback);
+		CatTemplateString(&judge_feedback,
+			" The previous decomposition's total of %lld seconds far exceeds the parent budget of about %lld seconds. Produce fewer, leaner, concrete child actions whose total stays close to the parent budget; do not add meta-process or filler steps.",
+			(long long)new_total, (long long)old_estimate);
+		free_decomp_children(tmp, n);
+		continue;
+	}
+
+	change_assert(children && subgoal_count >= 2, "Decomposition produced no acceptable children.\n");
 
 	size_t *subgoal_indexes = malloc(sizeof(size_t) * subgoal_count);
 	cassert(subgoal_indexes, "Could not allocate subgoal index array.\n");
 
 	Goal *previous = NULL;
-
-	for (size_t i = 0; i < subgoal_count; i++) {
-		json_value *item = subgoals_json->u.array.values[i];
-
-		String title;
-		String extrainfo;
-		size_t estimated_time = 0;
-		time_t min_pause_to_next = 0;
-		time_t pause_to_next = 0;
-		uint8_t assigned_to = JOURNEY_USER_UNASSIGNED;
-
-		if (shared) {
-			ParseSharedDecompositionSubgoal(item, &title, &extrainfo, &estimated_time,
-				&min_pause_to_next, &pause_to_next, &assigned_to);
-
-			/*
-			 * Enforce the leaf-ownership invariant in the system, not just
-			 * in the prompt: anything larger than SHARED_LEAF_MAX_SECONDS
-			 * is a non-leaf and must be unassigned. Anything still in range
-			 * must reference a real participant index — otherwise we fail
-			 * loud so the AI cannot quietly produce out-of-range owners.
-			 */
-			if ((time_t)estimated_time > (time_t)SHARED_LEAF_MAX_SECONDS) {
-				if (assigned_to != JOURNEY_USER_UNASSIGNED) {
+	for (size_t i = 0; i < subgoal_count; i++){
+		/*
+		 * Enforce the shared leaf-ownership invariant in the system, not just
+		 * in the prompt: anything larger than SHARED_LEAF_MAX_SECONDS is a
+		 * non-leaf and must be unassigned; anything in range must reference a
+		 * real participant index.
+		 */
+		uint8_t assigned_to = children[i].assigned_to;
+		if (shared){
+			if ((time_t)children[i].estimated_time > (time_t)SHARED_LEAF_MAX_SECONDS){
+				if (assigned_to != JOURNEY_USER_UNASSIGNED){
 					printf("[shared-decompose] forcing assigned_to=UNASSIGNED on oversized child [%s] (est=%zu > max=%d)\n",
-						c_str(&title), estimated_time, SHARED_LEAF_MAX_SECONDS);
+						c_str(&children[i].title), children[i].estimated_time, SHARED_LEAF_MAX_SECONDS);
 					assigned_to = JOURNEY_USER_UNASSIGNED;
 				}
-			} else if (assigned_to != JOURNEY_USER_UNASSIGNED) {
+			} else if (assigned_to != JOURNEY_USER_UNASSIGNED){
 				change_assert(assigned_to < journey->user_count,
 					"Shared decomposition assigned_to=%u out of range (journey [%s] has %zu participants).\n",
 					(unsigned)assigned_to, journey->id, journey->user_count);
 			}
-		} else {
-			ParseDecompositionSubgoal(item, &title, &extrainfo, &estimated_time, &min_pause_to_next, &pause_to_next);
 		}
 
 		char child_goal_id[33];
@@ -1505,46 +1830,44 @@ _Bool DecomposeGoal(Goal *g, User *user){
 
 		Goal *child = CreateGoal(
 			child_goal_id,
-			&title,
-			&extrainfo,
-			estimated_time,
+			&children[i].title,
+			&children[i].extrainfo,
+			children[i].estimated_time,
 			g->localIndex,
 			g->depth + 1,
 			g->journey_id
 		);
-		child->minPauseToNext = min_pause_to_next;
-		child->pauseToNext = pause_to_next;
+		child->minPauseToNext = children[i].min_pause_to_next;
+		child->pauseToNext = children[i].pause_to_next;
 		child->assigned_to = assigned_to;
+		if (children[i].tips.p && children[i].tips.len)
+			CopyString(&child->tips, &children[i].tips);
 
 		subgoal_indexes[i] = child->localIndex;
 
 		if (previous)
 			link_goals(previous, child);
-
 		previous = child;
-
-		FreeString(&title);
-		FreeString(&extrainfo);
 	}
 
 	g->subgoals = subgoal_indexes;
 	g->subgoals_len = subgoal_count;
 	g->required_time = CalcGoalRequiredTime(g);
 
-	json_value_free(doc);
-	FreeString(&prompt);
-	FreeString(out);
+	free_decomp_children(children, subgoal_count);
+	FreeString(&base_prompt);
+	FreeString(&judge_feedback);
 
 	printf("Goal decomposed into [%zu] subgoals.\n", subgoal_count);
 
 	return 1;
 }
 
-// goes on the first layer deep untill the goals are less than 1 hour
+// goes on the first layer deep untill the goals are less than 30 minutes
 Goal* ComputePartialDecomposition(Goal *goal, User *user){
 	Goal* g = goal;
 	while (g){
-		if (g->required_time < 60 * 60) break;
+		if (g->required_time < 60 * 30) break;
 
 		_Bool decomposition_result = DecomposeGoal(g, user);
 		change_assert(decomposition_result, "Couldn't decompose goal : [%s]\n\n", g->title.p);

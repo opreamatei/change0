@@ -4,8 +4,10 @@
 
 void ensure_conn_dir(void)
 {
+	mkdir(DATA_ROOT_DIRECTORY, 0755);
+	mkdir(DEFAULT_DUMP_DIRECTORY, 0755);
 	if (mkdir(USER_DATA_DIRECTORY, 0755) != 0 && errno != EEXIST)
-		change_assert(0, "connections: cannot create user-data dir");
+		change_assert(0, "connections: cannot create users dir");
 	if (mkdir(CONN_DIR, 0755) != 0 && errno != EEXIST)
 		change_assert(0, "connections: cannot create connections dir");
 }

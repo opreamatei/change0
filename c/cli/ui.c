@@ -44,10 +44,16 @@ static inline void clear(){
 
 static User *cli_user = NULL;
 
+static User *prompt_select_or_create_user(void);
+
 void UIStart(){
 	InitUserSystem();
 
 	cli_user = USER_COUNT > 0 ? &USER_TABLE[0] : NULL;
+
+	/* There is no default user — require selecting or creating one first. */
+	while (!cli_user)
+		cli_user = prompt_select_or_create_user();
 
 	SetupContextNodes(&cli_user->nodes);
 	InitGlobalPointerMap();
@@ -62,7 +68,7 @@ void UIStart(){
 static User *prompt_select_or_create_user(void)
 {
 	clear();
-	printf("Active users in user-data/:\n\n");
+	printf("Active users in data/users/:\n\n");
 	for (size_t i = 0; i < USER_COUNT; i++) {
 		User *u = &USER_TABLE[i];
 		printf("  [%zu] %s  (%s)\n", i + 1, u->name.p ? u->name.p : "?", u->id);
@@ -102,7 +108,7 @@ static User *prompt_select_or_create_user(void)
 
 	free(line);
 
-	if (!chosen)
+	if (!chosen && USER_COUNT > 0)
 		chosen = &USER_TABLE[0];
 
 	cli_user = chosen;
@@ -189,14 +195,19 @@ static void Run(int i){
 
 	if (options[i].type == STARTCLIENTSERVER){
 		User *u = prompt_select_or_create_user();
-		start_server(u->port, u);
-		printf("\nClient server is up on port %d (user: %s). Press enter to stop.\n\n",
-			client_server_port(),
-			u && u->name.p ? u->name.p : "?");
-		WaitForInput();
-		stop_server();
-		printf("Client server stopped, press enter to continue\n");
-		WaitForInput();
+		if (!u){
+			printf("\nNo user selected or created — create one first.\n");
+			WaitForInput();
+		} else {
+			start_server(u->port, u);
+			printf("\nClient server is up on port %d (user: %s). Press enter to stop.\n\n",
+				client_server_port(),
+				u->name.p ? u->name.p : "?");
+			WaitForInput();
+			stop_server();
+			printf("Client server stopped, press enter to continue\n");
+			WaitForInput();
+		}
 	}
 
 	if (options[i].type == CREATEGOAL){

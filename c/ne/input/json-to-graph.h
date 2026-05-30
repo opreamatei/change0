@@ -23,7 +23,7 @@ void LoadGraphFromFile(char* path, NodeContainer *nc);
         "\"properties\":{" \
           "\"context\":{" \
             "\"type\":\"string\"," \
-            "\"enum\":[\"profesie\",\"emotie\",\"pasiuni\",\"generalitati\",\"subiectiv\"]" \
+            "\"enum\":[\"profession\",\"emotion\",\"passions\",\"generalities\",\"subjective\"]" \
           "}," \
           "\"nodes\":{" \
             "\"type\":\"array\"," \

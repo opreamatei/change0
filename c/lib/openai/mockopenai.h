@@ -15,7 +15,7 @@
 "The goal of the system is to model how a user's identity, motivations, emotions, habits, beliefs, passions, and subjective interpretations are connected. " \
 "The graph represents a simplified internal cognitive and behavioral map of the user. " \
 \
-"The available identity contexts are: profesie, emotie, pasiuni, generalitati, subiectiv. " \
+"The available identity contexts are: profession, emotion, passions, generalities, subjective. " \
 "Each graph mock represents a local graph for one of these contexts. " \
 \
 "Graph mocks must contain: context, nodes, connections. " \
@@ -87,7 +87,7 @@
         "\"properties\":{" \
           "\"context\":{" \
             "\"type\":\"string\"," \
-            "\"enum\":[\"profesie\",\"emotie\",\"pasiuni\",\"generalitati\",\"subiectiv\"]" \
+            "\"enum\":[\"profession\",\"emotion\",\"passions\",\"generalities\",\"subjective\"]" \
           "}," \
           "\"nodes\":{" \
             "\"type\":\"array\"," \

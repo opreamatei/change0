@@ -180,6 +180,7 @@ void InitReviewSystem(void)
     memset(SubmissionTable, 0, sizeof(SubmissionTable));
     SubmissionCount = 0;
 
+    ensure_dir(DATA_ROOT_DIRECTORY);
     ensure_dir(SUBMISSIONS_DIR);
     ensure_dir(SUBMISSIONS_DAILY_DIR);
 

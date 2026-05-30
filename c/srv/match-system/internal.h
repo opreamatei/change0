@@ -17,7 +17,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
-#define CONN_DIR PROJECT_ROOT "user-data/connections/"
+#define CONN_DIR PROJECT_ROOT "data/users/connections/"
 #define CONN_EXT ".conn"
 #define MSG_EXT  ".msgs"
 

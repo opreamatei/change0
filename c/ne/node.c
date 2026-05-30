@@ -9,11 +9,11 @@
 #include "../lib/util/util.h"
 
 const char context_labels[CONTEXT_COUNT][NODE_LABEL_CAP] = {
-	"profesie",
-	"emotie",
-	"pasiuni",
-	"generalitati",
-	"subiectiv",
+	"profession",
+	"emotion",
+	"passions",
+	"generalities",
+	"subjective",
 };
 
 _Bool FreeNodes(NodeContainer *nc){

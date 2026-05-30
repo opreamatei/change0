@@ -12,6 +12,7 @@ export interface GoalInit {
   id: string
   title: string
   extraInfo: string
+  tips?: string
   startDate: number | null
   endDate: number | null
   requiredTime: number
@@ -41,6 +42,7 @@ export interface GoalListResponseItem {
   localIndex: number
   title: string
   extra_info: string
+  tips?: string
   start_date: number
   end_date: number
   required_time: number
@@ -111,6 +113,7 @@ export class Goal implements GoalInit {
   id: string
   title: string
   extraInfo: string
+  tips: string
   startDate: number | null
   endDate: number | null
   requiredTime: number
@@ -129,6 +132,7 @@ export class Goal implements GoalInit {
     this.id = init.id
     this.title = init.title
     this.extraInfo = init.extraInfo
+    this.tips = init.tips ?? ''
     this.startDate = init.startDate
     this.endDate = init.endDate
     this.requiredTime = init.requiredTime
@@ -153,6 +157,7 @@ export class Goal implements GoalInit {
       id: item.id,
       title: item.title,
       extraInfo: item.extra_info,
+      tips: item.tips ?? '',
       startDate: item.start_date > 0 ? item.start_date : null,
       endDate: item.end_date > 0 ? item.end_date : null,
       requiredTime: item.required_time,
@@ -198,6 +203,33 @@ export interface GoalEdge {
 
 export function findGoalByGlobalIndex(goals: Goal[], localIndex: number) {
   return goals.find((goal) => goal.localIndex === localIndex) ?? null
+}
+
+export function getRootGoalProgressPct(goals: Goal[], start: Goal): number {
+  let root = start
+  while (root.parent !== null) {
+    const parent = findGoalByGlobalIndex(goals, root.parent)
+    if (!parent) break
+    root = parent
+  }
+
+  let totalTime = 0
+  let doneTime = 0
+
+  function walk(g: Goal) {
+    if (g.subgoals.length === 0) {
+      totalTime += g.requiredTime
+      if (g.endDate !== null) doneTime += g.requiredTime
+      return
+    }
+    for (const idx of g.subgoals) {
+      const child = findGoalByGlobalIndex(goals, idx)
+      if (child) walk(child)
+    }
+  }
+  walk(root)
+
+  return totalTime > 0 ? Math.round((doneTime / totalTime) * 100) : 0
 }
 
 export function findGoalById(goals: Goal[], id: string) {
@@ -296,6 +328,26 @@ export async function repairGoalOnServer(goal: Goal, reason: string, baseUrl = g
   }
 
   return (await response.json()) as { ok: boolean; 'goal-id': string; goal_index: number }
+}
+
+export async function extendGoalOnServer(goal: Goal, baseUrl = getClientBaseUrl() ?? "") {
+  const response = await fetch(`${baseUrl}/goal/extend`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ 'goal-id': goal.id }),
+  })
+  if (!response.ok) throw new Error(`Goal extend failed: ${response.status}`)
+  return (await response.json()) as { ok: boolean; 'goal-id': string; goal_index: number; required_time: number }
+}
+
+export async function reshapeGoalOnServer(goal: Goal, baseUrl = getClientBaseUrl() ?? "") {
+  const response = await fetch(`${baseUrl}/goal/reshape`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ 'goal-id': goal.id }),
+  })
+  if (!response.ok) throw new Error(`Goal reshape failed: ${response.status}`)
+  return (await response.json()) as { ok: boolean; 'goal-id': string; goal_index: number; title: string; required_time: number }
 }
 
 export function applyGoalEvent(goals: Goal[], goalId: string, payload: GoalEventPayload) {

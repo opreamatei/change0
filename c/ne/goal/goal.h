@@ -16,7 +16,41 @@ typedef struct GoalProgressSnapshot {
 
 #define GOAL_REPAIR_MAX_JUDGE_ROUNDS 4
 
+/* Max re-decomposition attempts when the growth judge rejects an inflated split. */
+#define GOAL_DECOMPOSE_MAX_JUDGE_ROUNDS 3
+
 #define OPENAI_GOAL_REPAIR_BRANCH_JUDGE_SCHEMA_JSON \
+"{" \
+  "\"type\":\"object\"," \
+  "\"additionalProperties\":false," \
+  "\"required\":[\"pass\",\"feedback\"]," \
+  "\"properties\":{" \
+    "\"pass\":{\"type\":\"boolean\"}," \
+    "\"feedback\":{\"type\":\"string\"}" \
+  "}" \
+"}"
+
+/*
+ * Root realism judge: decides whether a freshly extracted root estimate is
+ * realistic for this user/goal, and may propose a corrected estimate.
+ */
+#define OPENAI_GOAL_ROOT_REALISM_JUDGE_SCHEMA_JSON \
+"{" \
+  "\"type\":\"object\"," \
+  "\"additionalProperties\":false," \
+  "\"required\":[\"pass\",\"suggested_estimated_time\",\"feedback\"]," \
+  "\"properties\":{" \
+    "\"pass\":{\"type\":\"boolean\"}," \
+    "\"suggested_estimated_time\":{\"type\":\"integer\"}," \
+    "\"feedback\":{\"type\":\"string\"}" \
+  "}" \
+"}"
+
+/*
+ * Decompose growth judge: decides whether the time growth introduced by a
+ * decomposition (new total vs. parent estimate) is genuinely warranted.
+ */
+#define OPENAI_GOAL_DECOMPOSE_GROWTH_JUDGE_SCHEMA_JSON \
 "{" \
   "\"type\":\"object\"," \
   "\"additionalProperties\":false," \
@@ -35,6 +69,10 @@ Goal* RepairGoalBranch(Goal *old_branch, String *reason, start_ds_session_like_f
 void InitGoalSystem();
 _Bool DecomposeGoal(Goal *g, User *user);
 Goal* DecomposeToLeaf(Goal *g, User *user);
+
+/* Session controls for a single leaf the user is working on. */
+void ExtendGoalLeaf(Goal *g);   /* overtime: +5..10 min to required_time   */
+void ReshapeGoalLeaf(Goal *g);  /* recontextualize the leaf, reset start   */
 
 void UpdateGoal(Goal *g, time_t now);
 Goal* ComputePartialDecomposition(Goal *goal, User *user);

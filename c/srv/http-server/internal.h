@@ -44,6 +44,8 @@ void handle_post_goal_start(int fd, const HttpRequest *req, User *user);
 void handle_post_goal_end(int fd, const HttpRequest *req, User *user);
 void handle_post_goal_drop(int fd, const HttpRequest *req, User *user);
 void handle_post_goal_repair(int fd, const HttpRequest *req, User *user);
+void handle_post_goal_extend(int fd, const HttpRequest *req, User *user);
+void handle_post_goal_reshape(int fd, const HttpRequest *req, User *user);
 void handle_get_goal_events(int fd, const char *full_path);
 void handle_get_session_goals(int fd, User *user);
 void handle_get_schedule(int fd, User *user);
@@ -63,6 +65,8 @@ void handle_get_chat_sessions(int fd, User *user);
 /* ── profile handlers (profile-handlers.c) ── */
 void handle_get_profile(int fd, User *user);
 void handle_post_profile_update(int fd, const HttpRequest *req, User *user);
+void handle_post_profile_avatar(int fd, const HttpRequest *req, User *user);
+void handle_get_profile_avatar(int fd, const HttpRequest *req, User *user);
 
 /* ── dev/time handlers (dev-handlers.c) ── */
 void handle_get_dev_time(int fd);

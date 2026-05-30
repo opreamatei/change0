@@ -7,6 +7,7 @@
 #include "util.h"
 
 #include <string.h>
+#include <strings.h>
 
 static _Bool is_user_editable_key(const char *key)
 {
@@ -116,4 +117,83 @@ void handle_post_profile_update(int fd, const HttpRequest *req, User *user)
 	if (strcmp(key, "work_day_start") == 0 || strcmp(key, "daily_work_hours") == 0)
 		user->schedule_needs_refresh = 1;
 	http_send_json(fd, 200, "OK", "{\"ok\":true}");
+}
+
+/* ── profile avatar ── */
+
+static const char *avatar_mime_from_ext(const char *ext)
+{
+	if (!ext) return "application/octet-stream";
+	if (strcasecmp(ext, "jpg") == 0 || strcasecmp(ext, "jpeg") == 0) return "image/jpeg";
+	if (strcasecmp(ext, "png")  == 0) return "image/png";
+	if (strcasecmp(ext, "gif")  == 0) return "image/gif";
+	if (strcasecmp(ext, "webp") == 0) return "image/webp";
+	return "application/octet-stream";
+}
+
+/* POST /profile/avatar?ext=png  (raw image bytes in the body) */
+void handle_post_profile_avatar(int fd, const HttpRequest *req, User *user)
+{
+	const char *query = NULL;
+	char path[256];
+	split_path_and_query(req->path, path, sizeof(path), &query);
+
+	char ext[16] = {0};
+	if (!query || !query_get_param(query, "ext", ext, sizeof(ext)) || !ext[0]) {
+		/* fall back to deriving the extension from a filename param */
+		char fname[256] = {0};
+		if (query && query_get_param(query, "f", fname, sizeof(fname))) {
+			const char *dot = strrchr(fname, '.');
+			if (dot && dot[1]) snprintf(ext, sizeof(ext), "%s", dot + 1);
+		}
+	}
+
+	if (strcmp(avatar_mime_from_ext(ext), "application/octet-stream") == 0) {
+		http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"unsupported_image_type\"}");
+		return;
+	}
+	if (!req->body || req->body_len == 0) {
+		http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"empty_body\"}");
+		return;
+	}
+	if (SaveUserAvatar(user->id, ext, req->body, req->body_len) != 0) {
+		http_send_json(fd, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"write_failed\"}");
+		return;
+	}
+	http_send_json(fd, 200, "OK", "{\"ok\":true}");
+}
+
+/* GET /profile/avatar[?id=<userId>]  — defaults to the authenticated user */
+void handle_get_profile_avatar(int fd, const HttpRequest *req, User *user)
+{
+	const char *query = NULL;
+	char path[256];
+	split_path_and_query(req->path, path, sizeof(path), &query);
+
+	char id[64] = {0};
+	if (!query || !query_get_param(query, "id", id, sizeof(id)) || !id[0])
+		snprintf(id, sizeof(id), "%s", user->id);
+
+	void  *data = NULL;
+	size_t len  = 0;
+	char   ext[16] = {0};
+	if (ReadUserAvatar(id, &data, &len, ext, sizeof(ext)) != 0) {
+		http_send_json(fd, 404, "Not Found", "{\"ok\":false,\"error\":\"no_avatar\"}");
+		return;
+	}
+
+	char header[512];
+	int hlen = snprintf(header, sizeof(header),
+		"HTTP/1.1 200 OK\r\n"
+		"Content-Type: %s\r\n"
+		"Access-Control-Allow-Origin: *\r\n"
+		"Cache-Control: no-cache\r\n"
+		"Content-Length: %zu\r\n"
+		"Connection: close\r\n"
+		"\r\n",
+		avatar_mime_from_ext(ext), len);
+
+	http_send_all(fd, header, (size_t)hlen);
+	if (data && len) http_send_all(fd, data, len);
+	free(data);
 }

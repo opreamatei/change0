@@ -48,6 +48,7 @@ void handle_get_submission_file(int fd, const char *query);
 void handle_list_users(int fd);
 void handle_create_user(int fd, CentralRequest *req);
 void handle_select_user(int fd, CentralRequest *req);
+void handle_get_user_avatar(int fd, const char *query);
 
 /* connection handlers — central-conn.c */
 void handle_conn_discoverable(int fd, CentralRequest *req);

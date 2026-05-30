@@ -36,7 +36,7 @@
     "\"percentage\":{\"type\":[\"integer\",\"null\"],\"minimum\":1,\"maximum\":100}," \
     "\"criteria\":{\"type\":[\"string\",\"null\"],\"enum\":[\"activation\",\"weight\",null]}," \
     "\"node\":{\"type\":[\"string\",\"null\"]}," \
-    "\"context\":{\"type\":[\"string\",\"null\"],\"enum\":[\"profesie\",\"emotie\",\"pasiuni\",\"generalitati\",\"subiectiv\",null]}," \
+    "\"context\":{\"type\":[\"string\",\"null\"],\"enum\":[\"profession\",\"emotion\",\"passions\",\"generalities\",\"subjective\",null]}," \
     "\"percA\":{\"type\":[\"integer\",\"null\"],\"minimum\":0,\"maximum\":100}," \
     "\"percW\":{\"type\":[\"integer\",\"null\"],\"minimum\":0,\"maximum\":100}," \
     "\"depth\":{\"type\":[\"integer\",\"null\"],\"minimum\":1,\"maximum\":5}," \

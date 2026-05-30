@@ -25,6 +25,7 @@ static void make_user_dir(const User *u)
 {
 	char dir[USER_DIRECTORY_SIZE];
 	GetUserDirectory(u, dir);
+	ensure_dir(DATA_ROOT_DIRECTORY);
 	ensure_dir(USER_DATA_DIRECTORY);
 	ensure_dir(dir);
 }
@@ -198,14 +199,6 @@ void InitUserSystem(void)
 
 	ensure_dir(USER_DATA_DIRECTORY);
 	load_users_from_disk();
-
-	if (USER_COUNT == 0) {
-		String default_name;
-		InitString(&default_name, FSIZE(DEFAULT_USER_NAME) + 2);
-		CatFixed(&default_name, DEFAULT_USER_NAME);
-		NewUser(&default_name);
-		FreeString(&default_name);
-	}
 }
 
 void FreeUserSystem(void)

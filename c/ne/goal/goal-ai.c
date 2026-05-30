@@ -253,6 +253,7 @@ void ParseDecompositionSubgoal(
 	json_value *item,
 	String *title,
 	String *extrainfo,
+	String *tips,
 	size_t *estimated_time,
 	time_t *min_pause_to_next,
 	time_t *pause_to_next
@@ -261,6 +262,7 @@ void ParseDecompositionSubgoal(
 
 	json_value *title_json = json_object_get(item, "title");
 	json_value *extrainfo_json = json_object_get(item, "extrainfo");
+	json_value *tips_json = json_object_get(item, "tips");
 	json_value *estimated_time_json = json_object_get(item, "estimated_time");
 	json_value *min_pause_to_next_json = json_object_get(item, "min_pause_to_next");
 	json_value *pause_to_next_json = json_object_get(item, "pause_to_next");
@@ -282,6 +284,12 @@ void ParseDecompositionSubgoal(
 
 	InitString(extrainfo, extrainfo_json->u.string.length + 256);
 	CatString(extrainfo, extrainfo_json->u.string.ptr, extrainfo_json->u.string.length);
+
+	if (tips) {
+		size_t tlen = (tips_json && tips_json->type == json_string) ? tips_json->u.string.length : 0;
+		InitString(tips, tlen + 1);
+		if (tlen) CatString(tips, tips_json->u.string.ptr, tlen);
+	}
 
 	*estimated_time = (size_t)estimated_time_json->u.integer;
 	*min_pause_to_next = (time_t)MIN(min_pause_to_next_json->u.integer, pause_to_next_json->u.integer);
@@ -337,12 +345,13 @@ void ParseSharedDecompositionSubgoal(
 	json_value *item,
 	String *title,
 	String *extrainfo,
+	String *tips,
 	size_t *estimated_time,
 	time_t *min_pause_to_next,
 	time_t *pause_to_next,
 	uint8_t *assigned_to
 ) {
-	ParseDecompositionSubgoal(item, title, extrainfo, estimated_time, min_pause_to_next, pause_to_next);
+	ParseDecompositionSubgoal(item, title, extrainfo, tips, estimated_time, min_pause_to_next, pause_to_next);
 
 	json_value *assigned_json = json_object_get(item, "assigned_to");
 	change_assert(assigned_json && assigned_json->type == json_integer,

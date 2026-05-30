@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ROOT_GOAL_ID } from '../config/utils'
 import {
   findGoalByGlobalIndex,
@@ -7,6 +7,36 @@ import {
   inferGoalState,
   type Goal,
 } from '../goal'
+
+function getRootGoalProgress(globalGoals: Goal[], start: Goal): { pct: number; rootTitle: string } {
+  let root = start
+  while (root.parent !== null) {
+    const parent = findGoalByGlobalIndex(globalGoals, root.parent)
+    if (!parent) break
+    root = parent
+  }
+
+  let totalTime = 0
+  let doneTime = 0
+
+  function walk(g: Goal) {
+    if (g.subgoals.length === 0) {
+      totalTime += g.requiredTime
+      if (g.endDate !== null) doneTime += g.requiredTime
+      return
+    }
+    for (const idx of g.subgoals) {
+      const child = findGoalByGlobalIndex(globalGoals, idx)
+      if (child) walk(child)
+    }
+  }
+  walk(root)
+
+  return {
+    pct: totalTime > 0 ? Math.round((doneTime / totalTime) * 100) : 0,
+    rootTitle: root.title,
+  }
+}
 
 export interface GoalViewerProps {
   childrenGoals: Goal[]
@@ -213,6 +243,11 @@ export default function GoalViewer(props: GoalViewerProps) {
     ? findGoalByGlobalIndex(globalGoals, parentGoal.parent)
     : null
 
+  const rootProgress = useMemo(
+    () => parentGoal ? getRootGoalProgress(globalGoals, parentGoal) : null,
+    [globalGoals, parentGoal],
+  )
+
   return (
     <section className="mx-auto w-full max-w-3xl space-y-6">
       <header>
@@ -226,6 +261,19 @@ export default function GoalViewer(props: GoalViewerProps) {
         <h1 className="text-2xl font-bold text-white">
           {parentGoal ? parentGoal.title : 'All goals'}
         </h1>
+        {rootProgress !== null && (
+          <div className="mt-2 flex items-center gap-3">
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+              <div
+                className="h-full rounded-full bg-white/40 transition-all"
+                style={{ width: `${rootProgress.pct}%` }}
+              />
+            </div>
+            <span className="shrink-0 text-xs tabular-nums text-white/40">
+              {rootProgress.pct}%
+            </span>
+          </div>
+        )}
         {statusMessage && (
           <p className="mt-1 text-sm text-white/55">{statusMessage}</p>
         )}

@@ -18,6 +18,31 @@ typedef struct UserType User;
 #define GOAL_ID_SIZE 32
 #define GOAL_MIN_SECONDS 60 * 16
 
+/*
+ * Decomposition growth tolerance.
+ *
+ * When a goal is decomposed, the new total (sum of children) may exceed the
+ * parent's prior estimate. How much growth is allowed depends on the goal's
+ * ABSOLUTE size (not its depth): goal_growth_tolerance(old_estimate) returns a
+ * ratio T, and the new total falls into one of three zones:
+ *
+ *   new_total <= old * (1 + T)            -> SILENT:   accepted, no AI call.
+ *   new_total <= old * (1 + HARD_K * T)   -> JUDGE:    must be justified by the
+ *                                                      growth judge; on reject,
+ *                                                      re-decompose.
+ *   new_total >  old * (1 + HARD_K * T)   -> HARD CAP: never allowed; children
+ *                                                      are scaled down to fit.
+ *
+ * T grows with size: a months-long goal gets a wide silent band, a one-hour
+ * goal a narrow one (so it can never silently triple). T is interpolated
+ * between MIN (at SMALL) and MAX (at BIG).
+ */
+#define GOAL_GROWTH_TOL_MIN 0.2                          /* T for small goals (<= SMALL seconds) */
+#define GOAL_GROWTH_TOL_MAX 1.0                          /* T for large goals (>= BIG seconds)   */
+#define GOAL_GROWTH_TOL_SMALL_SECONDS (2 * 3600)         /* 2 hours: floor where T = MIN         */
+#define GOAL_GROWTH_TOL_BIG_SECONDS (30 * 24 * 3600)     /* ~1 month: ceiling where T = MAX      */
+#define GOAL_GROWTH_TOL_HARD_K 2.0                       /* hard cap = old * (1 + HARD_K * T)    */
+
 typedef _Bool (*goal_emit_like_func)(const char* id, const char *type, const char *buffer, size_t buffer_len);
 typedef const char* (*journey_str_func)(const char *id);
 typedef char goalIDType[GOAL_ID_SIZE + 1];
@@ -26,6 +51,7 @@ typedef void (start_ds_session_like_func)(Task *task, char* id, String* out, Use
 typedef struct GoalType {
 	String title;
 	String extra_info;
+	String tips;       /* short, coaching-toned UI summary; AI-set, not used by backend logic */
 
 	time_t start_date;
 	time_t end_date;
@@ -106,6 +132,14 @@ void CreateSubgoalId(Goal *parent, size_t child_index, char out[33]);
 Goal *CreateGoal(char goalId[], String *input_goal, String *input_extrainfo, size_t estimated_time, size_t parent_index, size_t depth, const char *journey_id);
 
 time_t CalcGoalRequiredTime(Goal *g);
+
+/*
+ * Silent growth-tolerance ratio for a parent whose prior estimate is
+ * `old_estimate` seconds. Monotonically increasing with absolute size,
+ * interpolated logarithmically between SMALL (-> TOL_MIN) and BIG (-> TOL_MAX).
+ */
+double goal_growth_tolerance(time_t old_estimate);
+
 enum GOAL_STATUS ValidateGoal(Goal *g, time_t now);
 void CreateGoalDSId(char* name, char* deep_search_id);
 void PersonalizeGoal(String* input1, String *input2, String* out, char* goalId, String *feedback, start_ds_session_like_func start_ds_session, const char *journey_id, User *user);

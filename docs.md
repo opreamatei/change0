@@ -1,845 +1,881 @@
-# CHANGE Technical Documentation
+# CHANGE C Backend: documentatie tehnica de arhitectura
 
-This document is the deep technical reference for the current repository.
-It is written from the implementation, not the product pitch. The goal is to
-describe the actual data model, file roles, runtime rules, fallback behavior,
-and the mechanisms that keep the system coherent.
+Acest document descrie in profunzime backend-ul C din proiectul `change`, cu accent pe:
 
-## System Shape
+- mecanismele principale;
+- submecanismele interne;
+- pipeline-urile de executie;
+- fallback-urile si gardurile de siguranta;
+- interconectarea dintre subsisteme;
+- punctele unde AI-ul, stocarea pe disk, serverele HTTP si modelele de date se influenteaza reciproc.
 
-The application is a local monolith with three visible surfaces:
+Documentul acopera backend-ul C din `c/`. Frontend-ul React exista, dar nu este focusul aici.
 
-- a CLI operator shell
-- a per-user client server
-- a central server for users, shared journeys, and matching
+## 1. Vedere de ansamblu
 
-The servers are not isolated services. They share the same user registry,
-journey model, goal code, and disk layout under `user-data/`.
+Sistemul este un backend local, monolitic, modularizat la nivel de biblioteci CMake. Functional, el este impartit in 6 straturi:
 
-## Directory Roles
+1. **Bootstrap si runtime shell**
+   - `c/main.c`
+   - `c/cli/ui.c`
+2. **Model semantic intern**
+   - `c/ne/node.*`
+   - `c/ne/graph/*`
+   - `c/ne/input/*`
+3. **Model comportamental si temporal**
+   - `c/ne/goal/*`
+   - `c/journal/*`
+4. **Orchestrare AI**
+   - `c/middleware/*`
+   - `c/ne/search/*`
+   - `c/lib/openai/*`
+5. **Expunere de retea**
+   - `c/srv/http-server/*`
+   - `c/srv/central-server/*`
+6. **Persistenta si colaborare**
+   - `c/srv/user/*`
+   - `c/srv/match-system/*`
+
+Arhitectura reala este una de tip:
 
-### `c/cli`
+- **stateful in-memory**, pentru operatiile active;
+- **persistata pe disk**, pentru continuitate;
+- **AI-assisted**, pentru decompozitie, deep-search, goal generation si middleware decisions;
+- **event-driven**, pentru SSE si feedback incremental catre client.
 
-`c/cli/ui.c` is the human control plane. It can:
+## 2. Topologia runtime
 
-- load or create users
-- start/stop the central server
-- start/stop a per-user server
-- feed text into the graph
-- run deep search
-- create goals
-- export graph/goal state
+Exista doua servere distincte:
 
-### `c/srv/user`
+1. **Central server** (`c/srv/central-server`)
+   - port fix `8085` prin `CENTRAL_SERVER_PORT` in `c/config.h`;
+   - gestioneaza userii, selectia userului activ, shared journeys, connections, mesaje, reviews.
+
+2. **Client server per-user** (`c/srv/http-server`)
+   - pornit pentru un user anume;
+   - ideal pe port efemer (`start_server(0, user)`), apoi portul real se afla prin `client_server_port()`;
+   - expune graph, goals, middleware chat, deep search, profile, schedule, journal, reminders.
+
+Relatia dintre ele este importanta:
+
+- central server-ul este meta-layer-ul;
+- client server-ul este engine-ul operational pentru un singur user;
+- selectarea unui user din central server porneste serverul client pentru acel user.
 
-This directory owns user persistence and user-scoped journey data.
+## 3. Bootstrap si initializare
 
-- `user-management.c` manages the user table, file paths, and save/load
-- `user-io.c` serializes `.meta` and loads/saves user journeys
-- `journey.c` manages the journey table, shared journey helpers, and journey
-  serialization
+### 3.1 Entry point
 
-### `c/ne`
+`c/main.c` porneste CLI-ul:
 
-This is the neuroengine.
+- `UIStart()`
+- `UILoop()`
+- `UIKill()`
 
-- `node.c` and `node.h` implement graph nodes and connections
-- `graph/graph-engine.c` updates activation and weight
-- `graph/graph-export.c` writes graph JSON
-- `input/input-processor.c` turns user text into graph updates
-- `input/json-to-graph.c` merges AI graph output into the graph
-- `search/` implements deep search
-- `goal/` implements goal creation, decomposition, repair, schedule derivation,
-  and goal serialization
-- `profile/user-profile.c` stores profile memory and derived summaries
+CLI-ul este doar shell de control local. Logica reala este in modulele de backend.
 
-### `c/srv/http-server`
+### 3.2 Initializare in CLI
 
-Per-user HTTP server:
+In `c/cli/ui.c`, `UIStart()`:
 
-- route dispatch
-- SSE client pool
-- graph, goal, profile, middleware, research, and dev routes
+1. ruleaza `InitUserSystem()`;
+2. selecteaza sau creeaza un user;
+3. initializeaza context nodes prin `SetupContextNodes(&user->nodes)`;
+4. initializeaza registrul global de pointeri;
+5. publica emitters globali:
+   - `ds_emit`
+   - `goal_emit`
+6. ruleaza `InitGoalSystem()`.
 
-### `c/srv/central-server`
+Aceasta ordine conteaza. Goal system si deep-search depind de:
 
-Central server:
+- user system;
+- graph state;
+- emitteri globali.
 
-- `/users`
-- shared journeys
-- matching and messages
-- selection flow that starts the client server for the selected user
+## 4. Modelul de date central
 
-### `c/srv/match-system`
+### 4.1 User
 
-Connection proposal and messaging system:
+`User` din `c/srv/user/user-management.h` este agregatul principal de runtime. Contine:
 
-- proposal persistence
-- message persistence
-- opt-in matching
-- AI ranking and reasons
+- identitate de baza: `id`, `name`, `port`;
+- journeys active;
+- `NodeContainer nodes` pentru semantic graph;
+- schedule cache:
+  - `schedule_table`
+  - `schedule_len`
+  - `schedule_needs_refresh`
+- semnale de recalcul pentru goal health;
+- stare de matching:
+  - `discoverable`
+  - `description`
 
-### `c/lib`
+Userul este, practic, containerul tuturor subsistemelor personale.
 
-Low-level building blocks:
+### 4.2 Semantic graph
 
-- JSON parser
-- OpenAI client
-- string helpers
-- time-offset helpers
-- small hash dictionary
+`NodeContainer` din `c/ne/node.h` contine:
 
-### `react/src`
+- vectorul de noduri;
+- count/capacity;
+- flag `needsRefresh`;
+- `connection_count`;
+- indecsii pentru cele 5 contexte:
+  - `profession`
+  - `emotion`
+  - `passions`
+  - `generalities`
+  - `subjective`
 
-Frontend tabs for:
+Fiecare `Node` are:
 
-- session / goal work
-- profile
-- connections
-- shared journeys
+- `label`;
+- `_activation` si `_weight`;
+- `times_seen`, `times_used`;
+- timestamp-uri si pending touches;
+- relatie de parent/children;
+- lista de vecini (`Connection`).
 
-## Boot Sequence
+### 4.3 Goal tree
 
-`main()` just calls the CLI lifecycle.
+`Goal` din `c/ne/goal/goal-util.h` este modelul ierarhic al muncii:
 
-The bootstrap path is:
+- `title`, `extra_info`;
+- `required_time`;
+- `start_date`, `end_date`;
+- links structurale:
+  - `parent`
+  - `prev`
+  - `next`
+  - `subgoals`
+- `depth`, `priority`, `retry_depth`;
+- `journey_id`;
+- `assigned_to` pentru shared journeys.
 
-1. `UIStart()`
-2. `UILoop()`
-3. `UIKill()`
+Structura combinata parent/children + prev/next permite doua moduri de traversare:
 
-`UIStart()` does the real setup:
+- ierarhic;
+- secvential, pentru schedule.
 
-- `InitUserSystem()`
-- choose the active user
-- `SetupContextNodes()` for the active graph
-- `InitGlobalPointerMap()`
-- register `ds_emit` and `goal_emit`
-- `InitGoalSystem()`
+## 5. Persistenta si layout-ul pe disk
 
-If no user exists on disk, the system creates a default user automatically.
+Configurarea vine din `c/config.h`:
 
-## Data Model
+- `PROJECT_ROOT`
+- `DATA_ROOT_DIRECTORY`
+- `USER_DATA_DIRECTORY`
+- `DEFAULT_DUMP_DIRECTORY`
 
-### String
+Per-user exista fisiere standard:
 
-The code uses a custom heap-backed `String` type:
+- `graph-copy.json`
+- `goals-copy.json`
+- `user-profile.log`
+- `.meta`
+- director de `journal`
 
-- `p` pointer
-- `len` used bytes
-- `cap` allocated bytes
-- `used` and `init` lifecycle flags
+Modulele de user management construiesc path-urile prin helperi:
 
-Strings are mutable buffers, not immutable values. Nearly every serializer and
-prompt builder writes into these buffers directly.
+- `GetUserDirectory`
+- `GetUserFilePath`
+- `GetUserGraphExportPath`
+- `GetUserJourneyPath`
+- `GetUserProfileExportPath`
+- `GetUserMetaPath`
 
-### User
+Ideea de baza este simpla: starea activa e in memorie, dar fiecare agregat major poate fi exportat/reincarcat de pe disk.
 
-`User` is the main tenant object.
+## 6. Mecanismul semantic graph
 
-Important fields:
+### 6.1 Rol
 
-- `id` stable storage key
-- `name` display name
-- `port` client-server port
-- `journeys[]` owned journey IDs
-- `nodes` identity graph
-- `schedule_table` derived schedule cache
-- `discoverable` matching opt-in
-- `description` private matching description
+Graph-ul semantic este memoria structurala a userului. El nu este doar un istoric textual; este o structura ponderata cu:
 
-### Graph Node
+- semnale curente: `activation`;
+- semnale stabile: `weight`.
 
-The graph is in `c/ne/node.h`.
+### 6.2 Initializare si contexte
 
-`Node` stores:
+`SetupContextNodes()` creeaza cele 5 radacini de context. Orice nod util intra sub unul dintre aceste contexte.
 
-- label
-- activation
-- weight
-- parent
-- children index dictionary
-- adjacency list of `Connection`
-- last touch time
-- pending touch count
-- seen/used counters
+Asta ofera doua proprietati:
 
-`Connection` stores:
+1. acelasi label poate exista in contexte diferite;
+2. scorurile se compun pe lantul de parinti.
 
-- activation
-- weight
-- target index
-- last touch time
-- pending touch count
+### 6.3 Inserare si legare
 
-The five fixed context roots are:
+`AddNodeEx()`:
 
-- `profesie`
-- `emotie`
-- `pasiuni`
-- `generalitati`
-- `subiectiv`
+- aloca nod nou;
+- normalizeaza label-ul la lowercase;
+- leaga la parinte daca exista;
+- creeaza dictionar de copii pentru nodurile fertile.
 
-Those are always created at graph initialization time.
+`UniLinkEx()` / `BiLinkEx()` creeaza muchii cu:
 
-### Journey
+- activation;
+- weight;
+- lastTouched;
+- pendingTouches.
 
-`Journey` is the container for goals.
+### 6.4 Semantica scorurilor
 
-It supports two modes:
+In `c/ne/node.c`:
 
-- solo journey
-- shared journey
+- `read_node_activation()` si `read_node_weight()` multiplica valoarea locala cu lantul de parinti;
+- acelasi model se aplica si pentru conexiuni.
 
-Shared journeys carry a participant table:
+Practic, un nod local mosteneste importanta contextuala de sus.
 
-- `JourneyUser.id`
-- `JourneyUser.display_name`
-- `JourneyUser.context_summary`
+### 6.5 Refresh si decay
 
-The participant index is critical. Shared leaf assignment uses the journey-local
-participant index, not the raw user ID.
+`RefreshGraph()` din `c/ne/graph/graph-engine.c` este mecanismul de rebalansare:
 
-### Goal
+1. decaiaza activation in timp cu half-life `ACT_HALFTIME`;
+2. aplica `pendingTouches`;
+3. calculeaza support-ul fiecarui nod din vecini;
+4. normalizeaza `times_seen`, `times_used`, `support`;
+5. recomputa gradual `weight`.
 
-`Goal` is the scheduling and decomposition unit.
+Formula este controlata din `c/config.h` prin:
 
-Important fields:
-
-- `title`, `extra_info`
-- `start_date`, `end_date`
-- `required_time`
-- `subgoals[]`, `subgoals_len`
-- `parent`, `prev`, `next`
-- `priority`
-- `journey_id`
-- `assigned_to`
-
-`assigned_to` rules:
-
-- `255` means unassigned
-- `0..MAX_JOURNEY_USERS-1` means a participant index
-- solo journeys leave leaves unassigned
-
-### Schedule Entry
-
-The schedule system stores:
-
-- `time`
-- `goalIndex`
-- `journey_id`
-
-This is a derived view, rebuilt from goals and work-time policy.
-
-## On-Disk Layout
-
-### Per-user files
-
-Under `user-data/<user_id>/`:
-
-- `.meta` user metadata
-- `graph-copy.json` graph export
-- `goals-copy.json` journey export
-- `user-profile.log` profile memory
-- `journey-<journey_id>.json` journey snapshot
-
-### Shared journeys
-
-Shared journeys are stored centrally under:
-
-- `shared-journeys/<journey_id>.json`
-
-### Connections
-
-Connections are stored under:
-
-- `user-data/connections/<connection_id>.conn`
-- `user-data/connections/<connection_id>.msgs`
-
-## File Responsibilities
-
-### `user-management.c`
-
-Owns:
-
-- `USER_TABLE`
-- `USER_COUNT`
-- user creation
-- user directory path helpers
-- save orchestration
-
-### `user-io.c`
-
-Owns:
-
-- `.meta` file format
-- loading/saving journey IDs from `.meta`
-- loading user descriptions and discoverability
-
-### `journey.c`
-
-Owns:
-
-- `JourneyTable`
-- `AddGoalToJourney()`
-- `AddUserToJourney()`
-- journey serialization
-- journey load/save
-- fetch/push of shared journeys to central
-
-### `graph-engine.c`
-
-Owns graph refresh math:
-
-- decay
-- pending-touch boosts
-- support-based weight recomputation
-
-### `graph-export.c`
-
-Owns graph JSON export.
-
-### `json-to-graph.c`
-
-Owns graph ingestion from parsed JSON.
-
-### `goal.c`
-
-Owns:
-
-- goal creation
-- decomposition
-- repair
-- start/end/drop
-- derived state propagation
-
-### `goal-info.c`
-
-Owns the serializations used by:
-
-- middleware context
-- deep search context
-- schedule reporting
-- shared journey attribution views
-
-### `schedule-system.c`
-
-Owns the derived user schedule.
-
-### `deep-search-session.c`
-
-Owns deep search session orchestration and OpenAI call/judge loops.
-
-### `connections.c`
-
-Owns connection proposals, approvals, declines, and message storage.
-
-## Graph Engine Deep Dive
-
-The graph engine is a salience and structural-weight system, not just a node
-store.
-
-### Core rule
-
-Every node and connection has two signals:
-
-- activation = current salience
-- weight = persistent importance
-
-The engine periodically refreshes these values using time decay and usage
-history.
-
-### Touching
-
-`touch_node()` and `touch_connection()` do not immediately rewrite the graph
-state into a final weight. They only record pending touches.
-
-At refresh time:
-
-- pending touches are folded into activation using `log1p()`
-- time decay is applied
-- node weight is recomputed from support, seen count, and used count
-
-This means short-term interaction affects activation quickly, while weight
-changes slower.
-
-### Refresh mechanics
-
-`RefreshGraph()`:
-
-1. gets current time
-2. refreshes each connection
-3. computes support for each node
-4. normalizes support / seen / used counts
-5. recomputes node weight
-6. applies activation decay and touch boost
-
-The weights are intentionally damped:
-
-- old weight dominates new weight
-- support matters more than raw usage
-- activation matters but is not the sole driver
-
-### Context roots
-
-`SetupContextNodes()` creates the five context roots. Node lookup in the input
-loader is always scoped through a context root first, which prevents accidental
-cross-context merges.
-
-### Import/export behavior
-
-The graph exporter writes:
-
-- node array
-- connection array
-
-The loader reconstructs nodes and links from that export. If a node or link
-already exists in the right context, it is touched instead of duplicated.
-
-### Graph fallbacks
-
-- If a graph file is missing, user load still proceeds with a fresh graph and
-  context roots.
-- If a node lookup fails inside a context, the loader skips that entry instead
-  of corrupting the graph.
-- If a connection references missing nodes, it is ignored.
-
-## Input Decomposition
-
-`DecomposeInputIntoGraph()` is the graph ingestion path for user text.
-
-Flow:
-
-1. record input in profile history
-2. build a prompt for graph decomposition
-3. call OpenAI
-4. extract the JSON text from the Responses API envelope
-5. parse the five-context graph payload
-6. apply nodes and connections
-
-The schema requires each context to contain:
-
-- `nodes`
-- `connections`
-
-Each node and connection has `name`, `weight`, and `activation`.
-
-### Input fallback rules
-
-- invalid model output is rejected by the JSON parser
-- missing or malformed context payloads fail loudly
-- existing nodes/links are touched, not duplicated
-- all node insertion is lowercased to normalize matching
-
-## Deep Search Engine
-
-Deep search is an iterative action loop. It is not a single prompt.
-
-### Session model
-
-`start_ds_session()` builds:
-
-- persistent prompt = task framing and context
-- dynamic prompt = evolving action trace
-
-Then it loops:
-
-1. ask OpenAI for the next action
-2. parse the action JSON
-3. execute the action
-4. judge the result
-5. if not done, append feedback and continue
-
-### Core commands
-
-Command 1: global filtering
-
-- input: `percentage`, `criteria`
-- output: top global nodes by activation or weight
-
-Command 2: local neighbor search
-
-- input: `percentage`, `node`, `context`, `criteria`
-- output: top neighbors inside one context
-
-Command 3: recursive family search
-
-- input: `node`, `context`, `percA`, `percW`, `depth`
-- output: filtered recursive family tree
-
-Command 4: goal overview
-
-- input: `mode` = `roots`, `due`, or `history`
-- output: root goals, due goals, or goal history
-
-Command 5: goal tree expansion
-
-- input: `goal_id`, `depth`
-- output: recursive goal tree view
-
-Command 6: goal relations
-
-- input: `goal_id`, `method`
-- output: history, siblings, parents, linked siblings, or uncles
-
-Command 7: schedule view
-
-- input: time offset in seconds
-- output: derived schedule report from that point onward
-
-Command 8: profile history section
-
-- input: section name and max entries
-- output: profile section snapshot
-
-Command 9: derived profile summary
-
-- input: none beyond the command object
-- output: derived profile summary
-
-### Deep-search fallbacks
-
-- if the model tries to finish early, the judge can reject it
-- if the model emits invalid JSON, the dynamic feedback is updated and the
-  session retries
-- if the model selects an unsupported command, the dynamic memory records the
-  error and the loop continues
-- if the minimum round depth is not met, termination is rejected
-
-### Deep-search outputs
-
-The deep search runtime emits SSE events for:
-
-- round start
-- model response
-- judge start
-- judge pass/fail
-- session end
-
-## Goal System Deep Dive
-
-The goal system is layered on top of journeys.
-
-### Creation
-
-`CreateUserGoal()`:
-
-1. records the request in profile memory
-2. builds a goal adaptation prompt
-3. uses deep search / AI personalization
-4. extracts `title`, `extra_info`, `estimated_time`, `priority`
-5. creates the goal
-6. partially decomposes it if needed
-7. records the creation in profile memory
-
-### Decomposition
-
-`DecomposeGoal()`:
-
-- refuses to decompose if the goal already has children
-- refuses if the goal is too short
-- builds a prompt
-- dispatches to solo or shared AI decomposition
-- parses the returned `subgoals`
-- creates child goals
-- links `prev` / `next`
-- recomputes total required time
-
-#### Solo decomposition
-
-Solo journeys use the original decomposition prompt and schema.
-
-#### Shared decomposition
-
-Shared journeys use the shared prompt and shared schema.
-
-Shared decomposition rules:
-
-- the prompt includes participant summaries
-- the prompt includes journey completion and delay attribution
-- the prompt includes parent/sibling/uncle context
-- every child can carry `assigned_to`
-- if estimated time is above `SHARED_LEAF_MAX_SECONDS`, the child is forced
-  to remain unassigned
-
-### Goal repair
-
-`RepairGoalBranch()` uses the previous branch as evidence and attempts to
-rebuild the branch while preserving valid progress.
-
-Fallback behavior:
-
-- old completed work is treated as retained foundation
-- unfinished progress is carried forward when the new structure matches
-- invalid progress is cleared if the new branch no longer supports it
-
-### Start/end/drop
-
-`StartGoalDeepFromGoal()` finds the first startable leaf.
-
-`EndGoalFromGoal()`:
-
-- requires children to be finished if the goal has children
-- requires timeline predecessors to be complete
-- propagates completion upwards
-
-`DropGoalTree()`:
-
-- marks unfinished goals in the tree as ended
-- records drop events
-- updates schedule and health state
-
-### Goal fallback rules
-
-- if a goal cannot be found, the handlers fail with `goal_not_found`
-- if a goal is already completed, start/end paths return conflict
-- if a parent is ended before its children, the code asserts
-- if a shared journey cannot be resolved, shared decomposition asserts
-
-## Schedule and Goal Health
-
-`RunGoalHealthCheck()` and `RefreshSchedule()` derive the practical work plan.
-
-### Inputs
-
-- daily work start
-- daily work hours
-- current goal tree
-- goal priorities
-- completion state
-- timing between leaves
-
-### Behavior
-
-- collect due leaves across all journeys
-- for shared journeys, filter leaves by participant when appropriate
-- sort by root priority and age
-- pack leaves into work blocks
-- write `pauseToNext`
-- persist if the schedule changed
-
-### Fallbacks
-
-- if a due leaf does not fit in the current day block, the system moves to the
-  next work block
-- if a leaf is longer than the available block, it is still scheduled instead
-  of being discarded
-- if the schedule table is stale, it is regenerated lazily
-
-## Profile Memory
-
-The profile file is a structured operational log, not a generic JSON blob.
-
-It stores:
-
-- input history
-- goal activity history
-- derived summary
-
-The derived section tracks:
-
-- latest input source
-- latest input
-- last goal event
-- last goal id
-- last goal title
-- current focus goal id
-- current focus goal title
-
-Fallback behavior:
-
-- if the profile file is missing, it is created with marker sections
-- custom lines in the derived section are preserved across writes
-- fixed keys are rewritten by the profile system
-
-## Shared Journeys
-
-Shared journeys are the new multi-user coordination layer.
-
-### Creation
-
-The central server creates them with:
-
-- `name`
-- `user_ids[]`
-
-The participants are copied into the journey’s user table:
-
-- user ID
-- display name snapshot
-- context summary snapshot
-
-### Listing and fetching
-
-- `/journey/list?user_id=...` returns a compact list
-- `/journey/<id>` returns the full journey with users and goals
-
-### Update model
-
-`PushJourneyToCentral()` sends the current shared journey state back to the
-central server. `FetchSharedJourney()` retrieves the current copy.
-
-### Shared journey rules
-
-- participant count is capped by `MAX_JOURNEY_USERS`
-- the journey must contain at least one participant
-- shared decomposition only runs when the journey is shared and has participants
-- only participants may own assigned leaves
-
-## Connection System
-
-The matching system is deliberately separate from the graph and goal systems.
-
-### Data
-
-`UserConn` stores:
-
-- connection ID
-- user A / user B IDs
-- approval flags
-- state
-- proposed timestamp
-- reason text
-
-`UserConnMessage` stores:
-
-- connection ID
-- sender ID
-- timestamp
-- message text
-
-### Lifecycle
-
-1. users opt in by calling discoverable
-2. the central server runs a matching pass
-3. the matcher proposes candidate connections
-4. users approve or decline
-5. confirmed connections can send messages
-
-### Matching pipeline
-
-`FindMatchForUser()`:
-
-- filters candidates to discoverable users with descriptions
-- skips existing pairings
-- calls OpenAI on the candidate set
-- deduplicates matches
-- ranks final matches
-- persists proposals immediately
-
-### Connection fallback rules
-
-- no description means no matching
-- existing pair means no duplicate proposal
-- declined connections remain declined
-- messages require confirmed state
-- if a message is invalid or the connection is unconfirmed, sending fails
-
-### Privacy rules
-
-- raw descriptions are private
-- only the reason and partner name are exposed
-- the matching model sees descriptions, but the UI does not expose them to the
-  other party
-
-## HTTP and SSE
-
-### Per-user server
-
-The per-user server handles all goal, graph, profile, and middleware routes.
-
-It uses SSE for:
-
-- research events
-- middleware events
-- goal events
-
-### Central server
-
-The central server exposes:
-
-- users
-- shared journeys
-- connection endpoints
-- connection messages
-
-### Request parsing
-
-Both servers parse raw HTTP manually.
-
-Fallback behavior:
-
-- malformed requests return `400`
-- missing routes return `404`
-- CORS preflight gets `204`
-- closed SSE clients are removed from the client pool
-
-## OpenAI Integration
-
-The code uses the OpenAI Responses API directly.
-
-Main usages:
-
-- graph decomposition
-- deep search actions
-- goal adaptation
-- goal decomposition
-- shared goal adaptation
-- shared goal decomposition
-- connection matching
-- mock generation
-
-Fallback behavior:
-
-- network/API transport failures are retried
-- invalid JSON is rejected
-- schema mismatches are rejected
-- non-2xx responses are captured for debugging
-
-## Current Configuration Constants
-
-Important constants in `c/config.h`:
-
-- `MAX_USERS`
-- `MAX_JOURNEYS`
-- `MAX_JOURNEY_USERS`
-- `SHARED_LEAF_MAX_SECONDS`
-- `NODE_GUESS_WEIGHT_RELEVANCE`
-- `CONNECTION_GUESS_WEIGHT_RELEVANCE`
 - `ACTIVATION_IMPORTANCE_TO_NODE_WEIGHT`
 - `NCOUNT_PENALTY_TO_NODE_WEIGHT`
 - `SUPPORT_MERIT_TO_NODE_WEIGHT`
 - `NODE_OLD_WEIGHT_RELEVANCE`
 - `ACT_HALFTIME`
 
-These constants are not decorative. They affect prompt semantics, graph
-physics, and the shared-journey leaf ownership rules.
+### 6.6 Fallback-uri si limite
 
-## Fallback and Safety Summary
+- daca nu exista noduri sau containerul nu e initializat, refresh-ul iese rapid;
+- daca alocarea pentru support buffer esueaza, codul opreste executia prin assert;
+- capacity-ul pentru noduri si vecini creste dinamic prin `realloc`.
 
-- Missing files are usually tolerated by creating fresh structures.
-- Malformed JSON from AI is rejected immediately.
-- Shared journeys fail loudly when participant data is inconsistent.
-- Goal actions fail when prerequisites are not met.
-- Matching never duplicates existing pairs.
-- Connection messages require confirmed state.
-- Schedule refresh is lazy and derived, not stored as user-authored data.
+Sistemul nu are fallback semantic offline; fallback-ul lui este unul de integritate: mai bine fail-fast decat graph corupt.
 
-## Practical Reading Order
+## 7. Input decomposition pipeline
 
-If you want to understand the codebase in the shortest path, read in this
-order:
+### 7.1 Rol
 
-1. `c/main.c`
-2. `c/cli/ui.c`
-3. `c/srv/user/user-management.c`
-4. `c/srv/user/journey.c`
-5. `c/ne/node.c`
-6. `c/ne/graph/graph-engine.c`
-7. `c/ne/input/input-processor.c`
-8. `c/ne/search/deep-search-session.c`
-9. `c/ne/goal/goal.c`
-10. `c/srv/match-system/connections.c`
-11. `c/srv/central-server/central-server.c`
-12. `react/src/section/together-view.tsx`
+`c/ne/input/input-processor.c` transforma textul liber al userului in actualizari de graph.
 
+### 7.2 Pipeline
+
+1. inputul este logat in profile history;
+2. se construieste promptul `DECOMPOSITION_INTO_GRAPH_PROMPT`;
+3. se face apel OpenAI cu schema stricta;
+4. raspunsul brut OpenAI este parcurs pana la textul JSON validat;
+5. JSON-ul este convertit in noduri/context nodes prin `AddContextNodesFromJSON()`.
+
+### 7.3 Rolul submodulului `json-to-graph`
+
+`c/ne/input/json-to-graph.*` este adaptorul dintre raspunsul AI si modelul de graph. El aplica euristici si constantele de relevanta pentru:
+
+- weight initial de nod;
+- weight initial de conexiune;
+- pozitionarea nodurilor in context.
+
+### 7.4 Fallback
+
+Nu exista un fallback offline pentru decompozitie. Mecanismul folosit este:
+
+- schema stricta pentru a reduce raspunsuri invalide;
+- assert-uri pentru cazuri imposibile;
+- profiling/logging pentru trasabilitate.
+
+## 8. Deep Search
+
+### 8.1 Rol
+
+Deep Search este agentul de investigatie. El nu rezolva direct cererea userului; el colecteaza dovezi din:
+
+- graph;
+- goals;
+- schedule;
+- profile.
+
+### 8.2 Componente
+
+- `deep-search-session.*`
+- `deep-search-execute.*`
+- `command-parsing.*`
+- `ai-action.*`
+- `search.*`
+
+### 8.3 Model de executie
+
+Deep Search ruleaza iterativ:
+
+1. prompt persistent din `DS_PERSISTENT_PROMPT`;
+2. memorie dinamica acumulata in `DS_memory.dynamic`;
+3. modelul alege exact o comanda JSON;
+4. executorul ruleaza `run1 ... run9`;
+5. output-ul se adauga in memoria dinamica;
+6. ciclul continua pana cand AI-ul marcheaza `finished=true` si livreaza `conclusion`.
+
+### 8.4 Tipuri de actiuni
+
+Din schema din `deep-search-session.h` rezulta ca agentul poate:
+
+- filtra global graph-ul;
+- cauta vecini locali;
+- face explorare recursiva;
+- inspecta goals;
+- inspecta schedule;
+- inspecta profile sections;
+- combina perspective structurale si comportamentale.
+
+### 8.5 Judge intern
+
+`deep-search-execute.c` include si un judge (`call_gpt_judge`) care verifica daca rezultatul este suficient de bun pentru taskul dat.
+
+### 8.6 Fallback
+
+Fallback-ul deep search nu inseamna model alternativ, ci control de traiectorie:
+
+- schema stricta;
+- comenzi finite, numerotate `1..9`;
+- validare la parse;
+- daca AI incearca sa termine fara concluzie, eroarea este injectata in memorie;
+- runtime evidence este tratata ca autoritara.
+
+## 9. Goal system
+
+### 9.1 Rol
+
+Goal system transforma intentiile in:
+
+- root goals;
+- subgoals secventiale;
+- leaf sessions executabile.
+
+Este al doilea model central al sistemului, dupa graph.
+
+### 9.2 Pipeline de creare
+
+`CreateUserGoal()`:
+
+1. primeste `goal_input1` si `goal_input2`;
+2. poate porni deep search pentru personalizare;
+3. ruleaza adaptarea AI a goal-ului;
+4. extrage root goal;
+5. trece prin realism judge pentru estimarea initiala;
+6. persista goal-ul;
+7. ruleaza decompozitia pana la frunze.
+
+### 9.3 Decompozitie
+
+`DecomposeGoal()` si `DecomposeToLeaf()` sparg recursiv arborele.
+
+In varianta actuala, descompunerea nu este lasata complet libera. Exista doua garduri:
+
+1. **root realism judge**
+   - valideaza timpul total initial;
+2. **decompose growth judge**
+   - verifica daca suma copiilor umfla nerealist parintele.
+
+Detaliile sunt documentate separat in `docs/decomposition-time-model.md`.
+
+### 9.4 Traversare si stare
+
+Sistemul opereaza simultan pe:
+
+- arbore de descompunere;
+- lant secvential de frunze.
+
+Asta permite:
+
+- repararea unei ramuri;
+- calculul urmatorului pas executabil;
+- scheduling pe baza `prev`/`next`.
+
+### 9.5 Operatii majore
+
+- `CreateUserGoal`
+- `RepairGoalBranch`
+- `DropGoalTree`
+- `StartGoal`
+- `EndGoal`
+- `ComputePartialDecomposition`
+- `GetSessionGoals`
+
+### 9.6 Fallback si guardrails
+
+- numar limitat de runde pentru judge/retry;
+- scale-down proportional daca decompozitia depaseste hard cap-ul;
+- leaf-urile sunt tinute in plaja practica de timp;
+- goal ID-urile trebuie sa fie exacte, nu sunt reconstruite euristic.
+
+## 10. Goal health si schedule system
+
+### 10.1 Rol
+
+Schedule system-ul transforma goal tree-ul intr-o secventa temporala executabila.
+
+### 10.2 Pipeline
+
+`RefreshSchedule(User *user)`:
+
+1. ruleaza `RunGoalHealthCheck(user)`;
+2. goleste schedule cache-ul curent;
+3. colecteaza due leaves din toate journey-urile userului;
+4. parcurge fiecare lant secvential de frunze;
+5. calculeaza `start_time` pentru fiecare goal;
+6. umple `schedule_table`.
+
+### 10.3 Logica de ancorare
+
+Pentru fiecare leaf:
+
+- daca este terminat si are succesor, sari la succesor;
+- daca este activ (`start_date` set, `end_date` lipsa), anchor la `start_date`;
+- daca e capat de lant si nimic nu a inceput, anchor la `change_time_now()`;
+- altfel, anchor la `prev->end_date + pauseToNext`.
+
+### 10.4 Cache invalidation
+
+Schedule-ul nu se recalculeaza continuu. Se folosesc semnale:
+
+- `schedule_needs_refresh`
+- `goal_health_needs_refresh`
+
+Acesta este mecanismul de decuplare dintre mutatii si recalcule scumpe.
+
+### 10.5 Fallback
+
+- daca nu exista due goals, schedule-ul devine gol si flag-ul se reseteaza;
+- referintele rupte in arbore sunt tratate ca erori critice, nu sunt ignorate.
+
+## 11. Middleware orchestration
+
+### 11.1 Rol
+
+Middleware-ul este orchestratorul conversational. El nu este chatbot generic; el decide actiuni controlate peste subsistemele interne.
+
+### 11.2 Inputuri folosite
+
+Promptul din `c/middleware/middleware.h` combina:
+
+- inputul userului;
+- istoric de sesiune;
+- user profile summary;
+- raw profile history;
+- goal activity history;
+- active goals;
+- schedule snapshot;
+- completed goals;
+- stalled goals;
+- retry feedback;
+- deep search feedback.
+
+### 11.3 Actiuni disponibile
+
+Schema din `c/middleware/middleware.c` permite actiuni precum:
+
+- `reply`
+- `set_profile`
+- `clear_profile`
+- `ask_permission`
+- `create_goal`
+- `set_goal_priority`
+- `call_deep_search`
+- `update_graph`
+- `delay_goal`
+- `drop_goal`
+- `repair_branch`
+- `set_discoverable`
+- `set_private`
+- `update_match_description`
+- `find_match`
+- `set_reminder`
+
+### 11.4 Bucla de retry
+
+`RunClientMiddleware()` ruleaza pana la `MIDDLEWARE_MAX_RETRIES = 10`:
+
+1. construieste contextul;
+2. apeleaza modelul;
+3. parseaza JSON-ul;
+4. valideaza actiunile;
+5. le aplica;
+6. daca orice pas esueaza, construieste `retry_feedback` si repeta.
+
+Acesta este unul dintre cele mai importante mecanisme de fallback din tot sistemul.
+
+### 11.5 Permission gating
+
+Exista doua cozi separate:
+
+- `pending_permissions` pentru profile fields;
+- `pending_reminders` pentru reminders.
+
+Cheile sensibile:
+
+- `age`
+- `name`
+- `location`
+- `profession`
+
+cer aprobare. Restul pot fi salvate silent daca promptul decide asta.
+
+### 11.6 Session scoping
+
+Session-urile middleware sunt namespaced per user:
+
+- forma este `userId:sessionId`;
+- istoricul si evenimentele sunt tinute in memorie;
+- se pot exporta prin endpoint dedicat.
+
+### 11.7 Interconectare
+
+Middleware-ul este nodul de control care poate atinge aproape toate celelalte sisteme:
+
+- profile;
+- graph;
+- goals;
+- deep search;
+- reminders;
+- matching.
+
+Este principalul punct de compozitie al backend-ului.
+
+## 12. HTTP server si SSE
+
+### 12.1 Routing
+
+`c/srv/http-server/routes.c` mapeaza rutele catre handlere specializate. Domeniile principale sunt:
+
+- `/graph/*`
+- `/research/*`
+- `/middleware/*`
+- `/goal/*`
+- `/profile/*`
+- `/schedule*`
+- `/journal/*`
+- `/reminders/*`
+- `/submissions/*`
+
+### 12.2 Server lifecycle
+
+`start_server()`:
+
+- opreste instanta veche daca exista;
+- initializeaza tabelul SSE;
+- creeaza socket;
+- incearca bind pe portul cerut;
+- daca portul fix esueaza si nu era `0`, cade pe port efemer;
+- porneste thread-ul de accept.
+
+Acesta este un fallback operational explicit si important.
+
+### 12.3 SSE
+
+`c/srv/http-server/sse.c` gestioneaza clienti SSE:
+
+- tabel fix de conexiuni;
+- filtrare dupa `stream_id`;
+- lock per client pentru scriere;
+- `prune_dead_sse_clients()` trimite ping-uri si elimina conexiunile moarte.
+
+SSE este canalul prin care clientul primeste:
+
+- progres deep search;
+- evenimente middleware;
+- evenimente de goal.
+
+### 12.4 Robustete
+
+- `SIGPIPE` este ignorat pentru a evita terminarea procesului la reconnect-uri browser;
+- clientii morti sunt eliminati activ;
+- handlerele SSE returneaza keep-open doar pentru endpoint-urile stream.
+
+## 13. Central server
+
+### 13.1 Rol
+
+Central server-ul este planul meta. El nu ruleaza direct graph/goal logic pentru requesturile lui, dar initiaza sistemele comune si coordoneaza accesul.
+
+### 13.2 Ce initializeaza
+
+In `start_central_server()`:
+
+- `InitGlobalPointerMap()`
+- emitter pointers
+- `InitGoalSystem()`
+- `InitUserSystem()`
+- `InitConnectionSystem()`
+- `init_shared_journeys()`
+- `InitReviewSystem()`
+
+### 13.3 Endpoint-uri cheie
+
+- user management;
+- selectarea userului;
+- shared journeys;
+- connections;
+- messaging;
+- submissions/reviews.
+
+### 13.4 Interconectare
+
+La pornire, daca exista useri, poate porni automat si client server-ul pentru primul user.
+
+Asta inseamna ca central server-ul este bootstrapper-ul intregii platforme locale.
+
+## 14. User management
+
+### 14.1 Rol
+
+User management reconstruieste si persista agregatele `User`.
+
+### 14.2 Mecanisme
+
+- `USER_TABLE[MAX_USERS]`
+- cautare dupa `id` sau `name`
+- `alloc_user_slot()`
+- `NewUser()`
+- `SaveUser()`
+- `InitUserSystem()`
+
+### 14.3 Guardrails
+
+- `MAX_USERS`
+- validare stricta pentru avatar path input (`avatar_safe_id`);
+- path helpers centralizati pentru a evita concatenari riscante.
+
+### 14.4 Interconectare
+
+Acest modul este dependency direct pentru:
+
+- graph;
+- goals;
+- middleware;
+- HTTP handlers;
+- matching;
+- journal.
+
+## 15. Journal si reminders
+
+### 15.1 Journal
+
+`c/journal/*` gestioneaza:
+
+- create/read/update/delete entry;
+- fisiere atasate;
+- embed-uri catre goal-uri, alte entry-uri sau imagini.
+
+`JournalMeta` retine:
+
+- `id`
+- `title`
+- `mood_index`
+- `last_updated`
+- `icon_index`
+
+### 15.2 Embeds
+
+Embeds sunt legaturi usoare intre knowledge artifacts. Ele permit jurnalului sa devina strat de context peste goals si memorie.
+
+### 15.3 Reminders
+
+Reminders au propriul flux:
+
+1. middleware poate propune reminder;
+2. reminderul intra in coada de permission;
+3. dupa aprobare, `RemindersSave()` persista datele.
+
+Acest model mentine reminder-ele ca efect side-effect controlat, nu ca simplu text conversational.
+
+## 16. Matching, connections si mesagerie
+
+### 16.1 Rol
+
+`c/srv/match-system/*` implementeaza matching intre useri discoverable.
+
+### 16.2 Stare si persistenta
+
+Fisierele sunt tinute sub:
+
+- `data/users/connections/`
+
+cu extensii:
+
+- `.conn`
+- `.msgs`
+
+### 16.3 Pipeline
+
+1. userul devine discoverable;
+2. serverul salveaza descrierea interna;
+3. `find_match` ruleaza AI matching pe candidati;
+4. se dedupeaza rezultate;
+5. se persista conexiunile/propunerile;
+6. se pot aproba/declina;
+7. dupa conectare, se poate trimite mesagerie.
+
+### 16.4 Guardrails
+
+- matching-ul este opt-in;
+- descrierea este server-side only;
+- promptul middleware interzice framing romantic;
+- exista lock global pentru conexiuni (`conn_lock`).
+
+## 17. OpenAI integration
+
+### 17.1 Rol transversal
+
+OpenAI este folosit in:
+
+- input decomposition;
+- middleware;
+- deep search;
+- goal creation;
+- goal judges;
+- matching.
+
+### 17.2 Design
+
+Fiecare subsistem important foloseste:
+
+- prompt dedicat;
+- schema JSON stricta;
+- parsare valida;
+- validare semantica locala.
+
+### 17.3 Filosofie de fallback
+
+Sistemul nu se bazeaza pe text liber "best effort". In schimb:
+
+- constrange modelul cu schema;
+- revalideaza server-side;
+- repeta cu retry feedback;
+- sau face fail-fast.
+
+Este o filosofie corecta pentru un sistem AI orchestration stateful.
+
+## 18. Global pointer map
+
+`c/globals.*` expune un registry mic de pointeri globali.
+
+El este folosit pentru a injecta dependinte runtime fara a introduce circularitati grele intre module, in special pentru:
+
+- `ds_emit`
+- `goal_emit`
+
+Este un mecanism simplu, dar critic: permite propagarea emitters catre module care nu ar trebui sa cunoasca direct serverele.
+
+## 19. Taxonomia fallback-urilor
+
+Sistemul foloseste mai multe tipuri de fallback, nu unul singur:
+
+### 19.1 Fallback de retea
+
+- bind pe port fix -> fallback pe port efemer in client server;
+- SSE dead client pruning;
+- ignorare `SIGPIPE`.
+
+### 19.2 Fallback de orchestrare AI
+
+- middleware retry loop;
+- deep-search iterative correction;
+- judge feedback reinjectat in prompt.
+
+### 19.3 Fallback de control al cresterii
+
+- root realism judge;
+- decompose growth judge;
+- proportional scaling la hard cap.
+
+### 19.4 Fallback de permisiune
+
+- pending queues pentru profile/reminders;
+- rezolvare asincrona prin endpoint dedicat.
+
+### 19.5 Fallback de cache
+
+- `schedule_needs_refresh`;
+- recalcul doar cand mutatiile chiar o cer.
+
+### 19.6 Ce nu exista
+
+Nu exista fallback local complet pentru:
+
+- OpenAI indisponibil;
+- decompozitie graph fara model;
+- goal generation offline.
+
+Arhitectural, backend-ul este inca AI-dependent.
+
+## 20. Interconectarea reala dintre sisteme
+
+Fluxul cel mai important din aplicatie arata asa:
+
+1. userul trimite mesaj prin `/middleware/message`;
+2. middleware-ul construieste context din:
+   - profile
+   - goals
+   - schedule
+   - istoric
+3. AI-ul alege o actiune;
+4. actiunea poate:
+   - actualiza graph-ul
+   - lansa deep search
+   - crea goal
+   - modifica profile
+   - genera reminder
+   - activa matching
+5. goals mutateaza schedule-ul;
+6. toate pot emite evenimente SSE catre client;
+7. `SaveUser(user)` persista starea.
+
+Din perspectiva arhitecturii, asta inseamna:
+
+- **middleware** este orchestratorul;
+- **user** este agregatul de stare;
+- **graph** este memoria semantica;
+- **goals/schedule** sunt motorul comportamental;
+- **deep search** este investigatorul;
+- **HTTP + SSE** sunt stratul de transport;
+- **disk** este continuitatea;
+- **OpenAI** este motorul de inferenta controlata.
+
+## 21. Riscuri structurale curente
+
+Cateva puncte merita retinute:
+
+1. **Dependenta ridicata de OpenAI**
+   - lipseste un provider abstraction complet.
+2. **Fail-fast agresiv**
+   - multe cai critice folosesc assert-uri si pot opri procesul.
+3. **State global + in-memory**
+   - simplifica sistemul, dar limiteaza scalarea si izolarea.
+4. **Capacitati fixe in mai multe tabele**
+   - `MAX_USERS`, `MAX_SSE_CLIENTS`, pending permission tables.
+5. **Concurenta este locala si partiala**
+   - exista lock-uri in servere/SSE/connections, dar modelul nu este gandit pentru throughput mare.
+
+## 22. Concluzie
+
+Backend-ul C din CHANGE nu este doar un server HTTP cu cateva handlere. Este un runtime AI-orchestrated cu patru nuclee functionale:
+
+- semantic identity graph;
+- goal decomposition and scheduling;
+- conversational middleware;
+- collaboration/matching infrastructure.
+
+Ce il face interesant tehnic este combinatia dintre:
+
+- model de date structural;
+- pipeline-uri iterative cu AI;
+- validare stricta prin JSON schema;
+- evenimente live prin SSE;
+- persistenta locala pe fisiere;
+- garduri de siguranta orientate spre coerenta sistemului, nu doar spre uptime.
+
+Pentru extindere, cele mai sensibile puncte sunt:
+
+- abstractizarea providerului AI;
+- reducerea dependentei de assert-uri pentru recoverable failures;
+- formalizarea mai stricta a persistentei si a contractelor dintre module.
