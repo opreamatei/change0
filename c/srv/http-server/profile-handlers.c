@@ -11,7 +11,7 @@
 
 static _Bool is_user_editable_key(const char *key)
 {
-	static const char *editable[] = { "age", "work_day_start", "daily_work_hours", NULL };
+	static const char *editable[] = { "age", "work_day_start", "daily_work_hours", "onboarded", NULL };
 	for (int i = 0; editable[i]; i++)
 		if (strcmp(key, editable[i]) == 0) return 1;
 	return 0;
@@ -25,11 +25,20 @@ void handle_get_profile(int fd, User *user)
 	char  *esc_derived;
 	char  *esc_desc;
 	char  *memories;
+	char   onboarded_val[16] = {0};
+	_Bool  onboarded;
 
 	InitString(&derived,  2048);
 	InitString(&response, 4096);
 
 	SerializeUserProfileDerivedSummary(user, &derived);
+
+	/* A missing flag means a legacy account created before onboarding existed —
+	 * treat those as already onboarded so they are never forced through the flow. */
+	if (UserProfileGetDerivedField(user, "onboarded", onboarded_val, sizeof(onboarded_val)))
+		onboarded = (strcmp(onboarded_val, "1") == 0 || strcmp(onboarded_val, "true") == 0);
+	else
+		onboarded = 1;
 
 	esc_name    = json_escape_dup(user->name.p        ? user->name.p        : "");
 	esc_derived = json_escape_dup(derived.p            ? derived.p            : "");
@@ -38,10 +47,11 @@ void handle_get_profile(int fd, User *user)
 
 	CatTemplateString(&response,
 		"{\"ok\":true,\"name\":\"%s\",\"user_id\":\"%s\",\"derived\":\"%s\","
-		"\"discoverable\":%s,\"description\":\"%s\",\"memories\":%s}",
+		"\"discoverable\":%s,\"description\":\"%s\",\"onboarded\":%s,\"memories\":%s}",
 		esc_name, user->id, esc_derived,
 		user->discoverable ? "true" : "false",
 		esc_desc,
+		onboarded ? "true" : "false",
 		memories ? memories : "[]");
 
 	free(esc_name);

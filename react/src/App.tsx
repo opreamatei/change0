@@ -6,6 +6,7 @@ import TogetherView from './section/together-view'
 import JournalView from './section/journal-view'
 import ChatView from './section/chat-view'
 import LoginView, { type LocalUser } from './section/login-view'
+import OnboardingView from './section/onboarding-view'
 import LoadingOrb from './components/loading-orb'
 import NavBar, { type NavPanel } from './components/nav-bar'
 import FocusSession, { type FocusTarget } from './section/focus-session'
@@ -53,6 +54,7 @@ function App() {
   const [devTimeBusy, setDevTimeBusy] = useState(false)
   const [localUser, setLocalUser] = useState<LocalUser | null>(null)
   const [clientBaseUrl, setClientBaseUrlState] = useState<string | null>(null)
+  const [needsOnboarding, setNeedsOnboarding] = useState(false)
   const [devPanelOpen, setDevPanelOpen] = useState(false)
   const [journalOpenEntryId, setJournalOpenEntryId] = useState<string | null>(null)
   const [journeyChatOpen, setJourneyChatOpen] = useState(false)
@@ -70,8 +72,9 @@ function App() {
     setMessage('Loading goals from server...')
   }
 
-  function handleLogin(user: LocalUser, baseUrl: string) {
+  function handleLogin(user: LocalUser, baseUrl: string, isNew?: boolean) {
     applySession(user, baseUrl)
+    setNeedsOnboarding(!!isNew)
     setRoute('user')
     window.history.pushState({}, '', buildUserPath(user.id))
   }
@@ -81,8 +84,21 @@ function App() {
     setClientBaseUrlState(null)
     setLocalUser(null)
     setGoals([])
+    setNeedsOnboarding(false)
     setRoute('home')
     window.history.pushState({}, '', '/')
+  }
+
+  function finishOnboarding() {
+    // Hand off to the main app at the journey root — never to a specific goal.
+    // We deliberately clear goalId and use buildUserPath (no /g/<id> segment) so
+    // no goal id is carried over from onboarding into the main flow.
+    setNeedsOnboarding(false)
+    setGoalId(ROOT_GOAL_ID)
+    setGoalPanel('journey')
+    setRoute('user')
+    if (localUser) window.history.replaceState({}, '', buildUserPath(localUser.id))
+    void refreshGoals({ silent: true })
   }
 
   const selectedParentGoal = useMemo<Goal | null>(() => {
@@ -227,6 +243,30 @@ function App() {
       cancelled = true
     }
   }, [clientBaseUrl])
+
+  // Robust onboarding detection: a genuinely fresh account (server reports
+  // onboarded=false) with no goals yet should land on the intro flow even after
+  // a refresh. Legacy accounts (flag absent) report onboarded=true and are never
+  // pulled in, and any account that already has goals is treated as onboarded.
+  useEffect(() => {
+    if (!clientBaseUrl || needsOnboarding || goals.length > 0) return
+
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(SERVER_ENDPOINTS.profile, { cache: 'no-store' })
+        if (!res.ok) return
+        const data = (await res.json()) as { onboarded?: boolean }
+        if (!cancelled && data.onboarded === false) setNeedsOnboarding(true)
+      } catch {
+        /* ignore — fall through to the normal app */
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [clientBaseUrl, goals.length, needsOnboarding])
 
   useEffect(() => {
     if (!clientBaseUrl) return
@@ -468,6 +508,10 @@ function App() {
       )
     }
     return <LoginView onLogin={handleLogin} />
+  }
+
+  if (needsOnboarding) {
+    return <OnboardingView user={localUser} onComplete={finishOnboarding} />
   }
 
   if (loading) {

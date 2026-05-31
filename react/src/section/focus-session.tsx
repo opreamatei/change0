@@ -322,12 +322,13 @@ export default function FocusSession({
                 <circle cx="115" cy="115" r={DOIT_R} fill="none" stroke={color} strokeWidth="11" strokeLinecap="round"
                   strokeDasharray={DOIT_CIRC} strokeDashoffset={dashOffset}
                   style={{ transition: isCelebrating ? 'stroke-dashoffset .45s cubic-bezier(.16,1,.3,1), stroke .3s ease' : 'stroke-dashoffset .8s linear, stroke .3s ease' }} />
+                {!isCelebrating && (
+                  <circle cx={dotX} cy={dotY} r="6" fill={color} style={{ transition: 'cx .8s linear, cy .8s linear, fill .3s ease' }} />
+                )}
+                {/* White hold ring last → always paints above the orange ring/dot (grey track stays underneath). */}
                 {holdProgress > 0 && (
                   <circle cx="115" cy="115" r={DOIT_R} fill="none" stroke="rgba(255,255,255,.92)" strokeWidth="11"
                     strokeLinecap="round" strokeDasharray={DOIT_CIRC} strokeDashoffset={holdDashOffset} />
-                )}
-                {!isCelebrating && (
-                  <circle cx={dotX} cy={dotY} r="6" fill={color} style={{ transition: 'cx .8s linear, cy .8s linear, fill .3s ease' }} />
                 )}
               </svg>
 

@@ -27,6 +27,22 @@ const CHAPTER_EXTRA = 90
 // the fade has room to breathe and the path visibly extends as goals decompose.
 const MYSTERY_HEADROOM = PATH_SY * 2.5
 
+// The journey visibly "opens up" toward its end: the last few leaves grow
+// progressively larger (each +0.1 of additional scale), and the very last leaf
+// of a solo (untinted) journey is drawn in green to mark the finish line.
+const SCALE_TAIL_COUNT = 5
+const SCALE_TAIL_STEP = 0.1
+const SOLO_FINAL_GREEN = '#34d399'
+// Manual −15% trim of the base goal-node size (the tail growth scales from this).
+const GOAL_BASE_SCALE = 0.85
+
+function tailScale(i: number, n: number): number {
+  const fromEnd = n - 1 - i
+  if (fromEnd < 0 || fromEnd >= SCALE_TAIL_COUNT) return 1
+  // fromEnd 0 (last) → 1.5, … fromEnd 4 (5th-from-last) → 1.1
+  return 1 + (SCALE_TAIL_COUNT - fromEnd) * SCALE_TAIL_STEP
+}
+
 /* ── colour helpers ──────────────────────────────────────────────────────── */
 // Append an alpha to a #rrggbb hex (canvas accepts #rrggbbaa). White strings
 // fall through to an rgba() form so non-hex accents still work.
@@ -140,6 +156,22 @@ export function PathCanvas({
   const mountedRef  = useRef(false)
 
   const n = nodes.length
+
+  // Scaled radius for the growing tail, and the effective tint (solo journeys
+  // turn their final leaf green; tinted/collab journeys keep their assignee hue).
+  const radiusOf = useCallback((i: number) => PATH_NR * GOAL_BASE_SCALE * tailScale(i, n), [n])
+  const tintOf = useCallback(
+    (i: number): string | undefined => {
+      const t = nodes[i]?.tintColor
+      if (t !== undefined) return t
+      // Only the genuine final leaf of a solo journey turns green. If a mystery
+      // zone follows, the server hasn't generated the later nodes yet, so the
+      // last *rendered* node isn't actually the finish — keep it the normal hue.
+      return i === n - 1 && !hasMysteryZone ? SOLO_FINAL_GREEN : undefined
+    },
+    [nodes, n, hasMysteryZone],
+  )
+
   const contentH = useMemo(() => {
     const base = calcContentH(nodes, height)
     // Reserve headroom above the final node so the mystery fade never clips the
@@ -185,8 +217,8 @@ export function PathCanvas({
       if (nodes[i].nodeState !== 'done') continue
       const { x, y } = posOf(i)
       if (y < -WASH_R || y > height + WASH_R) continue
-      const col = nodes[i].tintColor ?? '#ffffff'
-      const isTinted = nodes[i].tintColor !== undefined
+      const col = tintOf(i) ?? '#ffffff'
+      const isTinted = tintOf(i) !== undefined
       // Solo (white) washes read brighter on black, so keep them softer than
       // participant-coloured journey/together paths.
       const peak = isTinted ? 0.20 : 0.035
@@ -222,8 +254,8 @@ export function PathCanvas({
       const isDone  = nodes[i].nodeState === 'done'
       const nxt     = nodes[i + 1].nodeState
       const bright  = isDone && (nxt === 'done' || nxt === 'active')
-      const colA    = nodes[i].tintColor
-      const colB    = nodes[i + 1].tintColor
+      const colA    = tintOf(i)
+      const colB    = tintOf(i + 1)
       const hasTint = colA !== undefined || colB !== undefined
 
       const c1x = a.x, c1y = a.y - PATH_SY * 0.42
@@ -250,8 +282,8 @@ export function PathCanvas({
       }
 
       ctx.beginPath()
-      ctx.moveTo(a.x, a.y - PATH_NR)
-      ctx.bezierCurveTo(c1x, c1y, c2x, c2y, b.x, b.y + PATH_NR)
+      ctx.moveTo(a.x, a.y - radiusOf(i))
+      ctx.bezierCurveTo(c1x, c1y, c2x, c2y, b.x, b.y + radiusOf(i + 1))
       ctx.stroke()
     }
     ctx.setLineDash([])
@@ -260,19 +292,22 @@ export function PathCanvas({
     for (let i = 0; i < n; i++) {
       const node = nodes[i]
       const { x, y } = posOf(i)
-      if (y < -90 || y > height + 90) continue
+      const r = radiusOf(i)
+      const tint = tintOf(i)
+      const gscale = r / PATH_NR
+      if (y < -90 - r || y > height + 90 + r) continue
 
       /* active pulse ring */
       if (node.nodeState === 'active') {
         const pulse = 0.5 + 0.5 * Math.sin(now / 700)
-        const ac = node.tintColor ?? '#ffffff'
-        ctx.beginPath(); ctx.arc(x, y, PATH_NR + 7 + pulse * 4, 0, Math.PI * 2)
-        ctx.strokeStyle = (node.tintColor ? ac : 'rgba(255,255,255,') +
-          (node.tintColor ? `${Math.round((0.18 + pulse * 0.14) * 255).toString(16).padStart(2,'0')}` : `${0.18 + pulse * 0.14})`)
+        const ac = tint ?? '#ffffff'
+        ctx.beginPath(); ctx.arc(x, y, r + 7 + pulse * 4, 0, Math.PI * 2)
+        ctx.strokeStyle = (tint ? ac : 'rgba(255,255,255,') +
+          (tint ? `${Math.round((0.18 + pulse * 0.14) * 255).toString(16).padStart(2,'0')}` : `${0.18 + pulse * 0.14})`)
         ctx.lineWidth = 2; ctx.stroke()
         // second outer ring
-        ctx.beginPath(); ctx.arc(x, y, PATH_NR + 16 + pulse * 5, 0, Math.PI * 2)
-        ctx.strokeStyle = node.tintColor
+        ctx.beginPath(); ctx.arc(x, y, r + 16 + pulse * 5, 0, Math.PI * 2)
+        ctx.strokeStyle = tint
           ? ac + Math.round((0.07 + pulse * 0.05) * 255).toString(16).padStart(2,'0')
           : `rgba(255,255,255,${0.07 + pulse * 0.05})`
         ctx.lineWidth = 1.5; ctx.stroke()
@@ -281,21 +316,21 @@ export function PathCanvas({
       /* mystery ring */
       if (node.isMystery) {
         const t = (now / 3200) % 1
-        ctx.beginPath(); ctx.arc(x, y, PATH_NR + 6 + Math.sin(t * Math.PI * 2) * 2, 0, Math.PI * 2)
+        ctx.beginPath(); ctx.arc(x, y, r + 6 + Math.sin(t * Math.PI * 2) * 2, 0, Math.PI * 2)
         ctx.strokeStyle = 'rgba(167,139,250,0.22)'; ctx.lineWidth = 1.5; ctx.stroke()
       }
 
       /* circle fill */
-      ctx.beginPath(); ctx.arc(x, y, PATH_NR, 0, Math.PI * 2)
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2)
       if (node.nodeState === 'done') {
-        ctx.fillStyle = node.tintColor ?? '#ffffff'
+        ctx.fillStyle = tint ?? '#ffffff'
         ctx.fill()
         // subtle halo for done
-        ctx.beginPath(); ctx.arc(x, y, PATH_NR + 3, 0, Math.PI * 2)
-        ctx.strokeStyle = node.tintColor ? node.tintColor + '33' : 'rgba(255,255,255,0.10)'
+        ctx.beginPath(); ctx.arc(x, y, r + 3, 0, Math.PI * 2)
+        ctx.strokeStyle = tint ? tint + '33' : 'rgba(255,255,255,0.10)'
         ctx.lineWidth = 3; ctx.stroke()
       } else if (node.nodeState === 'active') {
-        ctx.fillStyle = node.tintColor ?? '#ffffff'
+        ctx.fillStyle = tint ?? '#ffffff'
         ctx.fill()
       } else if (node.isMystery) {
         ctx.fillStyle = '#1a1325'; ctx.fill()
@@ -305,29 +340,29 @@ export function PathCanvas({
       } else {
         // idle
         ctx.fillStyle = '#1a1a1a'; ctx.fill()
-        ctx.strokeStyle = node.tintColor ? node.tintColor + '66' : 'rgba(255,255,255,0.22)'
+        ctx.strokeStyle = tint ? tint + '66' : 'rgba(255,255,255,0.22)'
         ctx.lineWidth = 2.5; ctx.stroke()
       }
 
       /* glyph / star — drawn directly on the disc, no shadow */
       if (node.nodeState === 'done') {
-        const sc = (node.tintColor && node.tintColor !== '#ffffff') ? '#ffffff' : '#000000'
-        drawStarPath(ctx, x, y, 12, 5)
+        const sc = (tint && tint !== '#ffffff') ? '#ffffff' : '#000000'
+        drawStarPath(ctx, x, y, 12 * gscale, 5 * gscale)
         ctx.fillStyle = sc; ctx.fill()
         ctx.lineJoin = 'round'; ctx.lineCap = 'round'
         ctx.lineWidth = 3; ctx.strokeStyle = sc; ctx.stroke()
         ctx.lineJoin = 'miter'; ctx.lineCap = 'butt'
       } else if (node.nodeState === 'active') {
-        ctx.font = 'bold 22px ui-sans-serif,system-ui,-apple-system,sans-serif'
+        ctx.font = `bold ${Math.round(22 * gscale)}px ui-sans-serif,system-ui,-apple-system,sans-serif`
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-        ctx.fillStyle = (node.tintColor && node.tintColor !== '#ffffff') ? '#ffffff' : '#000000'
+        ctx.fillStyle = (tint && tint !== '#ffffff') ? '#ffffff' : '#000000'
         ctx.fillText(String(node.num), x, y + 1)
       } else {
-        ctx.font = 'bold 22px ui-sans-serif,system-ui,-apple-system,sans-serif'
+        ctx.font = `bold ${Math.round(22 * gscale)}px ui-sans-serif,system-ui,-apple-system,sans-serif`
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
         const glyph  = node.isMystery ? '?' : String(node.num)
         const gColor = node.isMystery ? 'rgba(196,181,253,0.70)'
-          : node.tintColor ? node.tintColor + 'bb'
+          : tint ? tint + 'bb'
           : 'rgba(255,255,255,0.38)'
         ctx.fillStyle = gColor; ctx.fillText(glyph, x, y + 1)
       }
@@ -335,10 +370,10 @@ export function PathCanvas({
       /* label */
       const lCol = node.isMystery ? 'rgba(196,181,253,0.85)'
         : node.nodeState === 'done'
-          ? (node.tintColor ? node.tintColor + 'ff' : 'rgba(255,255,255,0.85)')
+          ? (tint ? tint + 'ff' : 'rgba(255,255,255,0.85)')
         : node.nodeState === 'active'
-          ? (node.tintColor ? node.tintColor + 'ff' : '#ffffff')
-        : node.tintColor ? node.tintColor + 'dd'
+          ? (tint ? tint + 'ff' : '#ffffff')
+        : tint ? tint + 'dd'
         : 'rgba(255,255,255,0.72)'
 
       const lText = node.isMystery ? '• • •' : node.title
@@ -353,7 +388,7 @@ export function PathCanvas({
       ctx.shadowBlur = 4
       ctx.shadowOffsetY = 1
       for (let li = 0; li < lines.length; li++) {
-        const lx = x, ly = y + PATH_NR + LABEL_GAP + li * LABEL_LH
+        const lx = x, ly = y + r + LABEL_GAP + li * LABEL_LH
         ctx.fillStyle = lCol
         ctx.fillText(lines[li], lx, ly)
       }
@@ -392,7 +427,7 @@ export function PathCanvas({
         const alpha = 0.38 * Math.pow(0.55, s)
         ctx.lineWidth = 4
         ctx.strokeStyle = `rgba(255,255,255,${alpha})`
-        const sY = s === 0 ? aym - PATH_NR : aym
+        const sY = s === 0 ? aym - radiusOf(n - 1) : aym
         ctx.beginPath(); ctx.moveTo(axm, sY)
         ctx.bezierCurveTo(axm, aym - PATH_SY * 0.42, bxm, bym + PATH_SY * 0.42, bxm, bym)
         ctx.stroke()
@@ -401,7 +436,7 @@ export function PathCanvas({
 
       // Begin the fade just above the topmost real node so the node and its label
       // stay fully lit — only the empty space beyond it dims into the unknown.
-      const fadeFrom = topY - PATH_NR - 18
+      const fadeFrom = topY - radiusOf(n - 1) - 18
       const fadeTo   = Math.max(0, fadeFrom - PATH_SY * 2.5)
       if (fadeFrom > fadeTo) {
         const grad = ctx.createLinearGradient(0, fadeFrom, 0, fadeTo)
@@ -412,7 +447,7 @@ export function PathCanvas({
       }
       if (fadeTo > 0) { ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, width, fadeTo) }
     }
-  }, [nodes, width, height, n, contentH, nodeYsBase, hasMysteryZone, userOverlay])
+  }, [nodes, width, height, n, contentH, nodeYsBase, hasMysteryZone, userOverlay, radiusOf, tintOf])
 
   /* RAF — only animate while active/mystery nodes exist */
   useEffect(() => {
@@ -469,9 +504,10 @@ export function PathCanvas({
       const nx = nodeXForNode(i, nodes[i]!, width)
       const ny = (nodeYsBase[i] ?? nodeYAt(i, contentH)) - offsetRef.current
       const dx = px - nx, dh = py - ny
-      if (dx*dx + dh*dh <= (PATH_NR + HIT_PAD)**2) { onSelect(i); return }
-      const lt = ny + PATH_NR + LABEL_GAP - HIT_PAD
-      const lb = ny + PATH_NR + LABEL_GAP + LABEL_LH * LABEL_LINES + HIT_PAD
+      const r = radiusOf(i)
+      if (dx*dx + dh*dh <= (r + HIT_PAD)**2) { onSelect(i); return }
+      const lt = ny + r + LABEL_GAP - HIT_PAD
+      const lb = ny + r + LABEL_GAP + LABEL_LH * LABEL_LINES + HIT_PAD
       if (px >= nx - LABEL_MAX_W/2 - HIT_PAD && px <= nx + LABEL_MAX_W/2 + HIT_PAD && py >= lt && py <= lb)
         { onSelect(i); return }
     }

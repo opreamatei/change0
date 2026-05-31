@@ -1650,11 +1650,31 @@ static void scale_decomp_children_to_budget(DecompChild *children, size_t count,
 		pause_sum += children[i].pause_to_next;
 		est_sum += (time_t)children[i].estimated_time;
 	}
-	time_t est_budget = target_total - pause_sum;
-	if (est_budget < (time_t)count) est_budget = (time_t)count; /* keep each >= 1s */
-	if (est_sum <= est_budget) return; /* already fits */
 
-	double factor = (double)est_budget / (double)est_sum;
+	if (est_sum + pause_sum <= target_total) return; /* already fits */
+
+	/*
+	 * The real work time (estimated_time) is the essential part of a leaf; the
+	 * rest gaps (pause_to_next) are compressible spacing. A model that hands
+	 * back huge pauses must never be allowed to cannibalise the work budget and
+	 * crush every task to ~1 second. So fit the total by compressing the
+	 * PAUSES first, keeping the work intact. Only if the work alone already
+	 * exceeds the budget do we scale the work down (and drop the pauses).
+	 */
+	if (est_sum <= target_total){
+		time_t pause_budget = target_total - est_sum;
+		if (pause_sum > pause_budget){
+			double pf = pause_sum > 0 ? (double)pause_budget / (double)pause_sum : 0.0;
+			for (size_t i = 0; i < count; i++)
+				children[i].pause_to_next = (time_t)((double)children[i].pause_to_next * pf);
+		}
+		return;
+	}
+
+	/* Work alone overflows the budget: drop the pauses and scale the work. */
+	for (size_t i = 0; i < count; i++)
+		children[i].pause_to_next = 0;
+	double factor = (double)target_total / (double)est_sum;
 	for (size_t i = 0; i < count; i++){
 		size_t scaled = (size_t)((double)children[i].estimated_time * factor);
 		children[i].estimated_time = scaled < 1 ? 1 : scaled;

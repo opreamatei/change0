@@ -24,7 +24,7 @@ interface SelectResponse {
 }
 
 interface LoginViewProps {
-  onLogin: (user: LocalUser, clientBaseUrl: string) => void
+  onLogin: (user: LocalUser, clientBaseUrl: string, isNew?: boolean) => void
 }
 
 export default function LoginView({ onLogin }: LoginViewProps) {
@@ -49,7 +49,7 @@ export default function LoginView({ onLogin }: LoginViewProps) {
     void refresh()
   }, [])
 
-  async function select(id: string) {
+  async function select(id: string, isNew = false) {
     try {
       setBusy(true)
       setError(null)
@@ -60,7 +60,7 @@ export default function LoginView({ onLogin }: LoginViewProps) {
       })
       if (!res.ok) throw new Error(`Select failed: ${res.status}`)
       const payload = (await res.json()) as SelectResponse
-      onLogin({ id: payload.id, name: payload.name }, `http://127.0.0.1:${payload.port}`)
+      onLogin({ id: payload.id, name: payload.name }, `http://127.0.0.1:${payload.port}`, isNew)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -83,7 +83,7 @@ export default function LoginView({ onLogin }: LoginViewProps) {
       const created = (await res.json()) as { id: string }
       setNewName('')
       await refresh()
-      await select(created.id)
+      await select(created.id, true)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setBusy(false)

@@ -526,14 +526,27 @@ void handle_post_goal_create(int fd, const HttpRequest *req, User *user)
 
 	json_get_string_field(req->body, "journeyId", journey_id, sizeof(journey_id));
 
-	printf("goal/create title=%s extraInfo=%s journeyId=%s\n", title, extra_info, journey_id);
+	/* No journeyId in the request (e.g. the onboarding flow) → fall back to the
+	 * user's default journey. Passing NULL crashes downstream in CreateGoal,
+	 * which requires a real journey to attach the goal to. */
+	const char *effective_journey_id =
+		journey_id[0] ? journey_id :
+		(user->journey_count > 0 ? user->journeys[0] : NULL);
+
+	if (!effective_journey_id) {
+		http_send_json(fd, 409, "Conflict",
+			"{\"ok\":false,\"error\":\"no_journey\"}");
+		return;
+	}
+
+	printf("goal/create title=%s extraInfo=%s journeyId=%s\n", title, extra_info, effective_journey_id);
 
 	InitString(&title_s,      strlen(title)      + 1);
 	InitString(&extra_info_s, strlen(extra_info) + 1);
 	CatString(&title_s,      title,      strlen(title));
 	CatString(&extra_info_s, extra_info, strlen(extra_info));
 
-	goal = CreateUserGoal(&title_s, &extra_info_s, journey_id[0] ? journey_id : NULL, start_ds_session, user);
+	goal = CreateUserGoal(&title_s, &extra_info_s, effective_journey_id, start_ds_session, user);
 
 	FreeString(&extra_info_s);
 	FreeString(&title_s);
