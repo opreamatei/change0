@@ -35,6 +35,19 @@ interface LoginViewProps {
   onLogin: (user: LocalUser, clientBaseUrl: string, isNew?: boolean) => void
 }
 
+/* Fetch with a hard timeout so an unreachable server (very common on a real
+   device, where the default 127.0.0.1 points at the phone) fails fast with a
+   clear error instead of hanging and leaving the buttons stuck on "busy". */
+async function fetchTimeout(url: string, opts: RequestInit = {}, ms = 6000) {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), ms)
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal })
+  } finally {
+    clearTimeout(t)
+  }
+}
+
 export default function LoginView({ onLogin }: LoginViewProps) {
   const [users, setUsers] = useState<ServerUser[]>([])
   const [newName, setNewName] = useState('')
@@ -73,12 +86,13 @@ export default function LoginView({ onLogin }: LoginViewProps) {
   async function refresh() {
     try {
       setError(null)
-      const res = await fetch(CENTRAL_ENDPOINTS.users, { cache: 'no-store' })
+      const res = await fetchTimeout(CENTRAL_ENDPOINTS.users, { cache: 'no-store' })
       if (!res.ok) throw new Error(`Central server returned ${res.status}`)
       const payload = (await res.json()) as UserListResponse
       setUsers(payload.users ?? [])
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+    } catch {
+      setUsers([])
+      setError(`Couldn't reach the server at ${protocol}://${host}. Check the Server URL.`)
     }
   }
 
@@ -90,7 +104,7 @@ export default function LoginView({ onLogin }: LoginViewProps) {
     try {
       setBusy(true)
       setError(null)
-      const res = await fetch(CENTRAL_ENDPOINTS.usersSelect, {
+      const res = await fetchTimeout(CENTRAL_ENDPOINTS.usersSelect, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id }),
@@ -98,8 +112,8 @@ export default function LoginView({ onLogin }: LoginViewProps) {
       if (!res.ok) throw new Error(`Select failed: ${res.status}`)
       const payload = (await res.json()) as SelectResponse
       onLogin({ id: payload.id, name: payload.name }, buildClientBaseUrl(payload.port), isNew)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+    } catch {
+      setError(`Couldn't reach the server at ${protocol}://${host}. Check the Server URL.`)
     } finally {
       setBusy(false)
     }
@@ -111,7 +125,7 @@ export default function LoginView({ onLogin }: LoginViewProps) {
     try {
       setBusy(true)
       setError(null)
-      const res = await fetch(CENTRAL_ENDPOINTS.usersCreate, {
+      const res = await fetchTimeout(CENTRAL_ENDPOINTS.usersCreate, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
