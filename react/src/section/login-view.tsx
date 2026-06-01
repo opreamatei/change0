@@ -43,16 +43,30 @@ export default function LoginView({ onLogin }: LoginViewProps) {
   const [showSettings, setShowSettings] = useState(false)
   const [protocol, setProtocol] = useState<'http' | 'https'>(getServerProtocol())
   const [host, setHost] = useState(getServerHost())
+  const [urlInput, setUrlInput] = useState(`${getServerProtocol()}://${getServerHost()}`)
 
-  function applyProtocol(p: 'http' | 'https') {
-    setProtocol(p)
-    setServerProtocol(p)
-    void refresh()
-  }
-
-  function applyHost() {
-    setServerHost(host)
-    setHost(getServerHost())
+  /* Paste any link — protocol (http/https) and host are detected from it.
+     A bare host like "192.168.0.4" defaults to http. */
+  function applyUrl() {
+    let s = urlInput.trim()
+    if (!s) return
+    if (!/^https?:\/\//i.test(s)) s = `http://${s}`
+    let proto: 'http' | 'https' = 'http'
+    let h = ''
+    try {
+      const u = new URL(s)
+      proto = u.protocol === 'https:' ? 'https' : 'http'
+      h = u.hostname
+    } catch {
+      setError('Invalid server URL')
+      return
+    }
+    if (!h) { setError('Invalid server URL'); return }
+    setServerProtocol(proto)
+    setServerHost(h)
+    setProtocol(proto)
+    setHost(h)
+    setUrlInput(`${proto}://${h}`)
     void refresh()
   }
 
@@ -116,50 +130,50 @@ export default function LoginView({ onLogin }: LoginViewProps) {
   return (
     <main className="min-h-full px-4 py-8 text-white sm:px-6">
       <section className="mx-auto w-full max-w-md p-2">
-        <div className="mb-4 flex items-center justify-between">
-          <h1 className="text-lg font-semibold">Sign in</h1>
-          <button
-            type="button"
-            onClick={() => setShowSettings((s) => !s)}
-            className="text-xs text-white/45 hover:text-white/80"
-          >
-            {protocol.toUpperCase()} · {host} ⚙
-          </button>
-        </div>
+        <h1 className="mb-3 text-lg font-semibold">Sign in</h1>
+
+        <button
+          type="button"
+          onClick={() => setShowSettings((s) => !s)}
+          className="mb-4 flex w-full items-center justify-between rounded-lg px-3 py-2.5"
+          style={{ background: 'rgba(255,255,255,.06)', border: '1px solid #2a2a2a' }}
+        >
+          <span className="flex items-center gap-2 text-sm font-medium text-white/85">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+            Server
+          </span>
+          <span className="text-xs text-white/45">{protocol}://{host} ▾</span>
+        </button>
 
         {showSettings && (
-          <div className="mb-4 rounded border border-[#2a2a2a] p-3">
-            <p className="mb-2 text-[11px] uppercase tracking-wider text-white/35">Server</p>
-            <div className="mb-2 flex gap-1.5">
-              {(['http', 'https'] as const).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => applyProtocol(p)}
-                  className="flex-1 rounded px-3 py-1.5 text-xs font-medium"
-                  style={{
-                    background: protocol === p ? '#fff' : 'rgba(255,255,255,.06)',
-                    color: protocol === p ? '#000' : 'rgba(255,255,255,.7)',
-                    border: '1px solid #2a2a2a',
-                  }}
-                >
-                  {p.toUpperCase()}
-                </button>
-              ))}
+          <div className="mb-4 rounded-lg border border-[#2a2a2a] p-3">
+            <p className="mb-2 text-[11px] uppercase tracking-wider text-white/35">Server URL</p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                onBlur={applyUrl}
+                onKeyDown={(e) => { if (e.key === 'Enter') applyUrl() }}
+                placeholder="http://127.0.0.1 or https://my-server.com"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                className="flex-1 rounded border border-[#2a2a2a] bg-transparent px-2 py-1.5 text-sm"
+              />
+              <button
+                type="button"
+                onClick={applyUrl}
+                className="rounded bg-white px-3 py-1.5 text-xs font-bold text-black"
+              >
+                Use
+              </button>
             </div>
-            <input
-              type="text"
-              value={host}
-              onChange={(e) => setHost(e.target.value)}
-              onBlur={applyHost}
-              onKeyDown={(e) => { if (e.key === 'Enter') applyHost() }}
-              placeholder="127.0.0.1"
-              spellCheck={false}
-              autoCapitalize="off"
-              className="w-full rounded border border-[#2a2a2a] bg-transparent px-2 py-1 text-sm"
-            />
             <p className="mt-1.5 text-[10px] text-white/30">
-              Central port {CENTRAL_SERVER_PORT} · changing these reloads the user list.
+              Paste a link — http/https is detected automatically. Central port {CENTRAL_SERVER_PORT}.
             </p>
           </div>
         )}

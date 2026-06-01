@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { CENTRAL_ENDPOINTS, SERVER_ENDPOINTS, getClientBaseUrl } from '../config/server'
+import { SERVER_ENDPOINTS, getClientBaseUrl } from '../config/server'
 
 const POLL_MS     = 3000
 const TIMEOUT_MS  = 2500
@@ -16,9 +16,17 @@ export default function ServerStatus() {
     async function probe() {
       if (!alive) return
 
-      const url = getClientBaseUrl()
-        ? SERVER_ENDPOINTS.goalList
-        : CENTRAL_ENDPOINTS.users
+      // Only monitor the per-user client server (i.e. after sign-in). While in
+      // the login/sign-in menu there is no client server yet, so never show the
+      // "please wait" overlay there.
+      const base = getClientBaseUrl()
+      if (!base) {
+        failsRef.current = 0
+        if (alive) setDown(false)
+        if (alive) timerRef.current = setTimeout(probe, POLL_MS)
+        return
+      }
+      const url = SERVER_ENDPOINTS.goalList
 
       const ctrl = new AbortController()
       const deadline = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
