@@ -1427,6 +1427,29 @@ MiddlewareResult RunClientMiddleware(
 	return result;
 }
 
+/*
+ * Code-callable entry point for the middleware — same engine as the interactive
+ * chat, but invoked directly from code with a (possibly predefined) prompt,
+ * without the HTTP/SSE layer. It wires the real deep-search backend and passes
+ * a NULL emit (no live event stream; events are still recorded into the session
+ * history so a later UI fetch can replay them).
+ *
+ * Use this for non-interactive callers (scheduled prompts, automations,
+ * predefined questions). The caller owns the returned MiddlewareResult and must
+ * FreeMiddlewareResult() it. `session_id` may be NULL (a default is used);
+ * pass a stable id to accumulate context across calls, or a fresh one for a
+ * one-shot query.
+ */
+MiddlewareResult RunMiddlewareQuery(User *user, const char *session_id, const char *input)
+{
+	return RunClientMiddleware(
+		session_id && *session_id ? session_id : "service",
+		input,
+		start_ds_session,   /* real deep-search backend (middleware already links it) */
+		NULL,               /* no live emit — events are still recorded to the session */
+		user);
+}
+
 /* Returns JSON array of all sessions whose session_id starts with `user_prefix:`.
    Each element: { "name": <name>, "history": [{"role":..,"text":..}, ...] }
    Caller must free the returned string. */

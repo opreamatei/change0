@@ -201,6 +201,14 @@ MiddlewareResult RunClientMiddleware(
 	User *user
 );
 
+/*
+ * Code-callable entry point: run the middleware engine with a (possibly
+ * predefined) prompt, without the HTTP/SSE layer. Wires the real deep-search
+ * backend and a NULL emit. Caller owns the result and must FreeMiddlewareResult.
+ * session_id may be NULL (a default is used).
+ */
+MiddlewareResult RunMiddlewareQuery(User *user, const char *session_id, const char *input);
+
 _Bool ResolveMiddlewarePermission(
 	const char *permission_id,
 	_Bool approved,
