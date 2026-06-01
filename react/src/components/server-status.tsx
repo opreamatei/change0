@@ -55,29 +55,21 @@ export default function ServerStatus() {
 
   if (!down) return null
 
+  // A quiet badge in the bottom-left corner — it signals the server is
+  // unreachable without blocking or covering the app.
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-[#0a0a0a]/85 backdrop-blur-sm server-status-in">
-      <div className="flex flex-col items-center gap-5">
-        <div className="relative size-10">
-          <span className="absolute inset-0 rounded-full border border-[#2a2a2a]" />
-          <span className="absolute inset-0 rounded-full border border-dashed border-[#444] loading-orbit" style={{ animationDuration: '3s' }} />
-          <span className="absolute inset-[30%] rounded-full bg-white/20 loading-bob" />
-        </div>
-        <div className="flex flex-col items-center gap-1.5">
-          <div className="flex items-center gap-1">
-            {[0, 1, 2].map((i) => (
-              <span
-                key={i}
-                className="size-1 rounded-full bg-white/30"
-                style={{ animation: 'aiDot 1.4s ease-in-out infinite', animationDelay: `${i * 0.18}s` }}
-              />
-            ))}
-          </div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/25">
-            please wait
-          </p>
-        </div>
+    <div
+      className="fixed bottom-3 left-3 z-[300] flex items-center gap-2 rounded-full py-1.5 pl-1.5 pr-3 server-status-in"
+      style={{ background: 'rgba(10,10,10,.85)', border: '1px solid #2a2a2a', backdropFilter: 'blur(4px)' }}
+    >
+      <div className="relative size-5 flex-shrink-0">
+        <span className="absolute inset-0 rounded-full border border-[#2a2a2a]" />
+        <span className="absolute inset-0 rounded-full border border-dashed border-[#555] loading-orbit" style={{ animationDuration: '3s' }} />
+        <span className="absolute inset-[32%] rounded-full bg-white/30 loading-bob" />
       </div>
+      <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/40">
+        reconnecting
+      </span>
     </div>
   )
 }
