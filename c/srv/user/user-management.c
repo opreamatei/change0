@@ -45,6 +45,7 @@ User *alloc_user_slot(void)
 	memset(u, 0, sizeof(*u));
 	InitString(&u->name, 128);
 	InitString(&u->description, 256);
+	InitString(&u->color, 16);
 	InitNodes(&u->nodes);
 	u->schedule_needs_refresh = 1;
 	u->goal_health_needs_refresh = 1;
@@ -59,6 +60,7 @@ void FreeUser(User *user)
 {
 	FreeString(&user->name);
 	FreeString(&user->description);
+	FreeString(&user->color);
 	FreeNodes(&user->nodes);
 	if (user->schedule_table) free(user->schedule_table);
 }

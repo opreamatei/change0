@@ -1084,7 +1084,7 @@ export default function JournalView({ openEntryId = null }: JournalViewProps) {
                       <span className="text-[11px]" style={{ color: 'rgba(255,255,255,.18)' }}>{MONTHS_SHORT[d.getMonth()]}</span>
                     </div>
                   </div>
-                  <div className="h-px mx-5" style={{ background: 'rgba(255,255,255,.07)' }} />
+                  <div className="h-px mx-5" style={{ background: 'rgba(255,255,255,.28)' }} />
                 </div>
               )
             })}

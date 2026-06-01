@@ -3,6 +3,7 @@
 #include "goal-util.h"
 #include "globals.h"
 #include "config.h"
+#include "user-management.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -207,10 +208,15 @@ static void serialize_journey_users(const Journey *j, String *out) {
 		char *esc_name = json_escape_dup(ju->display_name.p   ? ju->display_name.p   : "");
 		char *esc_ctx  = json_escape_dup(ju->context_summary.p ? ju->context_summary.p : "");
 
+		/* Resolve the participant's identity colour so the collab UI can tint by
+		 * the actual user rather than a positional palette. */
+		User *cu = FindUserByID((char *)ju->id);
+		const char *col = (cu && cu->color.p && cu->color.len) ? cu->color.p : "";
+
 		if (i > 0) CatFixed(out, ",");
 		CatTemplateString(out,
-			"{\"id\":\"%s\",\"display_name\":\"%s\",\"context_summary\":\"%s\"}",
-			esc_id, esc_name, esc_ctx);
+			"{\"id\":\"%s\",\"display_name\":\"%s\",\"context_summary\":\"%s\",\"color\":\"%s\"}",
+			esc_id, esc_name, esc_ctx, col);
 
 		free(esc_id);
 		free(esc_name);

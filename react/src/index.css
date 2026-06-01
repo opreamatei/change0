@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 @theme {
+  --font-sans: 'Poppins', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   --color-bg: #000000;
   --color-surface: #111111;
   --color-surface2: #1a1a1a;
@@ -22,7 +23,7 @@
   --white-faint: rgba(255, 255, 255, 0.07);
   --nav-h: 96px;
 
-  font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 16px/1.5 'Poppins', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;

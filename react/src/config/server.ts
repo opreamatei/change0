@@ -11,39 +11,108 @@
 
 export const DEFAULT_SERVER_HOST = '127.0.0.1'
 export const CENTRAL_SERVER_PORT = 8085
+export const DEFAULT_CENTRAL_BASE_URL = `http://${DEFAULT_SERVER_HOST}:${CENTRAL_SERVER_PORT}`
 
 /*
- * Server protocol + host are configurable from the sign-in screen and persist
- * in localStorage, so the same build can talk to a local http server or a
- * remote https one. Everything that targets the central or per-user server
- * derives its base URL from these at access time.
+ * The central server base URL is configurable from the sign-in screen and
+ * persists in localStorage, so the same build can talk to a local http server
+ * or a remote https tunnel. Older protocol/host keys are still read so existing
+ * installs migrate without clearing storage.
  */
+const CENTRAL_BASE_URL_KEY = 'change.centralBaseUrl'
 const PROTOCOL_KEY = 'change.serverProtocol'
 const HOST_KEY     = 'change.serverHost'
 
+function isLocalishHost(hostname: string): boolean {
+  const h = hostname.toLowerCase()
+  if (h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0' || h === '[::1]') return true
+  if (h.startsWith('192.168.') || h.startsWith('10.')) return true
+  const m = h.match(/^172\.(\d+)\./)
+  return !!m && Number(m[1]) >= 16 && Number(m[1]) <= 31
+}
+
+export function normalizeCentralBaseUrl(input: string): string {
+  let s = input.trim()
+  if (!s) return DEFAULT_CENTRAL_BASE_URL
+  if (!/^https?:\/\//i.test(s)) s = `http://${s}`
+
+  const url = new URL(s)
+  if (!url.hostname) throw new Error('Invalid server URL')
+
+  if (!url.port && url.protocol === 'http:' && isLocalishHost(url.hostname)) {
+    url.port = String(CENTRAL_SERVER_PORT)
+  }
+
+  url.hash = ''
+  url.search = ''
+  url.pathname = url.pathname.replace(/\/+$/, '')
+
+  return url.toString().replace(/\/$/, '')
+}
+
+function legacyCentralBaseUrl(): string {
+  const protocol = window.localStorage?.getItem(PROTOCOL_KEY) === 'https' ? 'https' : 'http'
+  const host = window.localStorage?.getItem(HOST_KEY) || DEFAULT_SERVER_HOST
+  return normalizeCentralBaseUrl(`${protocol}://${host}`)
+}
+
+export function getCentralBaseUrl(): string {
+  if (typeof window === 'undefined') return DEFAULT_CENTRAL_BASE_URL
+  const stored = window.localStorage?.getItem(CENTRAL_BASE_URL_KEY)
+  if (stored) {
+    try {
+      return normalizeCentralBaseUrl(stored)
+    } catch {
+      return DEFAULT_CENTRAL_BASE_URL
+    }
+  }
+  return legacyCentralBaseUrl()
+}
+
+export function setCentralBaseUrl(input: string): string {
+  const normalized = normalizeCentralBaseUrl(input)
+  if (typeof window !== 'undefined') {
+    window.localStorage?.setItem(CENTRAL_BASE_URL_KEY, normalized)
+    const url = new URL(normalized)
+    window.localStorage?.setItem(PROTOCOL_KEY, url.protocol === 'https:' ? 'https' : 'http')
+    window.localStorage?.setItem(HOST_KEY, url.hostname)
+  }
+  return normalized
+}
+
 export function getServerProtocol(): 'http' | 'https' {
-  if (typeof window === 'undefined') return 'http'
-  return window.localStorage?.getItem(PROTOCOL_KEY) === 'https' ? 'https' : 'http'
+  return getCentralBaseUrl().startsWith('https:') ? 'https' : 'http'
 }
 export function setServerProtocol(p: 'http' | 'https') {
-  if (typeof window !== 'undefined') window.localStorage?.setItem(PROTOCOL_KEY, p)
+  const url = new URL(getCentralBaseUrl())
+  url.protocol = `${p}:`
+  setCentralBaseUrl(url.toString())
 }
 export function getServerHost(): string {
-  if (typeof window === 'undefined') return DEFAULT_SERVER_HOST
-  return window.localStorage?.getItem(HOST_KEY) || DEFAULT_SERVER_HOST
+  return new URL(getCentralBaseUrl()).hostname
 }
 export function setServerHost(h: string) {
-  if (typeof window !== 'undefined')
-    window.localStorage?.setItem(HOST_KEY, h.trim() || DEFAULT_SERVER_HOST)
+  const url = new URL(getCentralBaseUrl())
+  url.hostname = h.trim() || DEFAULT_SERVER_HOST
+  setCentralBaseUrl(url.toString())
 }
 
 function centralBase(): string {
-  return `${getServerProtocol()}://${getServerHost()}:${CENTRAL_SERVER_PORT}`
+  return getCentralBaseUrl()
 }
 
 /** Build a per-user client base URL from the configured protocol/host. */
 export function buildClientBaseUrl(port: number): string {
-  return `${getServerProtocol()}://${getServerHost()}:${port}`
+  const url = new URL(getCentralBaseUrl())
+  if (!url.port && !isLocalishHost(url.hostname)) {
+    return url.toString().replace(/\/$/, '')
+  }
+
+  url.port = String(port)
+  url.pathname = ''
+  url.search = ''
+  url.hash = ''
+  return url.toString().replace(/\/$/, '')
 }
 
 const STORAGE_KEY = 'change.clientBaseUrl'

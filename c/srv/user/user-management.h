@@ -34,6 +34,12 @@ typedef struct UserType {
 	 * the central server matched them. */
 	_Bool discoverable;
 	String description;
+
+	/* Identity colour: a #rrggbb hex used to represent the user across the UI
+	 * (avatar fallback, collab tints). Assigned at random from a curated palette
+	 * when the account is created, then replaced by the dominant colour of the
+	 * profile picture when the user sets one. */
+	String color;
 } User;
 
 extern User USER_TABLE[MAX_USERS];

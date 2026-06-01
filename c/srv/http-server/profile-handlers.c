@@ -47,10 +47,11 @@ void handle_get_profile(int fd, User *user)
 
 	CatTemplateString(&response,
 		"{\"ok\":true,\"name\":\"%s\",\"user_id\":\"%s\",\"derived\":\"%s\","
-		"\"discoverable\":%s,\"description\":\"%s\",\"onboarded\":%s,\"memories\":%s}",
+		"\"discoverable\":%s,\"description\":\"%s\",\"color\":\"%s\",\"onboarded\":%s,\"memories\":%s}",
 		esc_name, user->id, esc_derived,
 		user->discoverable ? "true" : "false",
 		esc_desc,
+		user->color.p ? user->color.p : "",
 		onboarded ? "true" : "false",
 		memories ? memories : "[]");
 
@@ -113,6 +114,22 @@ void handle_post_profile_update(int fd, const HttpRequest *req, User *user)
 	if (strcmp(key, "description") == 0) {
 		json_get_string_field(req->body, "value", value, sizeof(value));
 		UpdateUserDescription(user, value);
+		http_send_json(fd, 200, "OK", "{\"ok\":true}");
+		return;
+	}
+
+	/* Identity colour — set client-side from the dominant colour of a freshly
+	 * chosen avatar (a #rrggbb hex). Only accept a plausibly-formatted value. */
+	if (strcmp(key, "color") == 0) {
+		json_get_string_field(req->body, "value", value, sizeof(value));
+		if (value[0] != '#' || strlen(value) != 7) {
+			http_send_json(fd, 400, "Bad Request",
+				"{\"ok\":false,\"error\":\"bad_color\"}");
+			return;
+		}
+		EmptyString(&user->color);
+		CatString(&user->color, value, strlen(value));
+		SaveUser(user);
 		http_send_json(fd, 200, "OK", "{\"ok\":true}");
 		return;
 	}

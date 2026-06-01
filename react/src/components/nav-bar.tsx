@@ -44,11 +44,12 @@ export default function NavBar({
     <nav
       className="fixed bottom-3 left-4 right-4 h-[72px] flex items-end justify-between px-2 pb-2.5 z-[100]"
       style={{
-        background: 'rgba(15,15,15,.97)',
-        border: '1px solid rgba(255,255,255,.08)',
+        background: 'rgba(22,22,24,.45)',
+        border: '1px solid rgba(255,255,255,.05)',
         borderRadius: 26,
-        backdropFilter: 'blur(24px)',
-        WebkitBackdropFilter: 'blur(24px)',
+        backdropFilter: 'blur(30px) saturate(180%)',
+        WebkitBackdropFilter: 'blur(30px) saturate(180%)',
+        boxShadow: 'inset 0 1px 0 rgba(255,255,255,.08), 0 8px 32px rgba(0,0,0,.45)',
       }}
     >
       <Btn page="journal" label="Journal">

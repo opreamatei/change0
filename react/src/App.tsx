@@ -30,6 +30,7 @@ import {
 import {
   CENTRAL_ENDPOINTS,
   SERVER_ENDPOINTS,
+  buildClientBaseUrl,
   setClientBaseUrl,
 } from './config/server'
 import { buildGoalPath, buildUserPath, getLocationState, ROOT_GOAL_ID, type RouteName } from './config/utils'
@@ -146,7 +147,7 @@ function App() {
         if (!res.ok) throw new Error(`Select failed: ${res.status}`)
         const payload = (await res.json()) as { id: string; name: string; port: number }
         if (cancelled) return
-        applySession({ id: payload.id, name: payload.name }, `http://127.0.0.1:${payload.port}`)
+        applySession({ id: payload.id, name: payload.name }, buildClientBaseUrl(payload.port))
       } catch {
         if (cancelled) return
         // Unknown/stale user in the URL — fall back to the login menu.

@@ -36,6 +36,7 @@ interface ProfileResponse {
   derived: string
   discoverable: boolean
   description: string
+  color?: string
   memories: MemoryItem[]
 }
 
@@ -560,10 +561,54 @@ async function postUpdate(key: string, value: string, extra?: Record<string, str
   if (!res.ok) throw new Error(`Update failed: ${res.status}`)
 }
 
+/* Derive a representative #rrggbb from an image: downscale, drop near-white /
+ * near-black / desaturated pixels (usually background), then take the most
+ * common remaining colour bucket. Returns null if nothing usable is found. */
+async function dominantColorFromFile(file: File): Promise<string | null> {
+  try {
+    const url = URL.createObjectURL(file)
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const im = new Image()
+      im.onload = () => resolve(im)
+      im.onerror = reject
+      im.src = url
+    })
+    const S = 48
+    const canvas = document.createElement('canvas')
+    canvas.width = S
+    canvas.height = S
+    const ctx = canvas.getContext('2d')
+    URL.revokeObjectURL(url)
+    if (!ctx) return null
+    ctx.drawImage(img, 0, 0, S, S)
+    const { data } = ctx.getImageData(0, 0, S, S)
+
+    const buckets = new Map<number, { n: number; r: number; g: number; b: number }>()
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] < 128) continue
+      const r = data[i], g = data[i + 1], b = data[i + 2]
+      const max = Math.max(r, g, b), min = Math.min(r, g, b)
+      if (max < 28 || min > 224 || max - min < 14) continue // skip black/white/gray
+      const key = ((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4)
+      const e = buckets.get(key) ?? { n: 0, r: 0, g: 0, b: 0 }
+      e.n++; e.r += r; e.g += g; e.b += b
+      buckets.set(key, e)
+    }
+    let best: { n: number; r: number; g: number; b: number } | null = null
+    for (const e of buckets.values()) if (!best || e.n > best.n) best = e
+    if (!best) return null
+    const to = (v: number) => Math.round(v / best!.n).toString(16).padStart(2, '0')
+    return `#${to(best.r)}${to(best.g)}${to(best.b)}`
+  } catch {
+    return null
+  }
+}
+
 export default function SettingsView() {
   const [fields, setFields] = useState<ProfileField[]>([])
   const [userName, setUserName] = useState('')
   const [userId, setUserId] = useState('')
+  const [userColor, setUserColor] = useState('')
   const [avatarVersion, setAvatarVersion] = useState(0)
   const [avatarFailed, setAvatarFailed] = useState(false)
   const avatarInputRef = useRef<HTMLInputElement>(null)
@@ -590,6 +635,7 @@ export default function SettingsView() {
       const data = (await profileRes.json()) as ProfileResponse
       setUserName(data.name ?? '')
       setUserId(data.user_id ?? '')
+      setUserColor(data.color ?? '')
       setDiscoverable(data.discoverable ?? false)
       setDescription(data.description ?? '')
       setFields(parseDerived(data.derived ?? ''))
@@ -619,6 +665,9 @@ export default function SettingsView() {
         if (res.ok) {
           setAvatarFailed(false)
           setAvatarVersion((v) => v + 1)
+          // Re-derive the identity colour from the new picture.
+          const color = await dominantColorFromFile(file)
+          if (color) { setUserColor(color); try { await postUpdate('color', color) } catch { /* non-fatal */ } }
         }
       } catch { /* ignore */ }
     }
@@ -677,7 +726,7 @@ export default function SettingsView() {
         <div
           onClick={() => avatarInputRef.current?.click()}
           className="group relative w-[52px] h-[52px] rounded-full flex items-center justify-center text-xl font-bold flex-shrink-0 overflow-hidden cursor-pointer"
-          style={{ background: 'var(--surface2)', border: '2px solid var(--border-light)' }}
+          style={{ background: userColor || 'var(--surface2)', color: userColor ? '#0a0a0a' : undefined, border: '2px solid var(--border-light)' }}
           title="Change profile picture"
         >
           {!avatarFailed ? (

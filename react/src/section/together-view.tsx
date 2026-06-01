@@ -58,6 +58,7 @@ interface ParticipantSummary {
   index: number
   id: string
   display_name: string
+  color?: string
 }
 
 interface JourneyListItem {
@@ -78,6 +79,7 @@ interface JourneyUser {
   id: string
   display_name: string
   context_summary: string
+  color?: string
 }
 
 interface JourneyGoal {
@@ -369,7 +371,7 @@ function CollabJourneyView({
         : undefined
       prevParentIdx = leaf.parent
       const tintColor = (leaf.assigned_to !== UNASSIGNED && leaf.assigned_to >= 0)
-        ? PARTICIPANT_COLORS[leaf.assigned_to % PARTICIPANT_COLORS.length]
+        ? (detail?.users[leaf.assigned_to]?.color || PARTICIPANT_COLORS[leaf.assigned_to % PARTICIPANT_COLORS.length])
         : undefined
       // for a 2-user journey: user 0 → left side, user 1 → right side
       const sideOverride: PathNodeData['sideOverride'] =
@@ -378,7 +380,7 @@ function CollabJourneyView({
         undefined
       return { key: leaf.localIndex, title: leaf.title, nodeState, num: num++, isMystery: false, isJournal: leaf.goal_type === 1, chapterTitle, tintColor, sideOverride }
     })
-  }, [orderedLeaves, goalMap])
+  }, [orderedLeaves, goalMap, detail])
 
   const focusIdx = useMemo(() => {
     let idx = collabNodes.findIndex((n) => n.nodeState === 'active')
@@ -400,7 +402,7 @@ function CollabJourneyView({
     if (!leaf) return undefined
     const assignedUser = leaf.assigned_to !== UNASSIGNED ? detail.users[leaf.assigned_to] : undefined
     if (!assignedUser) return undefined
-    const color = PARTICIPANT_COLORS[leaf.assigned_to % PARTICIPANT_COLORS.length]
+    const color = assignedUser.color || PARTICIPANT_COLORS[leaf.assigned_to % PARTICIPANT_COLORS.length]
     const label = (assignedUser.display_name || '?').slice(0, 2).toUpperCase()
     return { nodeIdx: frontIdx, label, color }
   }, [collabNodes, orderedLeaves, detail])
@@ -550,6 +552,7 @@ function CollabJourneyView({
       canStart: false,
       accent,
       lockedNote: note,
+      partnerStep: !mine && state !== 'finished',
       passOptions,
       onPass,
     })
@@ -604,15 +607,13 @@ function CollabJourneyView({
           {detail && detail.users.length >= 2 && (
             <div className="flex items-center gap-2">
               {detail.users.slice(0, 2).map((u, i) => (
-                <div key={u.id} className="flex items-center gap-1">
-                  <div
-                    className="w-2 h-2 rounded-full"
-                    style={{ background: PARTICIPANT_COLORS[i] }}
-                  />
-                  <span className="text-[11px]" style={{ color: 'rgba(255,255,255,.45)' }}>
-                    {u.display_name}
-                  </span>
-                </div>
+                <ParticipantAvatar
+                  key={u.id}
+                  id={u.id}
+                  name={u.display_name}
+                  color={u.color || PARTICIPANT_COLORS[i]}
+                  className="h-6 w-6 rounded-full text-[10px] font-bold ring-1 ring-white/15"
+                />
               ))}
             </div>
           )}
@@ -767,7 +768,7 @@ function JourneyPortalCard({
                 key={p.id}
                 id={p.id}
                 name={p.display_name}
-                color={PARTICIPANT_COLORS[i % PARTICIPANT_COLORS.length]}
+                color={p.color || PARTICIPANT_COLORS[i % PARTICIPANT_COLORS.length]}
                 className="h-7 w-7 rounded-full border-2 text-[11px] font-bold"
                 style={{ borderColor: 'rgba(0,0,0,.55)' }}
               />

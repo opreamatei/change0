@@ -14,6 +14,8 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 static Goal *resolve_goal_from_body(const HttpRequest *req, User *user, Journey **owning);
 
@@ -1109,6 +1111,14 @@ void handle_post_goal_create_shared_root(int fd, const HttpRequest *req, User *u
 			journey_id, fb_len);
 		http_send_all(cfd, hdr, (size_t)hlen);
 		http_send_all(cfd, finalize_body, fb_len);
+		/* Drain central's response before closing. A bare close() with the
+		 * unread reply still in our receive buffer can RST the connection and
+		 * drop the finalize on central's side — which left the proposal stuck
+		 * showing "Waiting for partner" forever. Blocking here until central
+		 * finishes (and closes) guarantees the proposal is actually finalized. */
+		shutdown(cfd, SHUT_WR);
+		char drain[256];
+		while (recv(cfd, drain, sizeof(drain), 0) > 0) { }
 		close(cfd);
 	} else {
 		fprintf(stderr, "[create-shared-root] central finalize call failed — proposal not marked.\n");

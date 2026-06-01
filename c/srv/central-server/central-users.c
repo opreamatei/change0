@@ -42,9 +42,9 @@ static void write_user_array(String *out)
 		User *u = &USER_TABLE[i];
 		char *esc_name = json_escape_dup(u->name.p ? u->name.p : "");
 		CatTemplateString(out,
-			"%s{\"id\":\"%s\",\"name\":\"%s\"}",
+			"%s{\"id\":\"%s\",\"name\":\"%s\",\"color\":\"%s\"}",
 			i == 0 ? "" : ",",
-			u->id, esc_name);
+			u->id, esc_name, u->color.p ? u->color.p : "");
 		free(esc_name);
 	}
 	CatFixed(out, "]}");

@@ -19,7 +19,7 @@ export const PATH_SY = 150
 const PT = 80
 const PB = 140
 const LABEL_GAP = 14
-const LABEL_LH = 14
+const LABEL_LH = 18
 const LABEL_MAX_W = 130
 const LABEL_LINES = 2
 const HIT_PAD = 14
@@ -298,6 +298,13 @@ export function PathCanvas({
       const colB    = tintOf(i + 1)
       const hasTint = colA !== undefined || colB !== undefined
 
+      // A node that begins a new chapter has a different parent than the node
+      // before it, so the segment crossing into it joins two goals with
+      // different parents. Fade that connector to 10% opacity so the chapters
+      // read as visually distinct groups rather than one continuous strand.
+      const crossParent  = !!nodes[i + 1].chapterTitle
+      const opacityScale = crossParent ? 0.1 : 1
+
       const c1x = a.x, c1y = a.y - PATH_SY * 0.42
       const c2x = b.x, c2y = b.y + PATH_SY * 0.42
 
@@ -307,7 +314,7 @@ export function PathCanvas({
         // (0.28 / 0.72) hold each colour before a smooth centred crossover.
         const ca = colA ?? colB ?? '#ffffff'
         const cb = colB ?? colA ?? '#ffffff'
-        const alpha = bright ? 0.85 : 0.30
+        const alpha = (bright ? 0.85 : 0.30) * opacityScale
         const grad = ctx.createLinearGradient(a.x, a.y, b.x, b.y)
         grad.addColorStop(0, withAlpha(ca, alpha))
         grad.addColorStop(0.28, withAlpha(ca, alpha))
@@ -316,9 +323,9 @@ export function PathCanvas({
         grad.addColorStop(1, withAlpha(cb, alpha))
         ctx.strokeStyle = grad
       } else if (bright) {
-        ctx.strokeStyle = 'rgba(255,255,255,0.82)'
+        ctx.strokeStyle = `rgba(255,255,255,${0.82 * opacityScale})`
       } else {
-        ctx.strokeStyle = 'rgba(255,255,255,0.13)'
+        ctx.strokeStyle = `rgba(255,255,255,${0.13 * opacityScale})`
       }
 
       ctx.beginPath()
@@ -427,8 +434,8 @@ export function PathCanvas({
 
       const lText = node.isMystery ? '• • •' : node.title
       ctx.font = node.isMystery
-        ? '500 13px ui-sans-serif,system-ui,-apple-system,sans-serif'
-        : '600 12px ui-sans-serif,system-ui,-apple-system,sans-serif'
+        ? `500 17px 'Poppins',ui-sans-serif,system-ui,-apple-system,sans-serif`
+        : `600 16px 'Poppins',ui-sans-serif,system-ui,-apple-system,sans-serif`
       ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'
       const lines = wrapText(ctx, lText, LABEL_MAX_W, LABEL_LINES)
       // subtle black shadow on the label text only (legibility over the path)
@@ -603,12 +610,10 @@ export function PathCanvas({
       {chapterNodes.map((nd, c) => (
         <div key={nd.key} ref={el => { chapterDivsRef.current[c] = el }}
           style={{ position: 'absolute', top: 0, left: 0, right: 0, pointerEvents: 'none', opacity: 0, transition: 'opacity 0.3s ease' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 24px' }}>
-            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,.12)' }} />
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.10em', textTransform: 'uppercase', color: 'rgba(255,255,255,.40)', fontFamily: 'ui-sans-serif,system-ui,-apple-system,sans-serif', maxWidth: 180, textAlign: 'center', lineHeight: 1.4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 24px' }}>
+            <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '.10em', textTransform: 'uppercase', color: 'rgba(255,255,255,.70)', fontFamily: 'inherit', maxWidth: 320, textAlign: 'center', lineHeight: 1.4 }}>
               {nd.chapterTitle}
             </span>
-            <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,.12)' }} />
           </div>
         </div>
       ))}

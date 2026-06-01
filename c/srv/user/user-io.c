@@ -15,6 +15,25 @@
 
 extern User *alloc_user_slot(void);
 
+/* Curated identity-colour palette: distinct, legible-on-dark hues. A new user
+ * is assigned one at random; it is later overwritten by the dominant colour of
+ * their profile picture. Kept here (not config) since it is purely cosmetic. */
+static const char *USER_COLOR_PALETTE[] = {
+	"#f43f5e", "#f59e0b", "#10b981", "#3b82f6", "#8b5cf6",
+	"#ec4899", "#14b8a6", "#eab308", "#6366f1", "#ef4444",
+	"#22c55e", "#0ea5e9",
+};
+
+/* Pick a palette colour into u->color. The user id is already random, so a byte
+ * of it gives a stable-yet-arbitrary index without needing a separate RNG. */
+static void assign_random_user_color(User *u)
+{
+	size_t n = sizeof(USER_COLOR_PALETTE) / sizeof(USER_COLOR_PALETTE[0]);
+	size_t idx = (unsigned char)u->id[1] % n;
+	EmptyString(&u->color);
+	CatString(&u->color, USER_COLOR_PALETTE[idx], strlen(USER_COLOR_PALETTE[idx]));
+}
+
 static void ensure_dir(const char *path)
 {
 	if (mkdir(path, 0755) != 0 && errno != EEXIST)
@@ -44,9 +63,10 @@ static void write_user_meta(const User *u)
 	InitString(&out, 512 + (u->description.p ? u->description.len : 0));
 	CatTemplateString(&out,
 		"{\"id\":\"%s\",\"name\":\"%s\",\"port\":%d,"
-		"\"discoverable\":%s,\"description\":\"%s\",\"journeys\":[",
+		"\"discoverable\":%s,\"description\":\"%s\",\"color\":\"%s\",\"journeys\":[",
 		u->id, esc_name, u->port,
-		u->discoverable ? "true" : "false", esc_desc);
+		u->discoverable ? "true" : "false", esc_desc,
+		u->color.p ? u->color.p : "");
 	for (size_t i = 0; i < u->journey_count; i++) {
 		if (i > 0) CatFixed(&out, ",");
 		CatTemplateString(&out, "\"%s\"", u->journeys[i]);
@@ -120,8 +140,17 @@ static _Bool load_user_from_dir(const char *id_dirname)
 		if (v && v->type == json_string)
 			CatString(&u->description, v->u.string.ptr, v->u.string.length);
 
+		v = json_object_get(doc, "color");
+		if (v && v->type == json_string && v->u.string.length > 0)
+			CatString(&u->color, v->u.string.ptr, v->u.string.length);
+
 		load_user_journeys(u, json_object_get(doc, "journeys"));
 	}
+
+	/* Legacy accounts predate identity colours — assign one now (and persist it
+	 * below via the caller's normal save paths) so every user has a colour. */
+	if (!u->color.p || u->color.len == 0)
+		assign_random_user_color(u);
 
 	if (doc) json_value_free(doc);
 	free(file_data);
@@ -169,6 +198,7 @@ User *NewUser(const String *name)
 	User *u = alloc_user_slot();
 
 	random_id(u->id, USER_ID_SIZE);
+	assign_random_user_color(u);
 
 	if (name && name->p && name->len > 0)
 		CatString(&u->name, name->p, name->len);

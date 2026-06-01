@@ -322,6 +322,24 @@ void handle_delete_shared_journey(int fd, const char *journey_id)
 }
 
 /*
+ * A shared journey must also be registered in each participant's *local*
+ * journey list (User.journeys[]). The per-user schedule only iterates
+ * user->journeys[] (schedule-system.c), so without this the shared goals
+ * assigned to a participant are never scheduled even though the journey
+ * exists on central. No-op if already registered; persists the user meta on
+ * change. Safe to call repeatedly (used both at create time and as a backfill
+ * when the journey list is polled, which heals users created before this fix).
+ */
+static void register_journey_for_user(User *u, const Journey *j)
+{
+	if (!u || !j) return;
+	for (size_t i = 0; i < u->journey_count; i++)
+		if (strncmp(u->journeys[i], j->id, JOURNEY_ID_SIZE) == 0) return;
+	AddToJourney(u, j);
+	SaveUser(u);
+}
+
+/*
  * Pull participants out of the request body.
  *
  * Expected shape: {"user_ids": ["...", "..."]}. We assert loudly when:
@@ -374,6 +392,7 @@ static _Bool populate_shared_journey_users(Journey *j, const char *body, size_t 
 		const char *display_name = (u->name.p && u->name.len) ? u->name.p : "";
 		const char *summary      = (u->description.p && u->description.len) ? u->description.p : "";
 		AddUserToJourney(j, u->id, display_name, summary);
+		register_journey_for_user(u, j);
 	}
 
 	json_value_free(root);
@@ -462,6 +481,10 @@ void handle_list_shared_journeys(int fd, const char *query)
 		Journey *j = &SharedJourneyTable[i];
 		if (FindUserIndexInJourney(j, user_id) >= MAX_JOURNEY_USERS) continue;
 
+		/* Heal users whose local journey list predates this journey, so the
+		 * shared steps assigned to them start showing up in their schedule. */
+		register_journey_for_user(FindUserByID(user_id), j);
+
 		char *esc_id    = json_escape_dup(j->id);
 		char *esc_title = json_escape_dup(j->title.p ? j->title.p : "");
 
@@ -480,11 +503,13 @@ void handle_list_shared_journeys(int fd, const char *query)
 			JourneyUser *ju = &j->users[u];
 			char *esc_uid  = json_escape_dup(ju->id);
 			char *esc_name = json_escape_dup(ju->display_name.p ? ju->display_name.p : "");
+			User *cu = FindUserByID(ju->id);
+			const char *col = (cu && cu->color.p && cu->color.len) ? cu->color.p : "";
 
 			if (u > 0) CatFixed(&out, ",");
 			CatTemplateString(&out,
-				"{\"index\":%zu,\"id\":\"%s\",\"display_name\":\"%s\"}",
-				u, esc_uid, esc_name);
+				"{\"index\":%zu,\"id\":\"%s\",\"display_name\":\"%s\",\"color\":\"%s\"}",
+				u, esc_uid, esc_name, col);
 
 			free(esc_uid);
 			free(esc_name);

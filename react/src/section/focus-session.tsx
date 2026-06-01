@@ -21,6 +21,9 @@ export interface FocusTarget {
   /** When set, the session is read-only (e.g. a shared-journey step that
    *  belongs to someone else) and this note explains why. */
   lockedNote?: string
+  /** Shared-journey only: this step is a partner's turn, not yours. Swaps the
+   *  focus timer for a friendly "come back later" screen. */
+  partnerStep?: boolean
   /** Shared-journey only: participants this step can be passed to. When present
    *  (and the step is not started) a "Pass to…" control is shown. */
   passOptions?: { id: string; name: string }[]
@@ -41,6 +44,17 @@ const HOLD_MS = 800
 
 const RUNNING_COLOR = '#ff9f0a'
 const DONE_COLOR = '#30d158'
+
+/* Shown when you open a step that belongs to your partner — picked at random on
+ * open so the wait feels warm rather than canned. */
+const PARTNER_MESSAGES = [
+  "Not your turn just yet — your partner's on this one.",
+  "This step is your partner's. Catch you on the next one!",
+  "Your partner's got this. You're up again soon.",
+  "Hang tight — this step belongs to your partner.",
+  "Sit this one out — it's your partner's move.",
+  "Nothing for you to do here yet. See you next step!",
+]
 
 function fmtClock(s: number) {
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`
@@ -102,6 +116,8 @@ export default function FocusSession({
 }) {
   const { title, tips, state: nodeState, isMystery, canStart, pending, rootProgressPct } = target
   const accent = target.accent
+  const partnerStep = !!target.partnerStep
+  const [partnerMsg] = useState(() => PARTNER_MESSAGES[Math.floor(Math.random() * PARTNER_MESSAGES.length)])
 
   // Session length comes from the goal's estimate, clamped to a sane focus window.
   const sessionLen = target.requiredTimeSeconds > 0
@@ -296,7 +312,13 @@ export default function FocusSession({
             </div>
           )}
 
-          {isMystery ? (
+          {partnerStep && !isCelebrating ? (
+            <div className="mb-10 flex select-none flex-col items-center justify-center" style={{ width: 230, height: 230 }}>
+              <div className="font-bold leading-none" style={{ fontSize: 104, color: accent || 'rgba(255,255,255,.85)' }}>
+                :)
+              </div>
+            </div>
+          ) : isMystery ? (
             <p className="mb-8 max-w-[280px] text-center text-sm italic text-violet-300/60">
               Too long to do in one go — it'll split into smaller steps when you reach it.
             </p>
@@ -361,7 +383,11 @@ export default function FocusSession({
             </div>
           )}
 
-          {target.lockedNote && !isCelebrating && (
+          {partnerStep && !isCelebrating ? (
+            <p className="mb-4 max-w-[290px] text-center text-[14px] font-medium leading-[1.5]" style={{ color: 'rgba(255,255,255,.6)' }}>
+              {partnerMsg}
+            </p>
+          ) : target.lockedNote && !isCelebrating && (
             <p className="mb-4 text-center text-[12px] font-semibold" style={{ color: 'rgba(255,200,50,.85)' }}>
               {target.lockedNote}
             </p>
@@ -385,7 +411,7 @@ export default function FocusSession({
             </div>
           )}
 
-          {target.passOptions && target.passOptions.length > 0 && effectiveState === 'idle' && !isCelebrating && (
+          {target.passOptions && target.passOptions.length > 0 && effectiveState === 'idle' && !isCelebrating && !partnerStep && (
             <div className="mt-4 flex flex-col items-center gap-1.5">
               <span className="text-[11px] text-white/30">Pass this step to</span>
               <div className="flex flex-wrap justify-center gap-2">

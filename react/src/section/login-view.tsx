@@ -3,10 +3,8 @@ import {
   CENTRAL_ENDPOINTS,
   CENTRAL_SERVER_PORT,
   buildClientBaseUrl,
-  getServerProtocol,
-  setServerProtocol,
-  getServerHost,
-  setServerHost,
+  getCentralBaseUrl,
+  setCentralBaseUrl,
 } from '../config/server'
 
 export interface LocalUser {
@@ -54,36 +52,22 @@ export default function LoginView({ onLogin }: LoginViewProps) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
-  const [protocol, setProtocol] = useState<'http' | 'https'>(getServerProtocol())
-  const [host, setHost] = useState(getServerHost())
-  const [urlInput, setUrlInput] = useState(`${getServerProtocol()}://${getServerHost()}`)
+  const [serverUrl, setServerUrl] = useState(getCentralBaseUrl())
+  const [urlInput, setUrlInput] = useState(getCentralBaseUrl())
 
-  /* Paste any link — protocol (http/https) and host are detected from it.
-     A bare host like "192.168.0.4" defaults to http. */
+  /* Paste any link. Local bare hosts default to http and the central port. */
   function applyUrl() {
-    let s = urlInput.trim()
-    if (!s) return
-    if (!/^https?:\/\//i.test(s)) s = `http://${s}`
-    let proto: 'http' | 'https' = 'http'
-    let h = ''
     try {
-      const u = new URL(s)
-      proto = u.protocol === 'https:' ? 'https' : 'http'
-      h = u.hostname
+      const next = setCentralBaseUrl(urlInput)
+      setServerUrl(next)
+      setUrlInput(next)
+      void refresh(next)
     } catch {
       setError('Invalid server URL')
-      return
     }
-    if (!h) { setError('Invalid server URL'); return }
-    setServerProtocol(proto)
-    setServerHost(h)
-    setProtocol(proto)
-    setHost(h)
-    setUrlInput(`${proto}://${h}`)
-    void refresh()
   }
 
-  async function refresh() {
+  async function refresh(displayUrl = serverUrl) {
     try {
       setError(null)
       const res = await fetchTimeout(CENTRAL_ENDPOINTS.users, { cache: 'no-store' })
@@ -92,7 +76,7 @@ export default function LoginView({ onLogin }: LoginViewProps) {
       setUsers(payload.users ?? [])
     } catch {
       setUsers([])
-      setError(`Couldn't reach the server at ${protocol}://${host}. Check the Server URL.`)
+      setError(`Couldn't reach the server at ${displayUrl}. Check the Server URL.`)
     }
   }
 
@@ -113,7 +97,7 @@ export default function LoginView({ onLogin }: LoginViewProps) {
       const payload = (await res.json()) as SelectResponse
       onLogin({ id: payload.id, name: payload.name }, buildClientBaseUrl(payload.port), isNew)
     } catch {
-      setError(`Couldn't reach the server at ${protocol}://${host}. Check the Server URL.`)
+      setError(`Couldn't reach the server at ${serverUrl}. Check the Server URL.`)
     } finally {
       setBusy(false)
     }
@@ -159,7 +143,7 @@ export default function LoginView({ onLogin }: LoginViewProps) {
             </svg>
             Server
           </span>
-          <span className="text-xs text-white/45">{protocol}://{host} ▾</span>
+          <span className="text-xs text-white/45">{serverUrl} ▾</span>
         </button>
 
         {showSettings && (
@@ -187,7 +171,7 @@ export default function LoginView({ onLogin }: LoginViewProps) {
               </button>
             </div>
             <p className="mt-1.5 text-[10px] text-white/30">
-              Paste a link — http/https is detected automatically. Central port {CENTRAL_SERVER_PORT}.
+              Paste a link — local http servers use port {CENTRAL_SERVER_PORT}; Cloudflare URLs should stay without an explicit port.
             </p>
           </div>
         )}
