@@ -67,39 +67,36 @@ typedef struct {
  */
 #define CONN_MATCH_PROMPT \
 	"You are a connection system for a productivity and goal app. " \
-	"Your job is to decide which of the listed candidates are worth introducing to the subject — " \
-	"not romantically, but because they might find each other intellectually interesting, " \
-	"share a way of thinking, or have genuine common ground worth a conversation. " \
+	"You RANK candidates for the subject — you do NOT filter them out. The goal is to introduce people, " \
+	"sorted by how interesting the meeting would be: shared ways of thinking, common ground, complementary depth. " \
 	"This is not dating. Do not factor in romantic compatibility.\n\n" \
 	"Subject: %s\n\n" \
 	"Candidates:\n%s\n" \
-	"Select only candidates with a real, specific reason to meet the subject — " \
-	"shared curiosity, complementary perspectives, or overlapping depth in something. " \
-	"Do not select candidates just because their description is non-empty. " \
-	"IMPORTANT: If the subject's description ends with 'Does not want to be matched with: <X>', " \
-	"treat that as a hard exclusion for any candidate fitting X. Apply the same rule in reverse. " \
-	"For each selected match, provide a reason as one sentence shown to both people simultaneously — " \
+	"Return ALL candidates, each exactly once, ordered from the most promising introduction to the least. " \
+	"Do NOT omit anyone for being a weak fit — the ordering already expresses that. " \
+	"The ONLY exception is an explicit hard exclusion: if the subject's description ends with " \
+	"'Does not want to be matched with: <X>', omit any candidate fitting X, and apply the same rule in reverse. " \
+	"For each candidate, provide a reason as one sentence shown to both people simultaneously — " \
 	"write it so it reads naturally for either of them. " \
 	"Use only 'you both', 'you seem', 'you share', or similar second-person plural phrasing. " \
 	"Never use 'A', 'B', 'the subject', 'candidate N', 'one of you', 'the other'. " \
-	"Return 0-based indices (candidate 1 = index 0). " \
-	"If no candidates are a good fit, return an empty matches array.%s"
+	"Return 0-based indices (candidate 1 = index 0), best first.%s"
 
 #define CONN_FINAL_MATCH_PROMPT \
-	"You are the final judge for a connection system in a productivity and goal app. " \
-	"You are reviewing a shortlist of already-plausible introductions and must pick the final set. " \
-	"Choose at most %zu matches, ordered from strongest to weakest. " \
+	"You are the final ranker for a connection system in a productivity and goal app. " \
+	"You order a shortlist and return the top picks — by ranking, never by a quality cutoff. " \
+	"Return the top %zu, ordered from strongest to weakest. " \
 	"This is not dating. Do not factor in romantic compatibility.\n\n" \
 	"Subject: %s\n\n" \
 	"Shortlist:\n%s\n" \
 	"Each shortlist item already includes a candidate description and a preliminary reason. " \
-	"Prefer the candidates with the clearest mutual substance, complementary perspective, " \
-	"and strongest reason for a useful conversation. " \
-	"For each selected match, provide one sentence shown to both people. " \
+	"Order by the clearest mutual substance, complementary perspective, and strongest reason for a useful conversation. " \
+	"If there are fewer than %zu, return all of them. Do NOT drop anyone for being 'not strong enough' — " \
+	"we always propose the top picks; you only decide the order. " \
+	"For each, provide one sentence shown to both people. " \
 	"Use only 'you both', 'you seem', 'you share', or similar second-person plural phrasing. " \
 	"Never use 'the subject', 'candidate', 'shortlist item', 'one of you', or 'the other'. " \
-	"Return 0-based shortlist indices (shortlist item 1 = index 0). " \
-	"If fewer than %zu are strong enough, return fewer. If none are strong enough, return an empty matches array.%s"
+	"Return 0-based shortlist indices (shortlist item 1 = index 0), best first.%s"
 
 typedef struct {
 	size_t index;

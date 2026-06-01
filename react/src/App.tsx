@@ -10,7 +10,7 @@ import OnboardingView from './section/onboarding-view'
 import LoadingOrb from './components/loading-orb'
 import NavBar, { type NavPanel } from './components/nav-bar'
 import FocusSession, { type FocusTarget } from './section/focus-session'
-import JournalFocusSession from './section/journal-focus-session'
+import JournalFocusSession, { type JournalFocusActions } from './section/journal-focus-session'
 import type { GoalSelection } from './section/current-goals-view'
 import {
   applyGoalEvent,
@@ -61,7 +61,7 @@ function App() {
   const [journalOpenEntryId, setJournalOpenEntryId] = useState<string | null>(null)
   const [journeyChatOpen, setJourneyChatOpen] = useState(false)
   const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null)
-  const [journalFocusGoal, setJournalFocusGoal] = useState<Goal | null>(null)
+  const [journalFocus, setJournalFocus] = useState<JournalFocusActions | null>(null)
   const [goalOptions, setGoalOptions] = useState<GoalSelection | null>(null)
   const pendingActionRef = useRef<{ goalId: string } | null>(null)
   // Debounce timer for tree-changed refetches: a multi-level decomposition fires
@@ -500,7 +500,22 @@ function App() {
   function openGoalFocus(sel: GoalSelection) {
     const g = sel.goal
     if (g.goalType === 'journal' && !sel.isMystery) {
-      setJournalFocusGoal(g)
+      setJournalFocus({
+        title: g.title,
+        requiredTimeSeconds: g.requiredTime,
+        startedAlready: !!g.startDate,
+        initialAttachId: g.attachId || '',
+        ensureStarted: async () => {
+          const r = await startGoalOnServer(g)
+          return r.attach_id || g.attachId || ''
+        },
+        endGoal: async (aid) => { await endGoalOnServer(g, aid) },
+        cancelGoal: async () => { await cancelGoalOnServer(g) },
+        onCompleted: () => {
+          void refreshGoals({ silent: true })
+          fetch(SERVER_ENDPOINTS.sessionGoals, { cache: 'no-store' }).catch(() => {})
+        },
+      })
       return
     }
     setFocusTarget({
@@ -768,7 +783,7 @@ function App() {
               onGoalOptions={setGoalOptions}
             />
           ) : goalPanel === 'collab' ? (
-            <TogetherView userId={localUser?.id ?? ''} onOpenFocus={setFocusTarget} />
+            <TogetherView userId={localUser?.id ?? ''} onOpenFocus={setFocusTarget} onOpenJournal={setJournalFocus} />
           ) : goalPanel === 'schedule' ? (
             <SchedulePanel />
           ) : goalPanel === 'profile' ? (
@@ -828,14 +843,10 @@ function App() {
         {focusTarget && (
           <FocusSession target={focusTarget} onClose={() => setFocusTarget(null)} />
         )}
-        {journalFocusGoal && (
+        {journalFocus && (
           <JournalFocusSession
-            goal={journalFocusGoal}
-            onClose={() => setJournalFocusGoal(null)}
-            onCompleted={() => {
-              void refreshGoals({ silent: true })
-              fetch(SERVER_ENDPOINTS.sessionGoals, { cache: 'no-store' }).catch(() => {})
-            }}
+            {...journalFocus}
+            onClose={() => setJournalFocus(null)}
           />
         )}
       </main>

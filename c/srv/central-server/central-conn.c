@@ -40,7 +40,13 @@ void handle_conn_discoverable(int fd, CentralRequest *req)
 		if (generated) { FreeString(generated); free(generated); }
 	}
 	free(desc);
-	http_send_json(fd, 200, "OK", "{\"ok\":true}");
+
+	/* Pressing "find" should actually run matching for this user — rank the other
+	   discoverable people and create proposals (top picks, initiator-gated). */
+	size_t pending = FindMatchForUser(u);
+	char body[64];
+	int n = snprintf(body, sizeof(body), "{\"ok\":true,\"found\":%zu}", pending);
+	http_send_json(fd, 200, "OK", (n > 0 && (size_t)n < sizeof(body)) ? body : "{\"ok\":true}");
 }
 
 void handle_conn_private(int fd, CentralRequest *req)

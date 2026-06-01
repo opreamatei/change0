@@ -119,30 +119,39 @@ function drawStarPath(ctx: CanvasRenderingContext2D, cx: number, cy: number, out
   ctx.closePath()
 }
 
-// Open-book glyph used in place of the step number for journal-type goals.
+// Notebook/journal glyph used in place of the step number for journal-type
+// goals — a rounded cover with a binding rail and a few text lines. Reads more
+// clearly at small sizes than the old open-book outline.
 function drawBookPath(ctx: CanvasRenderingContext2D, cx: number, cy: number, s: number, color: string) {
-  const w = s, h = s * 0.8
+  const w = s * 1.55, h = s * 1.95
+  const x0 = cx - w / 2, y0 = cy - h / 2
+  const r = s * 0.3
   ctx.save()
   ctx.strokeStyle = color
-  ctx.lineWidth = Math.max(1.6, s * 0.18)
+  ctx.lineWidth = Math.max(1.5, s * 0.16)
   ctx.lineJoin = 'round'
   ctx.lineCap = 'round'
-  // centre spine
-  ctx.beginPath(); ctx.moveTo(cx, cy - h); ctx.lineTo(cx, cy + h * 0.95); ctx.stroke()
-  // left page
+
+  // cover (rounded rectangle)
   ctx.beginPath()
-  ctx.moveTo(cx, cy - h)
-  ctx.quadraticCurveTo(cx - w * 0.55, cy - h * 1.15, cx - w, cy - h * 0.55)
-  ctx.lineTo(cx - w, cy + h * 0.85)
-  ctx.quadraticCurveTo(cx - w * 0.55, cy + h * 0.45, cx, cy + h * 0.95)
+  ctx.moveTo(x0 + r, y0)
+  ctx.arcTo(x0 + w, y0, x0 + w, y0 + h, r)
+  ctx.arcTo(x0 + w, y0 + h, x0, y0 + h, r)
+  ctx.arcTo(x0, y0 + h, x0, y0, r)
+  ctx.arcTo(x0, y0, x0 + w, y0, r)
+  ctx.closePath()
   ctx.stroke()
-  // right page
-  ctx.beginPath()
-  ctx.moveTo(cx, cy - h)
-  ctx.quadraticCurveTo(cx + w * 0.55, cy - h * 1.15, cx + w, cy - h * 0.55)
-  ctx.lineTo(cx + w, cy + h * 0.85)
-  ctx.quadraticCurveTo(cx + w * 0.55, cy + h * 0.45, cx, cy + h * 0.95)
-  ctx.stroke()
+
+  // binding rail
+  const bx = x0 + w * 0.3
+  ctx.beginPath(); ctx.moveTo(bx, y0 + h * 0.1); ctx.lineTo(bx, y0 + h * 0.9); ctx.stroke()
+
+  // text lines on the page
+  const lx0 = bx + s * 0.22, lx1 = x0 + w - s * 0.26
+  for (let i = 0; i < 3; i++) {
+    const ly = y0 + h * 0.34 + i * (h * 0.2)
+    ctx.beginPath(); ctx.moveTo(lx0, ly); ctx.lineTo(lx1, ly); ctx.stroke()
+  }
   ctx.restore()
 }
 

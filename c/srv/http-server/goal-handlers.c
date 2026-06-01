@@ -964,6 +964,7 @@ void handle_post_goal_shared_action(int fd, const HttpRequest *req, User *user)
 	}
 
 	char out_id[GOAL_ID_LEN + 1];
+	char attach_field[96] = "";
 	time_t at = 0;
 
 	if (strcmp(action, "start") == 0) {
@@ -971,6 +972,22 @@ void handle_post_goal_shared_action(int fd, const HttpRequest *req, User *user)
 		if (!leaf) {
 			http_send_json(fd, 409, "Conflict", "{\"ok\":false,\"error\":\"goal_not_startable\"}");
 			return;
+		}
+		/* Journal leaves need a draft entry created at start (same as the solo
+		   /goal/start path) so the shared journal editor has something to write. */
+		if (leaf->goal_type == GOAL_TYPE_JOURNAL && !leaf->attach_id[0]) {
+			char draft_title[JOURNAL_TITLE_SIZE];
+			snprintf(draft_title, sizeof(draft_title), "%s (draft)", c_str(&leaf->title));
+			JournalMeta jm;
+			if (JournalCreate(user, draft_title, "", -1, 0, &jm) == 0) {
+				strncpy(leaf->attach_id, jm.id, sizeof(leaf->attach_id) - 1);
+				leaf->attach_id[sizeof(leaf->attach_id) - 1] = '\0';
+			}
+		}
+		if (leaf->attach_id[0]) {
+			char *esc_attach = json_escape_dup(leaf->attach_id);
+			snprintf(attach_field, sizeof(attach_field), ",\"attach_id\":\"%s\"", esc_attach ? esc_attach : "");
+			free(esc_attach);
 		}
 		goal_id_to_cstr(leaf, out_id);
 		at = leaf->start_date;
@@ -1006,8 +1023,8 @@ void handle_post_goal_shared_action(int fd, const HttpRequest *req, User *user)
 	PushJourneyToCentral(j);
 	SaveUser(user);
 
-	char response[128];
-	snprintf(response, sizeof(response), "{\"ok\":true,\"goal-id\":\"%s\",\"at\":%lld}", out_id, (long long)at);
+	char response[224];
+	snprintf(response, sizeof(response), "{\"ok\":true,\"goal-id\":\"%s\",\"at\":%lld%s}", out_id, (long long)at, attach_field);
 	http_send_json(fd, 200, "OK", response);
 }
 
@@ -1134,6 +1151,14 @@ void handle_post_schedule_refresh(int fd, User *user)
 
 void handle_get_schedule(int fd, User *user)
 {
+	/* Pull the latest copy of every shared journey from central first, so the
+	   schedule includes shared-journey steps assigned to this user with their
+	   current progress (otherwise we'd schedule from a stale local copy). */
+	for (size_t ji = 0; ji < user->journey_count; ji++) {
+		Journey *j = FindJourneyByID(user->journeys[ji]);
+		if (j && j->is_shared) FetchSharedJourney(user->journeys[ji]);
+	}
+
 	/* The client opening the schedule always gets a freshly computed one. */
 	user->schedule_needs_refresh = 1;
 

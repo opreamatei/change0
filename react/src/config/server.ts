@@ -11,7 +11,40 @@
 
 export const DEFAULT_SERVER_HOST = '127.0.0.1'
 export const CENTRAL_SERVER_PORT = 8085
-export const CENTRAL_BASE_URL = `http://${DEFAULT_SERVER_HOST}:${CENTRAL_SERVER_PORT}`
+
+/*
+ * Server protocol + host are configurable from the sign-in screen and persist
+ * in localStorage, so the same build can talk to a local http server or a
+ * remote https one. Everything that targets the central or per-user server
+ * derives its base URL from these at access time.
+ */
+const PROTOCOL_KEY = 'change.serverProtocol'
+const HOST_KEY     = 'change.serverHost'
+
+export function getServerProtocol(): 'http' | 'https' {
+  if (typeof window === 'undefined') return 'http'
+  return window.localStorage?.getItem(PROTOCOL_KEY) === 'https' ? 'https' : 'http'
+}
+export function setServerProtocol(p: 'http' | 'https') {
+  if (typeof window !== 'undefined') window.localStorage?.setItem(PROTOCOL_KEY, p)
+}
+export function getServerHost(): string {
+  if (typeof window === 'undefined') return DEFAULT_SERVER_HOST
+  return window.localStorage?.getItem(HOST_KEY) || DEFAULT_SERVER_HOST
+}
+export function setServerHost(h: string) {
+  if (typeof window !== 'undefined')
+    window.localStorage?.setItem(HOST_KEY, h.trim() || DEFAULT_SERVER_HOST)
+}
+
+function centralBase(): string {
+  return `${getServerProtocol()}://${getServerHost()}:${CENTRAL_SERVER_PORT}`
+}
+
+/** Build a per-user client base URL from the configured protocol/host. */
+export function buildClientBaseUrl(port: number): string {
+  return `${getServerProtocol()}://${getServerHost()}:${port}`
+}
 
 const STORAGE_KEY = 'change.clientBaseUrl'
 
@@ -109,38 +142,38 @@ export const SERVER_ENDPOINTS = {
 }
 
 export const CENTRAL_ENDPOINTS = {
-  users: `${CENTRAL_BASE_URL}/users`,
-  usersCreate: `${CENTRAL_BASE_URL}/users/create`,
-  usersSelect: `${CENTRAL_BASE_URL}/users/select`,
-  userAvatar: (userId: string) => `${CENTRAL_BASE_URL}/users/avatar?id=${encodeURIComponent(userId)}`,
-  connections: (userId: string) => `${CENTRAL_BASE_URL}/connections?user_id=${encodeURIComponent(userId)}`,
-  connectionsDiscoverable: `${CENTRAL_BASE_URL}/connections/discoverable`,
-  connectionsPrivate: `${CENTRAL_BASE_URL}/connections/private`,
-  connectionsDescription: `${CENTRAL_BASE_URL}/connections/description`,
-  connectionsApprove: `${CENTRAL_BASE_URL}/connections/approve`,
-  connectionsDecline: `${CENTRAL_BASE_URL}/connections/decline`,
-  messagesSend: `${CENTRAL_BASE_URL}/messages/send`,
-  messages: (connectionId: string) => `${CENTRAL_BASE_URL}/messages?connection_id=${encodeURIComponent(connectionId)}`,
+  get users() { return `${centralBase()}/users` },
+  get usersCreate() { return `${centralBase()}/users/create` },
+  get usersSelect() { return `${centralBase()}/users/select` },
+  userAvatar: (userId: string) => `${centralBase()}/users/avatar?id=${encodeURIComponent(userId)}`,
+  connections: (userId: string) => `${centralBase()}/connections?user_id=${encodeURIComponent(userId)}`,
+  get connectionsDiscoverable() { return `${centralBase()}/connections/discoverable` },
+  get connectionsPrivate() { return `${centralBase()}/connections/private` },
+  get connectionsDescription() { return `${centralBase()}/connections/description` },
+  get connectionsApprove() { return `${centralBase()}/connections/approve` },
+  get connectionsDecline() { return `${centralBase()}/connections/decline` },
+  get messagesSend() { return `${centralBase()}/messages/send` },
+  messages: (connectionId: string) => `${centralBase()}/messages?connection_id=${encodeURIComponent(connectionId)}`,
   /*
    * Shared journeys live on the central server (so both participants see
    * the same source of truth without sync). /journey/create takes
    * {name, user_ids:[...]}, /journey/list?user_id=... lists journeys the
    * user participates in, /journey/<id> returns one with goals + users.
    */
-  journeyCreate: `${CENTRAL_BASE_URL}/journey/create`,
-  journeyList: (userId: string) => `${CENTRAL_BASE_URL}/journey/list?user_id=${encodeURIComponent(userId)}`,
-  journey: (journeyId: string) => `${CENTRAL_BASE_URL}/journey/${encodeURIComponent(journeyId)}`,
-  journeyProposals:    (journeyId: string) => `${CENTRAL_BASE_URL}/journey/${encodeURIComponent(journeyId)}/proposals`,
-  journeyProposeRoot:  (journeyId: string) => `${CENTRAL_BASE_URL}/journey/${encodeURIComponent(journeyId)}/propose-root`,
-  journeyApproveRoot:  (journeyId: string) => `${CENTRAL_BASE_URL}/journey/${encodeURIComponent(journeyId)}/approve-root`,
-  journeyDeclineRoot:  (journeyId: string) => `${CENTRAL_BASE_URL}/journey/${encodeURIComponent(journeyId)}/decline-root`,
+  get journeyCreate() { return `${centralBase()}/journey/create` },
+  journeyList: (userId: string) => `${centralBase()}/journey/list?user_id=${encodeURIComponent(userId)}`,
+  journey: (journeyId: string) => `${centralBase()}/journey/${encodeURIComponent(journeyId)}`,
+  journeyProposals:    (journeyId: string) => `${centralBase()}/journey/${encodeURIComponent(journeyId)}/proposals`,
+  journeyProposeRoot:  (journeyId: string) => `${centralBase()}/journey/${encodeURIComponent(journeyId)}/propose-root`,
+  journeyApproveRoot:  (journeyId: string) => `${centralBase()}/journey/${encodeURIComponent(journeyId)}/approve-root`,
+  journeyDeclineRoot:  (journeyId: string) => `${centralBase()}/journey/${encodeURIComponent(journeyId)}/decline-root`,
 
   submissionsPending: (userId: string, label: string) =>
-    `${CENTRAL_BASE_URL}/submissions/pending?user_id=${encodeURIComponent(userId)}&label=${encodeURIComponent(label)}`,
-  submissionReview: (subId: string) => `${CENTRAL_BASE_URL}/submissions/${encodeURIComponent(subId)}/review`,
+    `${centralBase()}/submissions/pending?user_id=${encodeURIComponent(userId)}&label=${encodeURIComponent(label)}`,
+  submissionReview: (subId: string) => `${centralBase()}/submissions/${encodeURIComponent(subId)}/review`,
   submissionFile: (subId: string, fname: string) =>
-    `${CENTRAL_BASE_URL}/submissions/file?id=${encodeURIComponent(subId)}&f=${encodeURIComponent(fname)}`,
-  submissionStatus: (subId: string) => `${CENTRAL_BASE_URL}/submissions/${encodeURIComponent(subId)}/status`,
+    `${centralBase()}/submissions/file?id=${encodeURIComponent(subId)}&f=${encodeURIComponent(fname)}`,
+  submissionStatus: (subId: string) => `${centralBase()}/submissions/${encodeURIComponent(subId)}/status`,
 }
 
 export function buildGoalDecomposeUrl(baseUrl = clientBaseUrl ?? '') {

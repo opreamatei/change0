@@ -8,6 +8,7 @@ import {
   type Goal,
 } from '../goal'
 import type { LocalUser } from './login-view'
+import OnboardingChat from './onboarding-chat'
 
 /*
  * Onboarding intro shown once, right after a brand-new account is created.
@@ -101,7 +102,13 @@ const PROPOSALS: Proposal[] = [
   },
 ]
 
-type Screen = 'intro' | 'age' | 'dur' | 'start' | 'loading' | 'proposal' | 'custom' | 'journey'
+type Screen = 'intro' | 'age' | 'dur' | 'start' | 'loading' | 'proposal' | 'custom' | 'clarify' | 'journey'
+
+interface ClarifyCtx {
+  goalTitle: string
+  scope: string
+  meta: { name: string; cat: string }
+}
 
 const DUR_OPTIONS: { id: string; label: string; hours: string }[] = [
   { id: '30min', label: '30 min', hours: '0.5' },
@@ -137,6 +144,7 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
   const [customGoal, setCustomGoal] = useState('')
   const [journeySteps, setJourneySteps] = useState<JourneyStep[]>([])
   const [journeyMeta, setJourneyMeta] = useState<{ name: string; cat: string }>({ name: '', cat: 'JOURNEY' })
+  const [clarifyCtx, setClarifyCtx] = useState<ClarifyCtx | null>(null)
   const [openStep, setOpenStep] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -216,20 +224,36 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
     }))
   }
 
+  /* Persist the onboarding answers into the user profile (the keys the goal
+     scheduler understands). Done up front so the middleware sees them too. */
+  function persistOnboardingAnswers() {
+    return Promise.allSettled([
+      postProfile('age', String(age)),
+      postProfile('daily_work_hours', durHours()),
+      postProfile('work_day_start', startTime),
+    ])
+  }
+
+  /* Shared tail: the goal already exists & is decomposed — mark onboarded and
+     build the journey screen from the fresh tree. Drives the loading screen's
+     auto-advance via creationDoneRef. */
+  async function finalizeCreatedGoal(goalId: string | undefined, meta: { name: string; cat: string }) {
+    await postProfile('onboarded', '1').catch(() => {})
+    const goals = await loadGoalsFromServer()
+    setJourneyMeta(meta)
+    setJourneySteps(buildJourneySteps(goals, goalId))
+    creationDoneRef.current = true
+  }
+
+  /* Direct creation — used as the fallback when the user skips the chat. */
   async function runCreation(goalTitle: string, scope: string, meta: { name: string; cat: string }) {
     setError(null)
     creationDoneRef.current = false
     setScreen('loading')
 
     try {
-      // 1) Persist the three onboarding answers straight into the user profile.
-      await Promise.allSettled([
-        postProfile('age', String(age)),
-        postProfile('daily_work_hours', durHours()),
-        postProfile('work_day_start', startTime),
-      ])
+      await persistOnboardingAnswers()
 
-      // 2) Create the real goal — same pipeline the middleware create_goal uses.
       const res = await fetch(SERVER_ENDPOINTS.goalCreate, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -238,14 +262,31 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
       if (!res.ok) throw new Error(`Goal create failed: ${res.status}`)
       const data = (await res.json()) as { ok: boolean; 'goal-id'?: string }
 
-      // 3) Onboarding is complete — flip the flag so it never shows again.
-      await postProfile('onboarded', '1').catch(() => {})
+      await finalizeCreatedGoal(data['goal-id'], meta)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
 
-      // 4) Build the journey screen from the freshly decomposed goal tree.
-      const goals = await loadGoalsFromServer()
-      setJourneyMeta(meta)
-      setJourneySteps(buildJourneySteps(goals, data['goal-id']))
-      creationDoneRef.current = true
+  /* New onboarding step: after a goal is chosen, drop into a short middleware
+     chat that asks a few clarifying questions, then lets the middleware fire
+     create_goal itself. */
+  function beginClarify(goalTitle: string, scope: string, meta: { name: string; cat: string }) {
+    setError(null)
+    // Persist answers now so the chat's middleware context already has them.
+    void persistOnboardingAnswers()
+    setClarifyCtx({ goalTitle, scope, meta })
+    navTo('clarify')
+  }
+
+  /* The clarify chat reported the goal was created (and decomposed) by the
+     middleware — show the build animation, then the journey. */
+  async function onClarifyGoalCreated(goalId: string) {
+    const meta = clarifyCtx?.meta ?? journeyMeta
+    creationDoneRef.current = false
+    navTo('loading')
+    try {
+      await finalizeCreatedGoal(goalId || undefined, meta)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -395,7 +436,7 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
   }
 
   function acceptProposal(p: Proposal) {
-    void runCreation(p.goalTitle, p.scope, { name: p.goalTitle, cat: p.cat })
+    beginClarify(p.goalTitle, p.scope, { name: p.goalTitle, cat: p.cat })
   }
 
   function acceptCustomGoal() {
@@ -405,7 +446,7 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
       `The person's own goal, in their words: "${goal}". Treat them as a motivated beginner unless ` +
       `the wording clearly says otherwise. Build a realistic path from where they likely are today ` +
       `toward a first concrete, satisfying result.`
-    void runCreation(goal, scope, { name: goal, cat: 'PERSONAL GOAL' })
+    beginClarify(goal, scope, { name: goal, cat: 'PERSONAL GOAL' })
   }
 
   function completeJourneyView() {
@@ -457,6 +498,18 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
   return (
     <div className="ob-root">
       <style>{OB_CSS}</style>
+
+      {screen === 'clarify' && clarifyCtx && (
+        <OnboardingChat
+          goalTitle={clarifyCtx.goalTitle}
+          scope={clarifyCtx.scope}
+          age={age}
+          durLabel={durLabel()}
+          startTime={startTime}
+          onGoalCreated={(id) => void onClarifyGoalCreated(id)}
+          onSkip={() => void runCreation(clarifyCtx.goalTitle, clarifyCtx.scope, clarifyCtx.meta)}
+        />
+      )}
 
       <div className="ob-progress" style={{ visibility: progressPct !== undefined ? 'visible' : 'hidden' }}>
         <div className="ob-progress-fill" style={{ width: `${progressPct ?? 0}%` }} />

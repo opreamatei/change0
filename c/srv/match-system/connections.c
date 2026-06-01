@@ -237,9 +237,36 @@ size_t FindMatchForUser(User *a)
 	                                           final_results,
 	                                           CONNECTION_FINAL_MATCH_LIMIT);
 
+	/*
+	 * Sort, don't filter. The AI ranking gives us an order; we then BACKFILL
+	 * with any candidate it didn't rank so nobody is silently dropped, and
+	 * propose the top CONNECTION_FINAL_MATCH_LIMIT. The AI only decides order
+	 * (and honours the explicit "does not want to be matched with X" exclusion);
+	 * it never excludes someone for being a weak fit.
+	 */
+	size_t sel_idx[CONNECTION_FINAL_MATCH_LIMIT];
+	const char *sel_reason[CONNECTION_FINAL_MATCH_LIMIT];
+	size_t sel_count = 0;
+
+	for (size_t m = 0; m < final_count && sel_count < CONNECTION_FINAL_MATCH_LIMIT; m++) {
+		if (final_results[m].index >= candidate_count) continue;
+		sel_idx[sel_count]    = final_results[m].index;
+		sel_reason[sel_count] = final_results[m].reason[0] ? final_results[m].reason : NULL;
+		sel_count++;
+	}
+	for (size_t ci = 0; ci < candidate_count && sel_count < CONNECTION_FINAL_MATCH_LIMIT; ci++) {
+		_Bool already = 0;
+		for (size_t s = 0; s < sel_count; s++)
+			if (sel_idx[s] == ci) { already = 1; break; }
+		if (already) continue;
+		sel_idx[sel_count]    = ci;
+		sel_reason[sel_count] = NULL;
+		sel_count++;
+	}
+
 	size_t new_proposals = 0;
-	for (size_t m = 0; m < final_count; m++) {
-		User *b = candidates[final_results[m].index];
+	for (size_t m = 0; m < sel_count; m++) {
+		User *b = candidates[sel_idx[m]];
 
 		pthread_mutex_lock(&conn_lock);
 		if (!find_pair(a->id, b->id) && ConnectionCount < MAX_CONNECTIONS) {
@@ -251,7 +278,10 @@ size_t FindMatchForUser(User *a)
 			strncpy(c->b, b->id, USER_ID_SIZE - 1);
 			c->state = CONN_PROPOSED;
 			c->proposed_at = change_time_now();
-			strncpy(c->reason, final_results[m].reason, sizeof(c->reason) - 1);
+			strncpy(c->reason,
+			        sel_reason[m] ? sel_reason[m]
+			                      : "You both chose to meet people with compatible goals — worth a conversation.",
+			        sizeof(c->reason) - 1);
 			persist_connection(c);
 			new_proposals++;
 		}

@@ -18,6 +18,13 @@ export interface FocusTarget {
   pending?: boolean
   accent?: string
   rootProgressPct?: number
+  /** When set, the session is read-only (e.g. a shared-journey step that
+   *  belongs to someone else) and this note explains why. */
+  lockedNote?: string
+  /** Shared-journey only: participants this step can be passed to. When present
+   *  (and the step is not started) a "Pass to…" control is shown. */
+  passOptions?: { id: string; name: string }[]
+  onPass?: (targetUserId: string) => void
   onStart?: () => void
   onComplete?: () => void
   /** Abandon an in-progress session — resets the goal to idle on the server. */
@@ -354,7 +361,13 @@ export default function FocusSession({
             </div>
           )}
 
-          {!isMystery && !isCelebrating && effectiveState !== 'done' && hint && (
+          {target.lockedNote && !isCelebrating && (
+            <p className="mb-4 text-center text-[12px] font-semibold" style={{ color: 'rgba(255,200,50,.85)' }}>
+              {target.lockedNote}
+            </p>
+          )}
+
+          {!isMystery && !isCelebrating && effectiveState !== 'done' && hint && !target.lockedNote && (
             <p className="mb-4 text-center text-[11px] text-white/30">{hint}</p>
           )}
 
@@ -369,6 +382,26 @@ export default function FocusSession({
               {effectiveState !== 'done' && canReshape && !target.onReshape && target.onRepair && (
                 <button type="button" disabled={pending} onClick={() => setRepairOpen(true)} className="text-amber-400/70 hover:text-amber-400 disabled:opacity-40">Repair</button>
               )}
+            </div>
+          )}
+
+          {target.passOptions && target.passOptions.length > 0 && effectiveState === 'idle' && !isCelebrating && (
+            <div className="mt-4 flex flex-col items-center gap-1.5">
+              <span className="text-[11px] text-white/30">Pass this step to</span>
+              <div className="flex flex-wrap justify-center gap-2">
+                {target.passOptions.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    disabled={pending}
+                    onClick={() => { target.onPass?.(p.id); closeOut() }}
+                    className="rounded-xl px-3 py-1.5 text-[13px] font-medium disabled:opacity-40"
+                    style={{ background: 'rgba(255,255,255,.08)', color: 'rgba(255,255,255,.85)', border: '1px solid rgba(255,255,255,.14)' }}
+                  >
+                    {p.name}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>

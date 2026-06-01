@@ -1,11 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { SERVER_ENDPOINTS } from '../config/server'
-import {
-  Goal,
-  startGoalOnServer,
-  endGoalOnServer,
-  cancelGoalOnServer,
-} from '../goal'
 
 /**
  * Focus session for a JOURNAL-type goal. Mirrors the timer FocusSession shell
@@ -14,16 +8,36 @@ import {
  * spending time. A small elapsed bar at the bottom keeps the soft time
  * reference the goal carries.
  *
+ * It is decoupled from where the start/end/cancel actions go: the caller passes
+ * them in, so the SAME editor drives both solo goals (solo /goal endpoints) and
+ * shared-journey goals (/goal/shared-action). The journal entry itself always
+ * lives on the acting user's server, so /journal/entry + /journal/update are
+ * used directly here for both modes.
+ *
  * Lifecycle:
- *  - On open we ensure the goal is started server-side; starting a journal goal
- *    creates a draft journal entry and returns its id (attach_id). We edit that
- *    exact entry. If the goal was already started (e.g. reopened after leaving),
- *    we reuse the existing attach_id and load its current text.
+ *  - On open we ensure the goal is started; starting a journal goal creates a
+ *    draft journal entry and returns its id (attach_id). We edit that entry. If
+ *    it was already started, we reuse the existing attach_id and load its text.
  *  - Submit saves the entry (dropping the "(draft)" title suffix) and ends the
  *    goal with the entry id as proof of completion.
  *  - Closing without submitting cancels the goal (back to idle) but keeps the
  *    draft entry around to revisit.
  */
+
+export interface JournalFocusActions {
+  title: string
+  requiredTimeSeconds: number
+  startedAlready: boolean
+  initialAttachId: string
+  /** Ensure the goal is started; resolve with the draft entry's attach_id. */
+  ensureStarted: () => Promise<string>
+  /** End/complete the goal (the entry is already saved via /journal/update). */
+  endGoal: (attachId: string) => Promise<void>
+  /** Leave without completing (solo: cancel the goal; shared: just refresh). */
+  cancelGoal: () => Promise<void>
+  /** Called after a successful submit or a cancel, so the caller can refresh. */
+  onCompleted: () => void
+}
 
 const MOODS = ['😊', '😌', '🏃', '📚', '🎯', '😔', '🔥', '😴', '🤔', '❤️', '🎉', '💪']
 const DRAFT_SUFFIX = ' (draft)'
@@ -50,20 +64,21 @@ function buildJournalEntryUrl(entryId: string): string {
 type Phase = 'loading' | 'edit' | 'celebrate' | 'exit'
 
 export default function JournalFocusSession({
-  goal,
+  title: goalTitle,
+  requiredTimeSeconds,
+  startedAlready,
+  initialAttachId,
+  ensureStarted,
+  endGoal,
+  cancelGoal,
   onClose,
   onCompleted,
-}: {
-  goal: Goal
-  onClose: () => void
-  /** Called after a successful submit or a cancel, so the caller can refresh. */
-  onCompleted: () => void
-}) {
+}: JournalFocusActions & { onClose: () => void }) {
   const [phase, setPhase] = useState<Phase>('loading')
-  const [title, setTitle] = useState(stripDraft(goal.title))
+  const [title, setTitle] = useState(stripDraft(goalTitle))
   const [text, setText] = useState('')
   const [mood, setMood] = useState<string | null>(null)
-  const [attachId, setAttachId] = useState(goal.attachId || '')
+  const [attachId, setAttachId] = useState(initialAttachId || '')
   const [elapsed, setElapsed] = useState(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -72,33 +87,38 @@ export default function JournalFocusSession({
   const submittedRef = useRef(false)
   const initRef = useRef(false)
 
-  const softLimit = goal.requiredTime > 0 ? goal.requiredTime : 0
+  const softLimit = requiredTimeSeconds > 0 ? requiredTimeSeconds : 0
 
   // Resolve the journal entry to edit: start the goal (creating a draft) when
   // it is not yet underway, otherwise reuse and load the existing draft.
   useEffect(() => {
+    // Run exactly once. We intentionally do NOT gate the state updates with a
+    // closure "cancelled" flag here: under React 18 StrictMode the effect is
+    // mounted → cleaned up → mounted again, and a cleanup-flipped flag combined
+    // with the initRef guard would strand the only running async, leaving the
+    // editor stuck on "Opening…". initRef keeps the goal from being started
+    // twice; the async then always reaches setPhase('edit').
     if (initRef.current) return
     initRef.current = true
 
-    let cancelled = false
     ;(async () => {
       try {
-        let id = goal.attachId || ''
-        if (!goal.startDate || !id) {
-          const res = await startGoalOnServer(goal)
-          id = res.attach_id || ''
+        let id = initialAttachId || ''
+        if (!startedAlready || !id) {
+          id = await ensureStarted()
         }
         if (!id) {
-          if (!cancelled) { setError('Could not open this journal step.'); setPhase('edit') }
+          setError('Could not open this journal step.')
+          setPhase('edit')
           return
         }
-        if (!cancelled) setAttachId(id)
+        setAttachId(id)
 
         // Load any text already written into this draft.
         try {
           const r = await fetch(buildJournalEntryUrl(id), { cache: 'no-store' })
           const d = (await r.json()) as JournalEntryResponse
-          if (!cancelled && d.ok) {
+          if (d.ok) {
             if (d.text) setText(d.text)
             if (d.meta?.title) setTitle(stripDraft(d.meta.title))
             if (typeof d.meta?.mood_index === 'number' && d.meta.mood_index >= 0 && d.meta.mood_index < MOODS.length)
@@ -107,14 +127,14 @@ export default function JournalFocusSession({
         } catch {
           /* a fresh draft has no body yet — fine */
         }
-        if (!cancelled) setPhase('edit')
+        setPhase('edit')
       } catch (e) {
-        if (!cancelled) { setError(e instanceof Error ? e.message : String(e)); setPhase('edit') }
+        setError(e instanceof Error ? e.message : String(e))
+        setPhase('edit')
       }
     })()
-
-    return () => { cancelled = true }
-  }, [goal])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Elapsed counter — soft reference only, never blocks submission.
   useEffect(() => {
@@ -135,7 +155,7 @@ export default function JournalFocusSession({
     setBusy(true)
     setError(null)
     try {
-      const trimmedTitle = title.trim() || stripDraft(goal.title) || 'Journal'
+      const trimmedTitle = title.trim() || stripDraft(goalTitle) || 'Journal'
       await fetch(SERVER_ENDPOINTS.journalUpdate, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -146,7 +166,7 @@ export default function JournalFocusSession({
           mood_index: mood ? MOODS.indexOf(mood) : -1,
         }),
       })
-      await endGoalOnServer(goal, attachId)
+      await endGoal(attachId)
       submittedRef.current = true
       setPhase('celebrate')
       closeTimer.current = setTimeout(() => {
@@ -163,7 +183,7 @@ export default function JournalFocusSession({
     if (busy) return
     setBusy(true)
     try {
-      await cancelGoalOnServer(goal)
+      await cancelGoal()
     } catch {
       /* even if cancel fails, leave the editor — the goal simply stays started */
     }

@@ -6,6 +6,7 @@ import { SwipeDeck } from '../components/swipe-deck'
 import ConnectionsView from './connections-view'
 import ReviewsPanel from './reviews-panel'
 import type { FocusTarget } from './focus-session'
+import type { JournalFocusActions } from './journal-focus-session'
 
 const UNASSIGNED = 255
 
@@ -97,6 +98,9 @@ interface JourneyGoal {
   retry_depth: number
   priority: number
   assigned_to: number
+  goal_type: number
+  attach_id: string
+  tips?: string
   subgoals: number[]
 }
 
@@ -280,12 +284,13 @@ function CollabNodeDetail({
 /* ─── collab journey detail view ─────────────────────────────────────────── */
 
 function CollabJourneyView({
-  summary, userId, onBack, onOpenFocus, journeyCount = 1, journeyIndex = 0, onSelectJourney,
+  summary, userId, onBack, onOpenFocus, onOpenJournal, journeyCount = 1, journeyIndex = 0, onSelectJourney,
 }: {
   summary: JourneyListItem
   userId: string
   onBack: () => void
   onOpenFocus: (target: FocusTarget) => void
+  onOpenJournal: (props: JournalFocusActions) => void
   journeyCount?: number
   journeyIndex?: number
   onSelectJourney?: (idx: number) => void
@@ -371,7 +376,7 @@ function CollabJourneyView({
         leaf.assigned_to === 0 ? -1 :
         leaf.assigned_to === 1 ?  1 :
         undefined
-      return { key: leaf.localIndex, title: leaf.title, nodeState, num: num++, isMystery: false, chapterTitle, tintColor, sideOverride }
+      return { key: leaf.localIndex, title: leaf.title, nodeState, num: num++, isMystery: false, isJournal: leaf.goal_type === 1, chapterTitle, tintColor, sideOverride }
     })
   }, [orderedLeaves, goalMap])
 
@@ -460,9 +465,24 @@ function CollabJourneyView({
     } finally { setProposalBusy(false) }
   }
 
-  // Tapping a leaf I own and can act on drops me into the shared focus session —
-  // the same renderer the solo journey uses. Anything else (a partner's task,
-  // reassigning, a finished node) still opens the detail sheet.
+  // Fire a shared-journey action and return the parsed JSON (no side effects);
+  // used by the journal editor to start (get the draft attach_id) and end.
+  async function sharedAction(goalId: string, action: 'start' | 'end'): Promise<{ ok?: boolean; attach_id?: string }> {
+    try {
+      const res = await fetch(SERVER_ENDPOINTS.goalSharedAction, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ journey_id: summary.id, goal_id: goalId, action }),
+      })
+      return (await res.json()) as { ok?: boolean; attach_id?: string }
+    } catch { return {} }
+  }
+
+  // Tapping any leaf opens the SAME focus UI the solo journey uses — timer ring
+  // or journal editor. My own actionable step is fully interactive; anything
+  // else (a partner's step, a not-yet-unlocked or finished one) opens the same
+  // shell read-only with a note about whose step it is. Long-press still opens
+  // the detail sheet for reassigning.
   function handleSelect(idx: number) {
     const leaf = orderedLeaves[idx]
     if (!leaf || !detail) { setSelectedIdx(idx); return }
@@ -470,24 +490,69 @@ function CollabJourneyView({
     const owner = leaf.assigned_to === UNASSIGNED ? undefined : detail.users[leaf.assigned_to]
     const mine = owner?.id === userId
     const startable = canStartLeaf(leaf, goalMap)
+    const isJournal = leaf.goal_type === 1
+    const accent = (leaf.assigned_to !== UNASSIGNED && leaf.assigned_to >= 0)
+      ? PARTICIPANT_COLORS[leaf.assigned_to % PARTICIPANT_COLORS.length]
+      : undefined
+
+    // A not-yet-started step can be passed to another participant (the server
+    // only allows reassigning unstarted goals). This is the legacy "reassign",
+    // surfaced inside the focus session.
+    const passOptions = leaf.start_date === 0 && detail.users.length > 1
+      ? detail.users.filter((u) => u.id !== owner?.id).map((u) => ({ id: u.id, name: u.display_name || 'Partner' }))
+      : undefined
+    const onPass = passOptions && passOptions.length > 0
+      ? (uid: string) => { void onReassign(leaf.id, uid) }
+      : undefined
+
     if (mine && (state === 'started' || (state === 'idle' && startable))) {
-      const accent = (leaf.assigned_to !== UNASSIGNED && leaf.assigned_to >= 0)
-        ? PARTICIPANT_COLORS[leaf.assigned_to % PARTICIPANT_COLORS.length]
-        : undefined
-      onOpenFocus({
-        id: leaf.id,
-        title: leaf.title,
-        extraInfo: leaf.extra_info || undefined,
-        requiredTimeSeconds: leaf.required_time,
-        state: state === 'started' ? 'active' : 'idle',
-        canStart: startable,
-        accent,
-        onStart: () => { void onLeafAction(leaf.id, 'start') },
-        onComplete: () => { void onLeafAction(leaf.id, 'end') },
-      })
+      if (isJournal) {
+        onOpenJournal({
+          title: leaf.title,
+          requiredTimeSeconds: leaf.required_time,
+          startedAlready: leaf.start_date > 0,
+          initialAttachId: leaf.attach_id || '',
+          ensureStarted: async () => { const r = await sharedAction(leaf.id, 'start'); return r.attach_id || '' },
+          endGoal: async () => { await sharedAction(leaf.id, 'end') },
+          cancelGoal: async () => { await load() },
+          onCompleted: () => { void load() },
+        })
+      } else {
+        onOpenFocus({
+          id: leaf.id,
+          title: leaf.title,
+          extraInfo: leaf.extra_info || undefined,
+          tips: leaf.tips || undefined,
+          requiredTimeSeconds: leaf.required_time,
+          state: state === 'started' ? 'active' : 'idle',
+          canStart: startable,
+          accent,
+          passOptions,
+          onPass,
+          onStart: () => { void onLeafAction(leaf.id, 'start') },
+          onComplete: () => { void onLeafAction(leaf.id, 'end') },
+        })
+      }
       return
     }
-    setSelectedIdx(idx)
+
+    // Read-only focus for everything else, with a note about whose step it is.
+    const note = !mine
+      ? `${owner?.display_name || 'A partner'}'s step — view only`
+      : (state === 'idle' && !startable ? 'Earlier steps come first' : undefined)
+    onOpenFocus({
+      id: leaf.id,
+      title: leaf.title,
+      extraInfo: leaf.extra_info || undefined,
+      tips: leaf.tips || undefined,
+      requiredTimeSeconds: leaf.required_time,
+      state: state === 'finished' ? 'done' : state === 'started' ? 'active' : 'idle',
+      canStart: false,
+      accent,
+      lockedNote: note,
+      passOptions,
+      onPass,
+    })
   }
 
   const doneCount = collabNodes.filter((n) => n.nodeState === 'done').length
@@ -609,6 +674,7 @@ function CollabJourneyView({
             hasMysteryZone={false}
             initialFocusIdx={focusIdx}
             onSelect={handleSelect}
+            onLongPress={(i) => setSelectedIdx(i)}
             userOverlay={userOverlay}
           />
         )}
@@ -794,7 +860,7 @@ function JourneysContent({
 
 /* ─── main together view ─────────────────────────────────────────────────── */
 
-export default function TogetherView({ userId, onOpenFocus }: { userId: string; onOpenFocus: (target: FocusTarget) => void }) {
+export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { userId: string; onOpenFocus: (target: FocusTarget) => void; onOpenJournal: (props: JournalFocusActions) => void }) {
   const [peopleOpen, setPeopleOpen] = useState(false)
   const [reviewsOpen, setReviewsOpen] = useState(false)
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
@@ -850,6 +916,7 @@ export default function TogetherView({ userId, onOpenFocus }: { userId: string; 
                 userId={userId}
                 onBack={() => setSelectedIdx(null)}
                 onOpenFocus={onOpenFocus}
+                onOpenJournal={onOpenJournal}
                 journeyCount={journeys.length}
                 journeyIndex={i}
                 onSelectJourney={setSelectedIdx}
