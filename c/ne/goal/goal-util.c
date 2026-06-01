@@ -126,6 +126,8 @@ Goal *CreateGoal(char goalId[], String *input_goal, String *input_extrainfo, siz
 	g->depth = depth;
 	g->parent = parent_index;
 	g->assigned_to = JOURNEY_USER_UNASSIGNED;
+	g->goal_type = GOAL_TYPE_TIMER;
+	g->attach_id[0] = '\0';
 
 	Journey *j = FindJourneyByID(journey_id);
 	change_assert(j, "CreateGoal: unknown journey. [%s]\n", journey_id);
@@ -215,11 +217,13 @@ void SerializeGoalList(Goal **goals, size_t count, String *buffer) {
 		char *esc_extra_info = json_escape_dup(g->extra_info.p ? g->extra_info.p : "");
 		char *esc_tips = json_escape_dup(g->tips.p ? g->tips.p : "");
 		char *esc_id = json_escape_dup(g->id);
+		char *esc_attach_id = json_escape_dup(g->attach_id);
 
 		cassert(esc_title, "Failed to escape goal title.\n");
 		cassert(esc_extra_info, "Failed to escape goal extra info.\n");
 		cassert(esc_tips, "Failed to escape goal tips.\n");
 		cassert(esc_id, "Failed to escape goal id.\n");
+		cassert(esc_attach_id, "Failed to escape goal attach id.\n");
 
 		if (!first)
 			CatFixed(buffer, ",");
@@ -243,6 +247,8 @@ void SerializeGoalList(Goal **goals, size_t count, String *buffer) {
 				"\"retry_depth\":%zu,"
 				"\"priority\":%zu,"
 				"\"assigned_to\":%u,"
+				"\"goal_type\":%u,"
+				"\"attach_id\":\"%s\","
 				"\"id\":\"%s\","
 				"\"subgoals\":[",
 				esc_title,
@@ -262,6 +268,8 @@ void SerializeGoalList(Goal **goals, size_t count, String *buffer) {
 				g->retry_depth,
 				g->priority,
 				(unsigned)g->assigned_to,
+				(unsigned)g->goal_type,
+				esc_attach_id,
 				esc_id
 					);
 
@@ -278,6 +286,7 @@ void SerializeGoalList(Goal **goals, size_t count, String *buffer) {
 		free(esc_extra_info);
 		free(esc_tips);
 		free(esc_id);
+		free(esc_attach_id);
 	}
 
 	CatFixed(buffer, "]");

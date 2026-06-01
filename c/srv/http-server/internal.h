@@ -42,6 +42,8 @@ void handle_post_goal_decompose(int fd, const HttpRequest *req, User *user);
 void handle_post_goal_create(int fd, const HttpRequest *req, User *user);
 void handle_post_goal_start(int fd, const HttpRequest *req, User *user);
 void handle_post_goal_end(int fd, const HttpRequest *req, User *user);
+void handle_post_goal_cancel(int fd, const HttpRequest *req, User *user);
+void handle_post_journey_dismiss(int fd, const HttpRequest *req, User *user);
 void handle_post_goal_drop(int fd, const HttpRequest *req, User *user);
 void handle_post_goal_repair(int fd, const HttpRequest *req, User *user);
 void handle_post_goal_extend(int fd, const HttpRequest *req, User *user);

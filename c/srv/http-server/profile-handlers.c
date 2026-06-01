@@ -101,7 +101,8 @@ void handle_post_profile_update(int fd, const HttpRequest *req, User *user)
 		if (strcmp(value, "true") == 0 || strcmp(value, "1") == 0) {
 			char desc[1024] = {0};
 			json_get_string_field(req->body, "description", desc, sizeof(desc));
-			SetUserDiscoverable(user, desc[0] ? desc : (user->description.p ? user->description.p : ""));
+			/* desc supplied → replace; otherwise NULL keeps any existing description. */
+			SetUserDiscoverable(user, desc[0] ? desc : NULL);
 		} else {
 			SetUserPrivate(user);
 		}

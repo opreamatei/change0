@@ -163,9 +163,11 @@ void SetUserDiscoverable(User *u, const char *description)
 {
 	change_assert(u, "SetUserDiscoverable: NULL user");
 	u->discoverable = 1;
-	EmptyString(&u->description);
-	if (description && *description)
-		CatString(&u->description, (char *)description, strlen(description));
+	if (description) {            /* NULL = keep the existing description */
+		EmptyString(&u->description);
+		if (*description)
+			CatString(&u->description, (char *)description, strlen(description));
+	}
 	SaveUser(u);
 }
 

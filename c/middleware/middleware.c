@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/stat.h>
 
 #define MIDDLEWARE_MAX_RETRIES 10
 #define MIDDLEWARE_MAX_PENDING_PERMISSIONS 64
@@ -85,6 +86,8 @@ typedef struct {
 	String history;
 	String events_json;
 	size_t events_count;
+	_Bool stalled_goal_reminder_shown;
+	_Bool stalled_goal_reminder_dismissed;
 	_Bool used;
 } MiddlewareSessionHistory;
 
@@ -135,6 +138,204 @@ static void copy_json_string_field(json_value *v, char *dst, size_t cap, _Bool *
 	if (seen) *seen = 1;
 }
 
+static char ascii_tolower_char(char c)
+{
+	if (c >= 'A' && c <= 'Z')
+		return (char)(c + ('a' - 'A'));
+	return c;
+}
+
+static _Bool contains_case_insensitive(const char *haystack, const char *needle)
+{
+	if (!haystack || !needle || !*needle)
+		return 0;
+
+	size_t needle_len = strlen(needle);
+	if (needle_len == 0)
+		return 0;
+
+	for (size_t i = 0; haystack[i]; i++) {
+		size_t j = 0;
+		while (haystack[i + j] && needle[j] &&
+		       ascii_tolower_char(haystack[i + j]) == ascii_tolower_char(needle[j])) {
+			j++;
+		}
+		if (j == needle_len)
+			return 1;
+	}
+
+	return 0;
+}
+
+static _Bool user_input_mentions_goal_context(const char *user_input)
+{
+	static const char *keywords[] = {
+		"goal", "goals", "task", "tasks", "project", "resume", "continue",
+		"delay", "postpone", "snooze", "drop", "abandon", "finish",
+		"complete", "schedule", "stuck"
+	};
+
+	if (!user_input || !*user_input)
+		return 0;
+
+	for (size_t i = 0; i < sizeof(keywords) / sizeof(keywords[0]); i++) {
+		if (contains_case_insensitive(user_input, keywords[i]))
+			return 1;
+	}
+
+	return 0;
+}
+
+static _Bool user_input_dismisses_stalled_goal_reminder(const char *user_input)
+{
+	static const char *phrases[] = {
+		"stop", "i know", "leave it", "not now", "drop it"
+	};
+
+	if (!user_input || !*user_input)
+		return 0;
+
+	for (size_t i = 0; i < sizeof(phrases) / sizeof(phrases[0]); i++) {
+		if (contains_case_insensitive(user_input, phrases[i]))
+			return 1;
+	}
+
+	return 0;
+}
+
+static _Bool recent_history_mentions_goal_title(const String *history, const char *goal_title)
+{
+	if (!history || !history->p || !goal_title || !*goal_title)
+		return 0;
+
+	size_t history_len = history->len;
+	size_t window = history_len > 1200 ? 1200 : history_len;
+	const char *slice = history->p + (history_len - window);
+
+	return contains_case_insensitive(slice, goal_title);
+}
+
+static Goal *find_oldest_stalled_goal(const char *journey_id)
+{
+	size_t total = 0;
+	Goal **goals = GetGoalsSorted(&total, journey_id);
+	Goal *oldest = NULL;
+
+	for (size_t i = 0; i < total; i++) {
+		Goal *g = goals[i];
+		if (!g) continue;
+		if (g->start_date == 0 || g->end_date != 0) continue;
+		if (change_time_now() - g->start_date < 2 * 24 * 3600) continue;
+		if (!oldest || g->start_date < oldest->start_date)
+			oldest = g;
+	}
+
+	free(goals);
+	return oldest;
+}
+
+static void fill_stalled_goal_reminder_candidate(
+	String *buffer,
+	MiddlewareSessionHistory *session_history,
+	const char *user_input,
+	User *user
+) {
+	if (!buffer || !session_history || !user)
+		return;
+	if (user->journey_count == 0 || !user->journeys[0][0])
+		return;
+	if (session_history->stalled_goal_reminder_shown || session_history->stalled_goal_reminder_dismissed)
+		return;
+	if (user_input_mentions_goal_context(user_input))
+		return;
+
+	Goal *goal = find_oldest_stalled_goal(user->journeys[0]);
+	if (!goal || !goal->title.p || !goal->title.p[0])
+		return;
+	if (recent_history_mentions_goal_title(&session_history->history, goal->title.p))
+		return;
+
+	time_t now = change_time_now();
+	time_t elapsed = now - goal->start_date;
+	long long days = (long long)(elapsed / 86400);
+	long long hours = (long long)((elapsed % 86400) / 3600);
+	char relation[64];
+	if (days <= 1)
+		snprintf(relation, sizeof(relation), "stalled-1-day-%lld-hours", hours);
+	else
+		snprintf(relation, sizeof(relation), "stalled-%lld-days", days);
+
+	size_t len = 0;
+	char *info = SerializeGoal(goal, &len, relation, 1);
+	if (!info) return;
+	CatString(buffer, info, len);
+	free(info);
+}
+
+/*
+ * Chat history persistence. The in-memory chat_histories[] table is volatile
+ * (lost on restart, LRU-evicted when full). To give the chat section a durable
+ * history we mirror each session's events_json to a file under
+ * data/chat-sessions/<sanitized-session-id>.json and reload it when a session
+ * is first touched. Session ids look like "<userId>:default"; ':' and path
+ * separators are sanitized for the filename.
+ */
+static void chat_session_path(const char *session_id, char *out, size_t cap)
+{
+	char safe[160];
+	size_t j = 0;
+	for (size_t i = 0; session_id[i] && j < sizeof(safe) - 1; i++) {
+		char c = session_id[i];
+		safe[j++] = (c == '/' || c == '\\' || c == ':') ? '_' : c;
+	}
+	safe[j] = '\0';
+	snprintf(out, cap, DATA_ROOT_DIRECTORY "chat-sessions/%s.json", safe);
+}
+
+static void persist_session(const MiddlewareSessionHistory *h)
+{
+	mkdir(DATA_ROOT_DIRECTORY "chat-sessions", 0755);
+	char path[256];
+	chat_session_path(h->session_id, path, sizeof(path));
+	FILE *fp = fopen(path, "wb");
+	if (!fp) return;
+	if (h->events_json.p && h->events_json.len)
+		fwrite(h->events_json.p, 1, h->events_json.len, fp);
+	fclose(fp);
+}
+
+static void load_session_from_disk(MiddlewareSessionHistory *h)
+{
+	char path[256];
+	chat_session_path(h->session_id, path, sizeof(path));
+	FILE *fp = fopen(path, "rb");
+	if (!fp) return;
+	fseek(fp, 0, SEEK_END);
+	long sz = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+	if (sz <= 0) { fclose(fp); return; }
+	char *buf = malloc((size_t)sz + 1);
+	if (!buf) { fclose(fp); return; }
+	size_t rd = fread(buf, 1, (size_t)sz, fp);
+	buf[rd] = '\0';
+	fclose(fp);
+
+	EmptyString(&h->events_json);
+	CatString(&h->events_json, buf, rd);
+
+	/* Each persisted event carries exactly one "timestamp" key — count them. */
+	size_t cnt = 0;
+	const char *p = buf;
+	while ((p = strstr(p, "\"timestamp\":")) != NULL) { cnt++; p += 12; }
+	h->events_count = cnt;
+	h->stalled_goal_reminder_shown =
+		strstr(buf, "\"type\":\"stalled_goal_reminder_shown\"") != NULL;
+	h->stalled_goal_reminder_dismissed =
+		strstr(buf, "\"type\":\"stalled_goal_reminder_dismissed\"") != NULL;
+
+	free(buf);
+}
+
 static MiddlewareSessionHistory *get_session_history(const char *session_id)
 {
 	size_t free_i = SIZE_MAX;
@@ -163,6 +364,9 @@ static MiddlewareSessionHistory *get_session_history(const char *session_id)
 	InitString(&chat_histories[free_i].events_json, 4096);
 	chat_histories[free_i].events_count = 0;
 	chat_histories[free_i].used = 1;
+
+	/* Restore any durable history persisted from a previous run. */
+	load_session_from_disk(&chat_histories[free_i]);
 
 	return &chat_histories[free_i];
 }
@@ -247,6 +451,9 @@ static void record_session_event(const char *session_id, const char *type, const
 
 	free(esc_type);
 	free(esc_content);
+
+	/* Mirror to disk so the chat history survives restarts. */
+	persist_session(history);
 }
 
 static void emit_text(middleware_emit_like_func emit, const char *session_id, const char *type, const char *text)
@@ -313,7 +520,8 @@ static void build_middleware_context(
 	String *retry_feedback,
 	String *deep_search_feedback,
 	String *prompt,
-	User *user
+	User *user,
+	_Bool *has_stalled_goal_reminder_candidate
 ) {
 	String input_history;
 	String goal_history;
@@ -321,7 +529,7 @@ static void build_middleware_context(
 	String active_goals;
 	String schedule_snapshot;
 	String completed_goals;
-	String stalled_goals;
+	String stalled_goal_candidate;
 	MiddlewareSessionHistory *session_history = get_session_history(session_id);
 
 	InitString(&input_history, 4096);
@@ -330,7 +538,7 @@ static void build_middleware_context(
 	InitString(&active_goals, 4096);
 	InitString(&schedule_snapshot, 4096);
 	InitString(&completed_goals, 4096);
-	InitString(&stalled_goals, 2048);
+	InitString(&stalled_goal_candidate, 1024);
 
 	SerializeUserProfileHistorySection(user, "inputs", 20, &input_history);
 	SerializeUserProfileHistorySection(user, "goal-activity", 20, &goal_history);
@@ -338,8 +546,10 @@ static void build_middleware_context(
 	if (user->journey_count > 0) {
 		SerializeDueGoals(&active_goals, 16, user->journeys[0]);
 		SerializeUserGoalHistory(&completed_goals, 20, user->journeys[0]);
-		SerializeStalledGoals(&stalled_goals, 8, user->journeys[0]);
 	}
+	fill_stalled_goal_reminder_candidate(&stalled_goal_candidate, session_history, user_input, user);
+	if (has_stalled_goal_reminder_candidate)
+		*has_stalled_goal_reminder_candidate = stalled_goal_candidate.len > 0;
 	SerializeScheduleData(&schedule_snapshot, 0, user);
 
 	time_t now = change_time_now();
@@ -360,7 +570,7 @@ static void build_middleware_context(
 		active_goals.p,
 		schedule_snapshot.p,
 		completed_goals.p,
-		stalled_goals.p,
+		stalled_goal_candidate.p,
 		retry_feedback && retry_feedback->p ? retry_feedback->p : "",
 		deep_search_feedback && deep_search_feedback->p ? deep_search_feedback->p : ""
 	);
@@ -371,7 +581,7 @@ static void build_middleware_context(
 	FreeString(&active_goals);
 	FreeString(&schedule_snapshot);
 	FreeString(&completed_goals);
-	FreeString(&stalled_goals);
+	FreeString(&stalled_goal_candidate);
 }
 
 static String *call_middleware_ai(String *prompt)
@@ -386,6 +596,98 @@ static String *call_middleware_ai(String *prompt)
 	String *result = ai_openai_call_gpt_request(&req);
 	FreeString(&req.schema);
 	return result;
+}
+
+/* Schema + prompt for the standalone match-portrait generation (no chat session).
+   Mirrors the set_discoverable guidance from MIDDLEWARE_SYSTEM_PROMPT but asks the
+   model for a single portrait string instead of a full action list. */
+#define OPENAI_MATCH_DESCRIPTION_SCHEMA_JSON \
+"{" \
+  "\"type\":\"object\"," \
+  "\"additionalProperties\":false," \
+  "\"required\":[\"description\"]," \
+  "\"properties\":{\"description\":{\"type\":\"string\"}}" \
+"}"
+
+/* Placeholders (%s) in order: derived summary, raw input history, goal activity
+   history, active goals, completed goals. */
+#define MATCH_PORTRAIT_PROMPT \
+"You are the matching engine inside CHANGE, a personal growth app. " \
+"Your task: write a single private portrait of this user that the server uses to match them with compatible people — intellectually, professionally, creatively. " \
+"HARD RULE — NO DATING / NO ROMANCE: matching is strictly for friendship and for meeting compatible people in an intellectual, professional, or creative sense — shared curiosity, complementary thinking, common ground. Never use romantic framing. The portrait must never reference appearance, attraction, dating, or relationship intent. " \
+"Write the portrait yourself from the stored context below: profile summary, identity-graph/profile signals, and goal activity. There is no live conversation — do not ask the user anything; work only from what is given. " \
+"If you know little about the user, write a short neutral portrait ('Curious and open-minded, interested in meeting compatible people.'). " \
+"The portrait is third-person, honest, grounded in visible signals. Not a résumé. Reads like what a mutual friend might say. " \
+"If the context shows a clear exclusion the user stated (e.g. 'not a musician'), append: 'Does not want to be matched with: <exclusion>.' " \
+"The portrait is private, never shown directly to anyone. " \
+"User profile summary: [%s]. " \
+"Raw input profile history: [%s]. " \
+"Goal activity history: [%s]. " \
+"Current unfinished goals: [%s]. " \
+"Last touched or completed goals: [%s]. " \
+"Return one strict JSON object only: {\"description\": \"...\"} containing only the portrait text."
+
+String *GenerateMatchDescription(User *user)
+{
+	if (!user) return NULL;
+
+	String input_history, goal_history, derived, active_goals, completed_goals;
+	InitString(&input_history, 4096);
+	InitString(&goal_history, 4096);
+	InitString(&derived, 2048);
+	InitString(&active_goals, 4096);
+	InitString(&completed_goals, 4096);
+
+	SerializeUserProfileHistorySection(user, "inputs", 20, &input_history);
+	SerializeUserProfileHistorySection(user, "goal-activity", 20, &goal_history);
+	SerializeUserProfileDerivedSummary(user, &derived);
+	if (user->journey_count > 0) {
+		SerializeDueGoals(&active_goals, 16, user->journeys[0]);
+		SerializeUserGoalHistory(&completed_goals, 20, user->journeys[0]);
+	}
+
+	String prompt;
+	InitString(&prompt, 12000);
+	CatTemplateString(&prompt, MATCH_PORTRAIT_PROMPT,
+		derived.p, input_history.p, goal_history.p, active_goals.p, completed_goals.p);
+
+	FreeString(&derived);
+	FreeString(&input_history);
+	FreeString(&goal_history);
+	FreeString(&active_goals);
+	FreeString(&completed_goals);
+
+	ai_gpt_request req = {0};
+	req.prompt = prompt;
+	req.model = AI_OPENAI_MODEL_GPT_5_4_MINI;
+	req.schema_name = "match_description";
+	InitString(&req.schema, sizeof(OPENAI_MATCH_DESCRIPTION_SCHEMA_JSON) + 1);
+	CatString(&req.schema, FSTRING_SIZE_PARAMS(OPENAI_MATCH_DESCRIPTION_SCHEMA_JSON));
+
+	String *ai_result = ai_openai_call_gpt_request(&req);
+	FreeString(&req.schema);
+	FreeString(&prompt);
+
+	if (!ai_result) return NULL;
+
+	String *out = NULL;
+	json_value *doc = json_parse(ai_result->p, ai_result->len);
+	if (doc && doc->type == json_object) {
+		for (size_t i = 0; i < doc->u.object.length; i++) {
+			json_object_entry e = doc->u.object.values[i];
+			if (strcmp(e.name, "description") == 0 && e.value &&
+			    e.value->type == json_string && e.value->u.string.length > 0) {
+				out = malloc(sizeof(String));
+				InitString(out, e.value->u.string.length + 1);
+				CatString(out, e.value->u.string.ptr, e.value->u.string.length);
+				break;
+			}
+		}
+	}
+	if (doc) json_value_free(doc);
+	FreeString(ai_result);
+	free(ai_result);
+	return out;
 }
 
 static _Bool parse_action(json_value *item, MiddlewareAction *action, String *error)
@@ -1038,6 +1340,15 @@ MiddlewareResult RunClientMiddleware(
 	UserProfileRecordInput(user, "middleware_chat_user", user_input);
 
 	emit_text(emit, session_id, "message_received", user_input);
+	{
+		MiddlewareSessionHistory *session_history = get_session_history(session_id);
+		if (session_history->stalled_goal_reminder_shown &&
+		    user_input_dismisses_stalled_goal_reminder(user_input) &&
+		    !session_history->stalled_goal_reminder_dismissed) {
+			session_history->stalled_goal_reminder_dismissed = 1;
+			record_session_event(session_id, "stalled_goal_reminder_dismissed", user_input);
+		}
+	}
 
 	for (size_t attempt = 0; attempt < MIDDLEWARE_MAX_RETRIES; attempt++) {
 		String prompt;
@@ -1047,13 +1358,22 @@ MiddlewareResult RunClientMiddleware(
 		size_t actions_len = 0;
 		String parse_error;
 		String suggestions;
+		_Bool has_stalled_goal_reminder_candidate = 0;
 		_Bool parsed = 0;
 		_Bool applied = 0;
 
 		InitString(&prompt, 12000);
 		InitString(&parse_error, 1024);
 		InitString(&suggestions, 256);
-		build_middleware_context(session_id, user_input, &retry_feedback, &deep_search_feedback, &prompt, user);
+		build_middleware_context(
+			session_id,
+			user_input,
+			&retry_feedback,
+			&deep_search_feedback,
+			&prompt,
+			user,
+			&has_stalled_goal_reminder_candidate
+		);
 
 		ai_result = call_middleware_ai(&prompt);
 		doc = json_parse(ai_result->p, ai_result->len);
@@ -1075,6 +1395,13 @@ MiddlewareResult RunClientMiddleware(
 		FreeString(&prompt);
 
 		if (parsed && applied) {
+			if (has_stalled_goal_reminder_candidate) {
+				MiddlewareSessionHistory *session_history = get_session_history(session_id);
+				if (!session_history->stalled_goal_reminder_shown) {
+					session_history->stalled_goal_reminder_shown = 1;
+					record_session_event(session_id, "stalled_goal_reminder_shown", "");
+				}
+			}
 			append_session_message(session_id, "assistant", result.assistant_message.p);
 			UserProfileRecordInput(user, "middleware_chat_assistant", result.assistant_message.p);
 			emit_text(emit, session_id, "assistant_message", result.assistant_message.p);

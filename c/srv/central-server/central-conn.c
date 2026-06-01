@@ -2,6 +2,7 @@
 #include "http-util.h"
 #include "connections.h"
 #include "user-management.h"
+#include "middleware.h"
 #include "util.h"
 
 #include <stdlib.h>
@@ -23,7 +24,21 @@ void handle_conn_discoverable(int fd, CentralRequest *req)
 		http_send_json(fd, 404, "Not Found", "{\"ok\":false,\"error\":\"user_not_found\"}");
 		return;
 	}
-	SetUserDiscoverable(u, desc ? desc : "");
+
+	if (desc && *desc) {
+		/* Explicit description supplied — honor it. */
+		SetUserDiscoverable(u, desc);
+	} else if (u->description.p && u->description.len > 0) {
+		/* Already have a description (e.g. one the user set manually) — keep it,
+		   just flip discoverable on. NULL = preserve existing. */
+		SetUserDiscoverable(u, NULL);
+	} else {
+		/* No description anywhere — generate one with the same context/flow the
+		   chat middleware uses for set_discoverable, then store it. */
+		String *generated = GenerateMatchDescription(u);
+		SetUserDiscoverable(u, generated ? generated->p : "");
+		if (generated) { FreeString(generated); free(generated); }
+	}
 	free(desc);
 	http_send_json(fd, 200, "OK", "{\"ok\":true}");
 }

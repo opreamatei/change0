@@ -27,6 +27,7 @@ typedef struct UserType {
 	size_t schedule_len;
 	_Bool schedule_needs_refresh;
 	_Bool goal_health_needs_refresh;
+	time_t last_schedule_refresh;   /* in-memory; forces a recompute at least every 30s */
 
 	/* Connection discovery: opt-in only. Description is server-side only,
 	 * never shown to other users. They see only the user's name + the reason

@@ -18,6 +18,7 @@ char *extract_string_field(const char *body, size_t body_len, const char *key);
 void init_shared_journeys(void);
 void free_shared_journeys(void);
 void handle_get_shared_journey(int fd, const char *journey_id);
+void handle_delete_shared_journey(int fd, const char *journey_id);
 void handle_create_shared_journey(int fd, CentralRequest *req);
 void handle_update_shared_journey(int fd, const char *journey_id, CentralRequest *req);
 /* List shared journeys for the user passed as ?user_id=... in the query string. */

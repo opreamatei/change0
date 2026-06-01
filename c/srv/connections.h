@@ -110,7 +110,9 @@ typedef struct {
 void InitConnectionSystem(void);
 void FreeConnectionSystem(void);
 
-/* user opt-in. Triggers matching pass if becoming discoverable. */
+/* user opt-in. Triggers matching pass if becoming discoverable.
+   description == NULL keeps the existing description untouched;
+   a non-NULL string (including "") replaces it. */
 void SetUserDiscoverable(User *u, const char *description);
 void SetUserPrivate(User *u);
 void UpdateUserDescription(User *u, const char *description);

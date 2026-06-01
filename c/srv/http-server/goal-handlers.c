@@ -5,6 +5,7 @@
 #include "goal/schedule-system.h"
 #include "user-management.h"
 #include "journey.h"
+#include "journal.h"
 #include "search/deep-search-session.h"
 #include "util.h"
 
@@ -13,6 +14,8 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+
+static Goal *resolve_goal_from_body(const HttpRequest *req, User *user, Journey **owning);
 
 static int validate_goal_id_32(const char *goal_id)
 {
@@ -131,6 +134,8 @@ static void append_goal_json(String *out, Goal *g)
 	char *esc_id       = NULL;
 	char *esc_title    = NULL;
 	char *esc_extra    = NULL;
+	char *esc_tips     = NULL;
+	char *esc_attach   = NULL;
 	Goal *root         = NULL;
 	size_t eff_priority = 0;
 
@@ -142,6 +147,8 @@ static void append_goal_json(String *out, Goal *g)
 	esc_id    = json_escape_dup(goal_id);
 	esc_title = json_escape_dup(c_str(&g->title));
 	esc_extra = json_escape_dup(c_str(&g->extra_info));
+	esc_tips  = json_escape_dup(g->tips.p ? c_str(&g->tips) : "");
+	esc_attach = json_escape_dup(g->attach_id);
 	root      = CalcGoalRoot(g);
 	eff_priority = root ? root->priority : g->priority;
 
@@ -179,11 +186,18 @@ static void append_goal_json(String *out, Goal *g)
 			"\"next\":%zu,"
 			"\"depth\":%zu,"
 			"\"retry_depth\":%zu,"
-			"\"priority\":%zu"
+			"\"priority\":%zu,"
+			"\"goal_type\":%u,"
+			"\"tips\":\"%s\","
+			"\"attach_id\":\"%s\""
 		"}",
 		g->parent, g->prev, g->next,
-		g->depth, g->retry_depth, eff_priority);
+		g->depth, g->retry_depth, eff_priority,
+		(unsigned)g->goal_type, esc_tips ? esc_tips : "",
+		esc_attach ? esc_attach : "");
 
+	free(esc_tips);
+	free(esc_attach);
 	free(esc_extra);
 	free(esc_title);
 	free(esc_id);
@@ -225,7 +239,8 @@ static char *serialize_goal_children_json(Goal *g, User *user)
 	}
 
 	_Bool decomposed_now = 0;
-	if (g->subgoals_len == 0 && g->required_time >= 60 * 15)
+	/* Typed leaves (e.g. journal) are terminal steps — never auto-decompose them. */
+	if (g->subgoals_len == 0 && g->goal_type == GOAL_TYPE_TIMER && g->required_time >= 60 * 15)
 		decomposed_now = DecomposeGoal(g, user);
 
 	char  goal_id[GOAL_ID_LEN + 1];
@@ -347,6 +362,12 @@ void handle_post_goal_decompose(int fd, const HttpRequest *req, User *user)
 		return;
 	}
 
+	if (goal->goal_type != GOAL_TYPE_TIMER) {
+		http_send_json(fd, 409, "Conflict",
+			"{\"ok\":false,\"error\":\"goal_not_decomposable\"}");
+		return;
+	}
+
 	char *json = serialize_goal_children_json(goal, user);
 	if (!json) {
 		http_send_json(fd, 500, "Internal Server Error",
@@ -408,6 +429,23 @@ static void handle_post_goal_status_action(
 			http_send_json(fd, 409, "Conflict",
 				"{\"ok\":false,\"error\":\"goal_already_completed\"}");
 			return;
+		}
+		/*
+		 * Journal leaves cannot be completed without the journal entry they
+		 * produced. The client sends back the entry id (attach_id) it edited;
+		 * we require it and record it before stamping end_date. Non-journal
+		 * goals ignore journal_ref entirely.
+		 */
+		if (goal->goal_type == GOAL_TYPE_JOURNAL) {
+			char journal_ref[49] = {0};
+			json_get_string_field(req->body, "journal_ref", journal_ref, sizeof(journal_ref));
+			if (!journal_ref[0]) {
+				http_send_json(fd, 400, "Bad Request",
+					"{\"ok\":false,\"error\":\"journal_ref_required\"}");
+				return;
+			}
+			strncpy(goal->attach_id, journal_ref, sizeof(goal->attach_id) - 1);
+			goal->attach_id[sizeof(goal->attach_id) - 1] = '\0';
 		}
 	}
 
@@ -633,6 +671,30 @@ void handle_post_goal_start(int fd, const HttpRequest *req, User *user)
 		return;
 	}
 
+	/*
+	 * Journal leaves produce a draft journal entry at start time. The id is
+	 * stored on the leaf and returned so the client can edit that exact entry;
+	 * the title carries a "(draft)" suffix until the step is submitted via
+	 * /goal/end. If creation fails we leave attach_id empty and let the client
+	 * fall back gracefully.
+	 */
+	char attach_id_field[80] = "";
+	if (leaf->goal_type == GOAL_TYPE_JOURNAL && !leaf->attach_id[0]) {
+		char draft_title[JOURNAL_TITLE_SIZE];
+		snprintf(draft_title, sizeof(draft_title), "%s (draft)", c_str(&leaf->title));
+		JournalMeta jm;
+		if (JournalCreate(user, draft_title, "", -1, 0, &jm) == 0) {
+			strncpy(leaf->attach_id, jm.id, sizeof(leaf->attach_id) - 1);
+			leaf->attach_id[sizeof(leaf->attach_id) - 1] = '\0';
+		}
+	}
+	if (leaf->attach_id[0]) {
+		char *esc_attach = json_escape_dup(leaf->attach_id);
+		snprintf(attach_id_field, sizeof(attach_id_field),
+			",\"attach_id\":\"%s\"", esc_attach ? esc_attach : "");
+		free(esc_attach);
+	}
+
 	if (owning_journey && owning_journey->is_shared)
 		PushJourneyToCentral(owning_journey);
 
@@ -646,9 +708,10 @@ void handle_post_goal_start(int fd, const HttpRequest *req, User *user)
 
 	esc_leaf_id  = json_escape_dup(leaf_id);
 	response_len = snprintf(response_body, sizeof(response_body),
-		"{\"ok\":true,\"goal-id\":\"%s\",\"goal_index\":%zu,\"at\":%lld,\"start_date\":%lld,\"end_date\":%lld}",
+		"{\"ok\":true,\"goal-id\":\"%s\",\"goal_index\":%zu,\"at\":%lld,\"start_date\":%lld,\"end_date\":%lld%s}",
 		esc_leaf_id, leaf->localIndex,
-		(long long)leaf->start_date, (long long)leaf->start_date, (long long)leaf->end_date);
+		(long long)leaf->start_date, (long long)leaf->start_date, (long long)leaf->end_date,
+		attach_id_field);
 	free(esc_leaf_id);
 
 	if (response_len < 0 || (size_t)response_len >= sizeof(response_body)) {
@@ -664,6 +727,107 @@ void handle_post_goal_start(int fd, const HttpRequest *req, User *user)
 void handle_post_goal_end(int fd, const HttpRequest *req, User *user)
 {
 	handle_post_goal_status_action(fd, req, "goal_ended", EndGoalFromGoal, "end_date", user);
+}
+
+/*
+ * POST /goal/cancel — abandon an in-progress session without completing it.
+ * Resets start_date/end_date and clears any session-bound artifact (the
+ * journal draft id). The journal entry itself is intentionally NOT deleted —
+ * it stays as a "(draft)" entry the user can revisit. Used when the user
+ * leaves a journal focus session before submitting.
+ */
+void handle_post_goal_cancel(int fd, const HttpRequest *req, User *user)
+{
+	if (!req->body) {
+		http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_body\"}");
+		return;
+	}
+
+	Journey *owning = NULL;
+	Goal *g = resolve_goal_from_body(req, user, &owning);
+	if (!g) {
+		http_send_json(fd, 404, "Not Found", "{\"ok\":false,\"error\":\"goal_not_found\"}");
+		return;
+	}
+
+	g->start_date  = 0;
+	g->end_date    = 0;
+	g->attach_id[0] = '\0';
+
+	if (owning && owning->is_shared) PushJourneyToCentral(owning);
+	SaveUser(user);
+
+	char gid[GOAL_ID_LEN + 1];
+	goal_id_to_cstr(g, gid);
+
+	char body[256];
+	int n = snprintf(body, sizeof(body),
+		"{\"ok\":true,\"goal-id\":\"%s\",\"goal_index\":%zu}", gid, g->localIndex);
+	goal_emit_event(gid, "goal_cancelled", body, (n > 0 && (size_t)n < sizeof(body)) ? (size_t)n : 0);
+	http_send_json(fd, 200, "OK", body);
+}
+
+/*
+ * POST /journey/dismiss — exit (and delete) a journey. For shared journeys one
+ * participant leaving dismisses the journey for everyone (central drops it).
+ * Accepts {"journey-id":"..."} or, for convenience, {"goal-id":"..."} (any goal
+ * in the journey) and resolves the owning journey from it.
+ */
+void handle_post_journey_dismiss(int fd, const HttpRequest *req, User *user)
+{
+	if (!req->body) {
+		http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_body\"}");
+		return;
+	}
+
+	char journey_id[JOURNEY_ID_SIZE + 1] = {0};
+	if (!json_get_string_field(req->body, "journey-id", journey_id, sizeof(journey_id)) &&
+	    !json_get_string_field(req->body, "journeyId",  journey_id, sizeof(journey_id))) {
+		char raw_goal_id[256] = {0};
+		if (json_get_string_field(req->body, "goal-id", raw_goal_id, sizeof(raw_goal_id)) ||
+		    json_get_string_field(req->body, "goalId",  raw_goal_id, sizeof(raw_goal_id))) {
+			Journey *owning = NULL;
+			Goal *g = find_goal_any_journey(raw_goal_id, user, &owning);
+			if (g && owning) {
+				strncpy(journey_id, owning->id, sizeof(journey_id) - 1);
+				journey_id[sizeof(journey_id) - 1] = '\0';
+			}
+		}
+	}
+
+	if (!journey_id[0]) {
+		http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_journey_identifier\"}");
+		return;
+	}
+
+	Journey *j = FindJourneyByID(journey_id);
+	if (!j) {
+		http_send_json(fd, 404, "Not Found", "{\"ok\":false,\"error\":\"journey_not_found\"}");
+		return;
+	}
+
+	_Bool shared = j->is_shared;
+
+	if (shared) DeleteSharedJourneyOnCentral(journey_id);
+	RemoveJourneyFromTable(journey_id);  /* frees j; don't use it afterwards */
+
+	/* Drop the id from the user's journey list and delete the on-disk copy. */
+	for (size_t i = 0; i < user->journey_count; i++) {
+		if (strcmp(user->journeys[i], journey_id) != 0) continue;
+		for (size_t k = i; k + 1 < user->journey_count; k++)
+			memcpy(user->journeys[k], user->journeys[k + 1], JOURNEY_ID_SIZE);
+		user->journey_count--;
+		break;
+	}
+
+	char path[512];
+	GetUserJourneyPath(user, journey_id, path);
+	unlink(path);
+
+	SaveUser(user);
+
+	goal_emit_event(journey_id, "journey_dismissed", "{}", 2);
+	http_send_json(fd, 200, "OK", "{\"ok\":true}");
 }
 
 void handle_post_goal_drop(int fd, const HttpRequest *req, User *user)
@@ -970,6 +1134,9 @@ void handle_post_schedule_refresh(int fd, User *user)
 
 void handle_get_schedule(int fd, User *user)
 {
+	/* The client opening the schedule always gets a freshly computed one. */
+	user->schedule_needs_refresh = 1;
+
 	size_t len = 0;
 	const struct ScheduleEntry *entries = GetSchedule(&len, user);
 	String out;
@@ -983,8 +1150,8 @@ void handle_get_schedule(int fd, User *user)
 
 		if (i > 0) CatString(&out, FSTRING_SIZE_PARAMS(","));
 
-		CatTemplateString(&out, "{\"time\":%lld,\"goal_index\":%zu,\"title\":\"%s\"}",
-			(long long)entries[i].time, entries[i].goalIndex, esc_title);
+		CatTemplateString(&out, "{\"time\":%lld,\"duration\":%lld,\"goal_index\":%zu,\"title\":\"%s\"}",
+			(long long)entries[i].time, (long long)entries[i].duration, entries[i].goalIndex, esc_title);
 
 		free(esc_title);
 	}
@@ -1025,6 +1192,7 @@ void handle_post_goal_extend(int fd, const HttpRequest *req, User *user)
 	Goal *g = resolve_goal_from_body(req, user, &owning);
 	if (!g) { http_send_json(fd, 404, "Not Found", "{\"ok\":false,\"error\":\"goal_not_found\"}"); return; }
 	if (g->subgoals_len != 0) { http_send_json(fd, 409, "Conflict", "{\"ok\":false,\"error\":\"not_a_leaf\"}"); return; }
+	if (g->goal_type != GOAL_TYPE_TIMER) { http_send_json(fd, 409, "Conflict", "{\"ok\":false,\"error\":\"goal_not_extendable\"}"); return; }
 
 	ExtendGoalLeaf(g);
 

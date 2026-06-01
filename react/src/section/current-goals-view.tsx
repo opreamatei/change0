@@ -26,6 +26,8 @@ export interface CurrentGoalsViewProps {
   goals: Goal[]
   statusMessage: string
   onSelectGoal: (selection: GoalSelection) => void
+  /** Long-press on a goal card — opens an options menu (e.g. exit journey). */
+  onGoalOptions?: (selection: GoalSelection) => void
 }
 
 interface PathNode extends PathNodeData {
@@ -90,6 +92,7 @@ function buildJourneyData(root: Goal, goals: Goal[]): JourneyData {
       num: num++,
       canStart,
       isMystery: false,
+      isJournal: g.goalType === 'journal',
       chapterTitle,
     })
   }
@@ -109,7 +112,7 @@ function buildJourneyData(root: Goal, goals: Goal[]): JourneyData {
 }
 
 export default function CurrentGoalsView({
-  goals, statusMessage, onSelectGoal,
+  goals, statusMessage, onSelectGoal, onGoalOptions,
 }: CurrentGoalsViewProps) {
   const [current, setCurrent] = useState(0)
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -179,6 +182,10 @@ export default function CurrentGoalsView({
                     const nd = j.pathNodes[idx]
                     if (nd) onSelectGoal({ goal: nd.goal, nodeState: nd.nodeState, isMystery: nd.isMystery, canStart: nd.canStart })
                   }}
+                  onLongPress={onGoalOptions ? (idx) => {
+                    const nd = j.pathNodes[idx]
+                    if (nd) onGoalOptions({ goal: nd.goal, nodeState: nd.nodeState, isMystery: nd.isMystery, canStart: nd.canStart })
+                  } : undefined}
                 />
               )
             }}

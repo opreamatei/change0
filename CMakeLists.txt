@@ -362,6 +362,7 @@ target_include_directories(central-server PUBLIC
 	${CMAKE_SOURCE_DIR}/c/srv/http-server
 	${CMAKE_SOURCE_DIR}/c/srv/match-system
 	${CMAKE_SOURCE_DIR}/c/srv/user
+	${CMAKE_SOURCE_DIR}/c/middleware
 	${CMAKE_SOURCE_DIR}/c/lib/util
 	${CMAKE_SOURCE_DIR}/c/lib/jsonp
 	${CMAKE_SOURCE_DIR}/c/ne
@@ -374,6 +375,7 @@ target_link_libraries(central-server PUBLIC
 	connections
 	journey
 	http-server
+	middleware
 	http-util
 	pthread
 )

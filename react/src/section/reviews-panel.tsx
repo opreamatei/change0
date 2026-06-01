@@ -5,6 +5,7 @@ interface SubmissionItem {
   id: string
   ai_label: string
   ai_description: string
+  user_description: string
   file_count: number
   files: string[]
   submitted_at: number
@@ -25,6 +26,7 @@ export default function ReviewsPanel({ open, onClose, userId, userLabel = '' }: 
   const [localStars, setLocalStars] = useState(0)
   const [submitted, setSubmitted] = useState<Record<string, boolean>>({})
   const [dailyLimitHit, setDailyLimitHit] = useState(false)
+  const [zoomUrl, setZoomUrl] = useState<string | null>(null)
   const swipeStartX = useRef(0)
 
   const load = useCallback(async () => {
@@ -61,7 +63,7 @@ export default function ReviewsPanel({ open, onClose, userId, userLabel = '' }: 
     if (Math.abs(dx) > 50) goTo(idx + (dx < 0 ? 1 : -1))
   }
 
-  const startReview = (id: string) => { setReviewingId(id); setLocalStars(0) }
+  const startReview = (id: string) => { setReviewingId(id); setLocalStars(0); setZoomUrl(null) }
 
   const confirmReview = async () => {
     if (localStars === 0 || !reviewingItem) return
@@ -128,22 +130,34 @@ export default function ReviewsPanel({ open, onClose, userId, userLabel = '' }: 
               style={{ background: 'rgba(255,200,50,.1)', color: 'rgba(255,200,50,.9)', border: '1px solid rgba(255,200,50,.2)' }}>
               {reviewingItem.ai_label}
             </div>
-            <div className="mt-3 text-[14px] leading-[1.65]" style={{ color: 'rgba(255,255,255,.7)' }}>
+            <div className="mb-1 mt-3 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'rgba(255,255,255,.3)' }}>AI summary</div>
+            <div className="text-[14px] leading-[1.65]" style={{ color: 'rgba(255,255,255,.7)' }}>
               {reviewingItem.ai_description}
             </div>
+            {reviewingItem.user_description?.trim() && (
+              <>
+                <div className="mb-1 mt-4 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'rgba(255,200,50,.55)' }}>In their words</div>
+                <div className="text-[14px] leading-[1.65] whitespace-pre-wrap" style={{ color: 'rgba(255,255,255,.82)' }}>
+                  {reviewingItem.user_description}
+                </div>
+              </>
+            )}
           </div>
 
           {reviewingItem.file_count > 0 && (
             <div className="px-5 pt-5 pb-3">
-              <div className="mb-2.5 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgba(255,255,255,.3)' }}>Proof</div>
-              <div className="flex gap-2.5">
-                {reviewingItem.files.slice(0, 3).map((fname, pi) => {
+              <div className="mb-2.5 text-[11px] font-bold uppercase tracking-wider" style={{ color: 'rgba(255,255,255,.3)' }}>Proof — tap an image to zoom</div>
+              <div className="grid grid-cols-3 gap-2.5">
+                {reviewingItem.files.map((fname, pi) => {
                   const url = CENTRAL_ENDPOINTS.submissionFile(reviewingItem.id, fname)
                   const isImage = /\.(jpg|jpeg|png|gif|webp)$/i.test(fname)
                   return (
-                    <div key={pi} className="relative flex-1 overflow-hidden rounded-2xl" style={{ height: 90, background: 'rgba(255,255,255,.05)' }}>
+                    <div key={pi} className="relative overflow-hidden rounded-2xl" style={{ height: 90, background: 'rgba(255,255,255,.05)' }}>
                       {isImage ? (
-                        <img src={url} alt="" className="absolute inset-0 h-full w-full object-cover" />
+                        <button type="button" onClick={() => setZoomUrl(url)}
+                          className="absolute inset-0 h-full w-full cursor-zoom-in active:opacity-80">
+                          <img src={url} alt="" className="absolute inset-0 h-full w-full object-cover" />
+                        </button>
                       ) : (
                         <a href={url} target="_blank" rel="noreferrer" className="absolute inset-0 flex items-center justify-center flex-col gap-1" style={{ color: 'rgba(255,255,255,.5)' }}>
                           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -190,6 +204,22 @@ export default function ReviewsPanel({ open, onClose, userId, userLabel = '' }: 
               className="w-full rounded-2xl py-[18px] text-[16px] font-bold tracking-tight transition-opacity active:opacity-80"
               style={{ background: '#fff', color: '#000', opacity: localStars > 0 ? 1 : 0.35 }}>
               Submit review →
+            </button>
+          </div>
+        )}
+
+        {zoomUrl && (
+          <div className="fixed inset-0 z-[240] flex items-center justify-center"
+            style={{ background: 'rgba(0,0,0,.92)' }}
+            onClick={() => setZoomUrl(null)}>
+            <img src={zoomUrl} alt="" className="max-h-full max-w-full object-contain"
+              onClick={(e) => e.stopPropagation()} />
+            <button type="button" onClick={() => setZoomUrl(null)}
+              className="absolute right-4 top-[52px] flex h-10 w-10 items-center justify-center rounded-full"
+              style={{ background: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.15)', color: '#fff' }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
             </button>
           </div>
         )}

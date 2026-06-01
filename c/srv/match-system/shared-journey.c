@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #define SHARED_JOURNEYS_DIR  PROJECT_ROOT "data/shared-journeys/"
 #define ROOT_PROPOSALS_DIR   PROJECT_ROOT "data/shared-journeys/proposals/"
@@ -274,6 +275,50 @@ void handle_get_shared_journey(int fd, const char *journey_id)
 	SerializeJourney(j, &out);
 	http_send_json(fd, 200, "OK", c_str(&out));
 	FreeString(&out);
+}
+
+/*
+ * DELETE /journey/<id> — drop a shared journey for every participant. One user
+ * leaving dismisses the whole journey: we free the central copy and remove the
+ * on-disk file, so subsequent fetches by any participant 404.
+ */
+void handle_delete_shared_journey(int fd, const char *journey_id)
+{
+	size_t idx = SharedJourneyCount;
+	for (size_t i = 0; i < SharedJourneyCount; i++)
+		if (strcmp(SharedJourneyTable[i].id, journey_id) == 0) { idx = i; break; }
+
+	if (idx == SharedJourneyCount) {
+		http_send_json(fd, 404, "Not Found",
+			"{\"ok\":false,\"error\":\"journey_not_found\"}");
+		return;
+	}
+
+	Journey *j = &SharedJourneyTable[idx];
+	FreeString(&j->title);
+	FreeString(&j->extra_info);
+	for (size_t k = 0; k < j->goals_count; k++) {
+		Goal *g = j->goals[k];
+		if (!g) continue;
+		if (g->title.p) FreeString(&g->title);
+		if (g->extra_info.p) FreeString(&g->extra_info);
+		free(g->subgoals);
+		free(g);
+	}
+	for (size_t k = 0; k < j->user_count; k++) {
+		if (j->users[k].display_name.p)   FreeString(&j->users[k].display_name);
+		if (j->users[k].context_summary.p) FreeString(&j->users[k].context_summary);
+	}
+
+	char path[512];
+	snprintf(path, sizeof(path), SHARED_JOURNEYS_DIR "%s.json", journey_id);
+	unlink(path);
+
+	for (size_t i = idx; i + 1 < SharedJourneyCount; i++)
+		SharedJourneyTable[i] = SharedJourneyTable[i + 1];
+	SharedJourneyCount--;
+
+	http_send_json(fd, 200, "OK", "{\"ok\":true}");
 }
 
 /*

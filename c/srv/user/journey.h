@@ -59,6 +59,8 @@ void LoadJourneyFromFile(Journey *j, const char *path);
 
 Journey *FetchSharedJourney(const char *journey_id);
 void PushJourneyToCentral(const Journey *j);
+void DeleteSharedJourneyOnCentral(const char *journey_id);
+void RemoveJourneyFromTable(const char *journey_id);
 
 /*
  * Shared-journey user-table helpers. AddUserToJourney appends a participant

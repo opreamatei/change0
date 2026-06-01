@@ -56,16 +56,18 @@ void handle_get_submissions_pending(int fd, const char *query)
         GoalSubmission *s = results[i];
         char *esc_label = json_escape_dup(s->ai_label);
         char *esc_desc  = json_escape_dup(s->ai_description.p ? s->ai_description.p : "");
+        char *esc_user  = json_escape_dup(s->user_description.p ? s->user_description.p : "");
 
         CatTemplateString(&out,
             "%s{\"id\":\"%s\","
             "\"ai_label\":\"%s\","
             "\"ai_description\":\"%s\","
+            "\"user_description\":\"%s\","
             "\"file_count\":%d,"
             "\"submitted_at\":%lld,"
             "\"files\":[",
             i == 0 ? "" : ",",
-            s->id, esc_label, esc_desc,
+            s->id, esc_label, esc_desc, esc_user,
             s->file_count,
             (long long)s->submitted_at);
 
@@ -78,6 +80,7 @@ void handle_get_submissions_pending(int fd, const char *query)
 
         free(esc_label);
         free(esc_desc);
+        free(esc_user);
     }
 
     CatFixed(&out, "]}");

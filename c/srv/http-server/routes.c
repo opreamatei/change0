@@ -47,6 +47,8 @@ static int handle_request(int fd, const HttpRequest *req, User *user)
 	if (POST("/goal/shared-action"))        { handle_post_goal_shared_action(fd, req, user);            return 0; }
 	if (POST("/goal/start"))            { handle_post_goal_start(fd, req, user);             return 0; }
 	if (POST("/goal/end"))              { handle_post_goal_end(fd, req, user);               return 0; }
+	if (POST("/goal/cancel"))           { handle_post_goal_cancel(fd, req, user);            return 0; }
+	if (POST("/journey/dismiss"))       { handle_post_journey_dismiss(fd, req, user);        return 0; }
 	if (POST("/goal/decompose"))        { handle_post_goal_decompose(fd, req, user);         return 0; }
 	if (POST("/goal/repair"))           { handle_post_goal_repair(fd, req, user);            return 0; }
 	if (POST("/goal/extend"))           { handle_post_goal_extend(fd, req, user);            return 0; }

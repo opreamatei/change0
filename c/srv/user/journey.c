@@ -376,6 +376,13 @@ void LoadJourneyFromBuffer(Journey *j, const char *buf, size_t len) {
 				change_assert(v->u.integer >= 0 && v->u.integer <= 0xFF,
 					"Goal assigned_to out of byte range in journey file.\n");
 				g->assigned_to = (uint8_t)v->u.integer;
+			} else if (!strcmp(e->name, "goal_type")) {
+				g->goal_type = (uint8_t)v->u.integer;
+			} else if (!strcmp(e->name, "attach_id")) {
+				if (v->type == json_string) {
+					strncpy(g->attach_id, v->u.string.ptr, sizeof(g->attach_id) - 1);
+					g->attach_id[sizeof(g->attach_id) - 1] = '\0';
+				}
 			} else if (!strcmp(e->name, "subgoals")) {
 				subgoals_json = v;
 			}
@@ -503,4 +510,40 @@ void PushJourneyToCentral(const Journey *j) {
 	close(fd);
 
 	FreeString(&body);
+}
+
+/* Ask central to delete a shared journey for ALL participants. */
+void DeleteSharedJourneyOnCentral(const char *journey_id) {
+	int fd = central_connect();
+	if (massert(fd >= 0, "DeleteSharedJourneyOnCentral: couldn't connect to central server.\n"))
+		return;
+
+	char req[256];
+	int req_len = snprintf(req, sizeof(req),
+		"POST /journey/%s/dismiss HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+		"Content-Length: 0\r\nConnection: close\r\n\r\n",
+		journey_id);
+	http_send_all(fd, req, (size_t)req_len);
+
+	size_t body_len = 0;
+	char *body = central_recv_body(fd, &body_len);
+	free(body);
+	close(fd);
+}
+
+/*
+ * Remove a journey (and its goals) from the in-memory JourneyTable, freeing it
+ * and compacting the table. Goal lookups rebuild from this table, so this is
+ * enough to make the journey disappear locally. Does NOT touch the user's
+ * journey-id list or on-disk files — the caller handles those.
+ */
+void RemoveJourneyFromTable(const char *journey_id) {
+	for (size_t i = 0; i < JourneyTableCount; i++) {
+		if (strcmp(JourneyTable[i].id, journey_id) != 0) continue;
+		FreeJourneyEntry(&JourneyTable[i]);
+		for (size_t k = i; k + 1 < JourneyTableCount; k++)
+			JourneyTable[k] = JourneyTable[k + 1];
+		JourneyTableCount--;
+		return;
+	}
 }

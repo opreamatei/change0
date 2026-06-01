@@ -26,6 +26,8 @@ export interface GoalInit {
   depth: number
   retryDepth: number
   priority: number
+  goalType?: string
+  attachId?: string
 }
 
 export interface GoalDecomposePayload {
@@ -55,6 +57,8 @@ export interface GoalListResponseItem {
   depth: number
   retry_depth: number
   priority: number
+  goal_type?: number
+  attach_id?: string
 }
 
 export interface GoalListResponse {
@@ -71,6 +75,7 @@ export interface GoalStatusActionResponse {
   at: number
   start_date: number
   end_date: number
+  attach_id?: string
 }
 
 export interface GoalEventPayload {
@@ -108,6 +113,8 @@ export class Goal implements GoalInit {
     'depth',
     'retryDepth',
     'priority',
+    'goalType',
+    'attachId',
   ]
 
   id: string
@@ -127,6 +134,8 @@ export class Goal implements GoalInit {
   depth: number
   retryDepth: number
   priority: number
+  goalType: string
+  attachId: string
 
   constructor(init: GoalInit) {
     this.id = init.id
@@ -146,6 +155,8 @@ export class Goal implements GoalInit {
     this.depth = init.depth
     this.retryDepth = init.retryDepth
     this.priority = init.priority
+    this.goalType = init.goalType ?? 'timer'
+    this.attachId = init.attachId ?? ''
   }
 
   static from(init: GoalInit | Goal) {
@@ -171,6 +182,8 @@ export class Goal implements GoalInit {
       depth: item.depth,
       retryDepth: item.retry_depth,
       priority: item.priority,
+      goalType: item.goal_type === 1 ? 'journal' : 'timer',
+      attachId: item.attach_id ?? '',
     })
   }
 
@@ -290,7 +303,11 @@ export async function loadGoalsFromServer(baseUrl = getClientBaseUrl() ?? '') {
     .map(Goal.fromServer)
 }
 
-async function postGoalStatusAction(url: string, payload: GoalStatusActionPayload) {
+async function postGoalStatusAction(
+  url: string,
+  payload: GoalStatusActionPayload,
+  extra?: Record<string, unknown>,
+) {
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -298,6 +315,7 @@ async function postGoalStatusAction(url: string, payload: GoalStatusActionPayloa
     },
     body: JSON.stringify({
       ...(payload.goalId ? { 'goal-id': payload.goalId } : {}),
+      ...(extra ?? {}),
     }),
   })
 
@@ -312,8 +330,31 @@ export async function startGoalOnServer(goal: Goal, baseUrl = getClientBaseUrl()
   return postGoalStatusAction(buildGoalStartUrl(baseUrl), { goalId: goal.id })
 }
 
-export async function endGoalOnServer(goal: Goal, baseUrl = getClientBaseUrl() ?? "") {
-  return postGoalStatusAction(buildGoalEndUrl(baseUrl), { goalId: goal.id })
+/*
+ * Journal goals pass the produced entry id back as `journal_ref`; the server
+ * requires it before it will complete a journal leaf. Timer goals omit it.
+ */
+export async function endGoalOnServer(goal: Goal, journalRef?: string, baseUrl = getClientBaseUrl() ?? "") {
+  return postGoalStatusAction(
+    buildGoalEndUrl(baseUrl),
+    { goalId: goal.id },
+    journalRef ? { journal_ref: journalRef } : undefined,
+  )
+}
+
+/*
+ * Abandon an in-progress session without completing it. Resets the goal to
+ * idle server-side (clears start/end and the journal draft link). The journal
+ * draft entry itself is kept.
+ */
+export async function cancelGoalOnServer(goal: Goal, baseUrl = getClientBaseUrl() ?? "") {
+  const response = await fetch(`${baseUrl}/goal/cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ 'goal-id': goal.id }),
+  })
+  if (!response.ok) throw new Error(`Goal cancel failed: ${response.status}`)
+  return (await response.json()) as { ok: boolean; 'goal-id': string; goal_index: number }
 }
 
 export async function repairGoalOnServer(goal: Goal, reason: string, baseUrl = getClientBaseUrl() ?? "") {

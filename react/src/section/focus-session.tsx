@@ -20,6 +20,8 @@ export interface FocusTarget {
   rootProgressPct?: number
   onStart?: () => void
   onComplete?: () => void
+  /** Abandon an in-progress session — resets the goal to idle on the server. */
+  onCancel?: () => void
   onExtend?: () => void
   onReshape?: () => void
   onRepair?: (reason: string) => void
@@ -91,7 +93,7 @@ export default function FocusSession({
   target: FocusTarget
   onClose: () => void
 }) {
-  const { title, extraInfo, tips, state: nodeState, isMystery, canStart, pending, rootProgressPct } = target
+  const { title, tips, state: nodeState, isMystery, canStart, pending, rootProgressPct } = target
   const accent = target.accent
 
   // Session length comes from the goal's estimate, clamped to a sane focus window.
@@ -141,7 +143,8 @@ export default function FocusSession({
   // spent at least 50% more than the goal's allotted time (i.e. deep in overtime).
   const canReshape = elapsed >= sessionLen * 1.5
   const isCelebrating = phase === 'celebrate'
-  const progress = isCelebrating ? 1 : (sessionLen - remaining) / sessionLen
+  // An already-completed goal shows a full green circle (not an empty ring).
+  const progress = (isCelebrating || effectiveState === 'done') ? 1 : (sessionLen - remaining) / sessionLen
   const color =
     effectiveState === 'done' || isCelebrating || isComplete ? DONE_COLOR :
     running ? (accent ?? RUNNING_COLOR) : 'rgba(255,255,255,0.55)'
@@ -280,9 +283,9 @@ export default function FocusSession({
               </span>
             </div>
           )}
-          {(tips || extraInfo) && !isCelebrating && (
+          {tips && !isCelebrating && (
             <div className="mb-7 max-w-[290px] text-center text-[13px] leading-[1.55]" style={{ color: 'rgba(255,255,255,.5)' }}>
-              {tips || extraInfo}
+              {tips}
             </div>
           )}
 
@@ -322,7 +325,7 @@ export default function FocusSession({
                 <circle cx="115" cy="115" r={DOIT_R} fill="none" stroke={color} strokeWidth="11" strokeLinecap="round"
                   strokeDasharray={DOIT_CIRC} strokeDashoffset={dashOffset}
                   style={{ transition: isCelebrating ? 'stroke-dashoffset .45s cubic-bezier(.16,1,.3,1), stroke .3s ease' : 'stroke-dashoffset .8s linear, stroke .3s ease' }} />
-                {!isCelebrating && (
+                {!isCelebrating && effectiveState !== 'done' && (
                   <circle cx={dotX} cy={dotY} r="6" fill={color} style={{ transition: 'cx .8s linear, cy .8s linear, fill .3s ease' }} />
                 )}
                 {/* White hold ring last → always paints above the orange ring/dot (grey track stays underneath). */}
@@ -333,7 +336,7 @@ export default function FocusSession({
               </svg>
 
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2">
-                {isCelebrating ? (
+                {isCelebrating || effectiveState === 'done' ? (
                   <div className="focus-pop flex flex-col items-center gap-2">
                     <svg width="74" height="74" viewBox="0 0 24 24" fill="none">
                       <path className="focus-check" d="M5 12.5l4.2 4.3L19 7.2" stroke={DONE_COLOR} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
@@ -378,7 +381,7 @@ export default function FocusSession({
             <div className="mb-7 text-center text-sm leading-relaxed" style={{ color: 'rgba(255,255,255,.4)' }}>
               Your timer progress for this session will be lost.
             </div>
-            <button type="button" onClick={() => { setGiveUp(false); closeOut() }}
+            <button type="button" onClick={() => { setGiveUp(false); target.onCancel?.(); closeOut() }}
               className="mb-2.5 w-full rounded-2xl p-4 text-[15px] font-bold text-white" style={{ background: '#c0392b' }}>
               Stop
             </button>

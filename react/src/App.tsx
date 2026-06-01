@@ -10,10 +10,12 @@ import OnboardingView from './section/onboarding-view'
 import LoadingOrb from './components/loading-orb'
 import NavBar, { type NavPanel } from './components/nav-bar'
 import FocusSession, { type FocusTarget } from './section/focus-session'
+import JournalFocusSession from './section/journal-focus-session'
 import type { GoalSelection } from './section/current-goals-view'
 import {
   applyGoalEvent,
   endGoalOnServer,
+  cancelGoalOnServer,
   findGoalById,
   getGoalIdFromEvent,
   getRootGoalProgressPct,
@@ -59,7 +61,12 @@ function App() {
   const [journalOpenEntryId, setJournalOpenEntryId] = useState<string | null>(null)
   const [journeyChatOpen, setJourneyChatOpen] = useState(false)
   const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null)
+  const [journalFocusGoal, setJournalFocusGoal] = useState<Goal | null>(null)
+  const [goalOptions, setGoalOptions] = useState<GoalSelection | null>(null)
   const pendingActionRef = useRef<{ goalId: string } | null>(null)
+  // Debounce timer for tree-changed refetches: a multi-level decomposition fires
+  // several goal_tree_changed events in a row; collapse them into one refresh.
+  const treeChangedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // True only while we are restoring a session from the URL on first load.
   const [restoringSession, setRestoringSession] = useState(initialLocation.userId != null)
@@ -312,6 +319,18 @@ function App() {
         return
       }
 
+      // Server-side decomposition (triggered by start/create/repair) added or
+      // changed subgoals — refetch the tree. Debounced so a multi-level
+      // decomposition's burst of events collapses into a single fetch.
+      if (envelope.type === 'goal_tree_changed') {
+        if (treeChangedTimerRef.current) clearTimeout(treeChangedTimerRef.current)
+        treeChangedTimerRef.current = setTimeout(() => {
+          treeChangedTimerRef.current = null
+          void refreshGoals({ silent: true })
+        }, 280)
+        return
+      }
+
       if (envelope.type !== 'goal_started' && envelope.type !== 'goal_ended' && envelope.type !== 'goal_created') {
         return
       }
@@ -347,8 +366,28 @@ function App() {
 
     return () => {
       source.close()
+      if (treeChangedTimerRef.current) {
+        clearTimeout(treeChangedTimerRef.current)
+        treeChangedTimerRef.current = null
+      }
     }
   }, [clientBaseUrl])
+
+  // While the server is still producing the journey (e.g. right after onboarding
+  // the goal tree is being decomposed), the goal list comes back empty. Rather
+  // than make the user manually refresh, poll quietly until goals appear. The
+  // effect re-runs when goals.length flips to > 0 and the early return tears the
+  // interval down; a cap stops genuinely-empty accounts from polling forever.
+  useEffect(() => {
+    if (!clientBaseUrl || needsOnboarding || goals.length > 0) return
+    let attempts = 0
+    const MAX_ATTEMPTS = 24 // ~1 min at 2.5s
+    const id = setInterval(() => {
+      if (attempts++ >= MAX_ATTEMPTS) { clearInterval(id); return }
+      void refreshGoals({ silent: true })
+    }, 2500)
+    return () => clearInterval(id)
+  }, [clientBaseUrl, needsOnboarding, goals.length])
 
   function navigateToGoal(nextGoalId: string) {
     setGoalId(nextGoalId)
@@ -430,9 +469,40 @@ function App() {
     }
   }
 
+  async function runCancelGoal(targetGoal: Goal) {
+    try {
+      await cancelGoalOnServer(targetGoal)
+      await refreshGoals({ silent: true })
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : String(actionError))
+    }
+  }
+
+  async function dismissJourney(targetGoal: Goal) {
+    setGoalOptions(null)
+    try {
+      setMessage('Exiting journey...')
+      const res = await fetch(`${clientBaseUrl ?? ''}/journey/dismiss`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 'goal-id': targetGoal.id }),
+      })
+      if (!res.ok) throw new Error(`Exit journey failed: ${res.status}`)
+      await refreshGoals({ silent: true })
+      setMessage('Journey removed.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   // Tapping a goal on the journey path opens it as a full-screen focus session.
+  // Journal-type leaves use the journal editor session instead of the timer.
   function openGoalFocus(sel: GoalSelection) {
     const g = sel.goal
+    if (g.goalType === 'journal' && !sel.isMystery) {
+      setJournalFocusGoal(g)
+      return
+    }
     setFocusTarget({
       id: g.id,
       title: g.title,
@@ -446,6 +516,7 @@ function App() {
       rootProgressPct: getRootGoalProgressPct(goals, g),
       onStart: () => void runGoalAction(g, 'start'),
       onComplete: () => void runGoalAction(g, 'end'),
+      onCancel: () => void runCancelGoal(g),
       onExtend: () => void runExtendGoal(g),
       onReshape: () => void runReshapeGoal(g),
       onOpen: () => navigateToGoal(g.id),
@@ -639,6 +710,39 @@ function App() {
             </div>
           </div>
         )}
+        {goalOptions && (
+          <div className="fixed inset-0 z-[120] flex items-end justify-center" onClick={() => setGoalOptions(null)}>
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+            <div
+              className="relative w-full max-w-lg rounded-t-3xl border-t border-[#2a2a2a] bg-[#111] px-5 pb-10 pt-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-white/40">Journey options</p>
+              <p className="mb-5 truncate text-sm font-semibold text-white">{goalOptions.goal.title}</p>
+              <button
+                type="button"
+                onClick={() => setGoalOptions(null)}
+                className="mb-2.5 flex w-full items-center gap-3 rounded-2xl border border-[#2a2a2a] px-4 py-3.5 text-sm font-medium text-white/80 hover:bg-[#1a1a1a]"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => void dismissJourney(goalOptions.goal)}
+                className="flex w-full items-center gap-3 rounded-2xl border border-red-900/60 bg-red-950/30 px-4 py-3.5 text-sm font-semibold text-red-400 hover:bg-red-950/50"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" />
+                </svg>
+                Exit journey
+              </button>
+              <p className="mt-3 text-center text-[11px] text-white/35">Exiting removes the whole journey. For shared journeys this dismisses it for everyone.</p>
+            </div>
+          </div>
+        )}
         {celebration && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm">
             <div className="mx-4 w-full max-w-sm rounded-3xl border border-[#2a2a2a] bg-[#111] p-8 text-center shadow-2xl">
@@ -661,6 +765,7 @@ function App() {
               goals={goals}
               statusMessage={error ?? message}
               onSelectGoal={openGoalFocus}
+              onGoalOptions={setGoalOptions}
             />
           ) : goalPanel === 'collab' ? (
             <TogetherView userId={localUser?.id ?? ''} onOpenFocus={setFocusTarget} />
@@ -722,6 +827,16 @@ function App() {
         </div>
         {focusTarget && (
           <FocusSession target={focusTarget} onClose={() => setFocusTarget(null)} />
+        )}
+        {journalFocusGoal && (
+          <JournalFocusSession
+            goal={journalFocusGoal}
+            onClose={() => setJournalFocusGoal(null)}
+            onCompleted={() => {
+              void refreshGoals({ silent: true })
+              fetch(SERVER_ENDPOINTS.sessionGoals, { cache: 'no-store' }).catch(() => {})
+            }}
+          />
         )}
       </main>
     )

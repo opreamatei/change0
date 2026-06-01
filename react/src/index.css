@@ -154,19 +154,6 @@ body,
 /* Ring */
 .ring-arc { transition: stroke-dashoffset 1.1s cubic-bezier(.4,0,.2,1); }
 
-/* Spiral — cinematic strand reveal + minimalist select ping */
-@keyframes spiralStrandIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-.spiral-strand-in { animation: spiralStrandIn 1.1s cubic-bezier(.22,.61,.36,1) both; }
-@keyframes spiralPing {
-  0%   { r: 6;  opacity: 0; }
-  28%  { r: 18; opacity: 0.45; }
-  100% { r: 64; opacity: 0; }
-}
-.spiral-ping { animation: spiralPing 1.45s cubic-bezier(.16,1,.3,1) .28s forwards; }
-
 /* ── Focus session — page transitions + completion celebration ───────────── */
 @keyframes focusPageIn  { from { opacity: 0; transform: scale(1.06) } to { opacity: 1; transform: scale(1) } }
 @keyframes focusPageOut { from { opacity: 1; transform: scale(1) }    to { opacity: 0; transform: scale(1.05) } }

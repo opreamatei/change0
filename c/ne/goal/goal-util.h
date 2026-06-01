@@ -84,6 +84,23 @@ typedef struct GoalType {
 	 * treats unassigned leaves as belonging to the solo user.
 	 */
 	uint8_t assigned_to;
+
+	/*
+	 * Leaf type discriminator. GOAL_TYPE_TIMER (0) is the legacy/default
+	 * behavior (timed focus session); GOAL_TYPE_JOURNAL forces a journal
+	 * entry as the completion artifact. Only leaves carry a meaningful type;
+	 * non-leaf goals stay GOAL_TYPE_TIMER and the value is ignored. The AI
+	 * decomposition sets this — there is no user-facing type switch.
+	 */
+	uint8_t goal_type;
+
+	/*
+	 * For GOAL_TYPE_JOURNAL leaves: id of the journal entry produced by this
+	 * step. Written on start (draft entry) and confirmed on end. Empty for
+	 * every other goal. Sized for JOURNAL_ID_SIZE (48) + NUL without pulling
+	 * in the journal header here.
+	 */
+	char attach_id[49];
 } Goal;
 
 /* Second param changed from string goal_id to Goal* so callers pass the pointer directly. */
@@ -93,6 +110,11 @@ enum GOAL_STATUS {
 	GOAL_VALID=0,
 	GOAL_INVALID
 };
+
+typedef enum {
+	GOAL_TYPE_TIMER   = 0,  /* legacy default: timed focus session */
+	GOAL_TYPE_JOURNAL = 1   /* completion requires a journal entry */
+} GoalTypeEnum;
 
 static inline void link_goals(Goal *a, Goal *b) {
 	a->next = b->localIndex;

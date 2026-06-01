@@ -43,7 +43,7 @@
       "\"items\":{" \
         "\"type\":\"object\"," \
         "\"additionalProperties\":false," \
-        "\"required\":[\"title\",\"extrainfo\",\"tips\",\"estimated_time\",\"min_pause_to_next\",\"pause_to_next\"]," \
+        "\"required\":[\"title\",\"extrainfo\",\"tips\",\"estimated_time\",\"min_pause_to_next\",\"pause_to_next\",\"goal_type\"]," \
         "\"properties\":{" \
           "\"title\":{" \
             "\"type\":\"string\"," \
@@ -68,6 +68,10 @@
           "\"pause_to_next\":{" \
             "\"type\":\"integer\"," \
             "\"minimum\":0" \
+          "}," \
+          "\"goal_type\":{" \
+            "\"type\":\"string\"," \
+            "\"enum\":[\"timer\",\"journal\"]" \
           "}" \
         "}" \
       "}" \

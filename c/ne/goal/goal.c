@@ -1513,6 +1513,7 @@ typedef struct {
 	time_t min_pause_to_next;
 	time_t pause_to_next;
 	uint8_t assigned_to;
+	uint8_t goal_type;
 } DecompChild;
 
 static void free_decomp_children(DecompChild *children, size_t count){
@@ -1756,6 +1757,12 @@ _Bool DecomposeGoal(Goal *g, User *user){
 			tmp[i].pause_to_next = pause_to_next;
 			tmp[i].assigned_to = assigned_to;
 
+			/* Optional per-leaf type from the AI; default TIMER when absent/unknown. */
+			json_value *gt = json_object_get(item, "goal_type");
+			tmp[i].goal_type = (gt && gt->type == json_string &&
+				strcmp(gt->u.string.ptr, "journal") == 0)
+				? GOAL_TYPE_JOURNAL : GOAL_TYPE_TIMER;
+
 			new_total += (time_t)estimated_time + pause_to_next;
 		}
 
@@ -1860,6 +1867,7 @@ _Bool DecomposeGoal(Goal *g, User *user){
 		child->minPauseToNext = children[i].min_pause_to_next;
 		child->pauseToNext = children[i].pause_to_next;
 		child->assigned_to = assigned_to;
+		child->goal_type = children[i].goal_type;
 		if (children[i].tips.p && children[i].tips.len)
 			CopyString(&child->tips, &children[i].tips);
 
@@ -1879,6 +1887,18 @@ _Bool DecomposeGoal(Goal *g, User *user){
 	FreeString(&judge_feedback);
 
 	printf("Goal decomposed into [%zu] subgoals.\n", subgoal_count);
+
+	/* Announce the structural change so the goal view refetches the new tree.
+	   Fires regardless of which path triggered decomposition (start/create/
+	   repair); the root id is carried so the client can resolve and refresh. */
+	if (goal_emit) {
+		Goal *root = CalcGoalRoot(g);
+		const char *root_id = root ? root->id : g->id;
+		char payload[64];
+		int plen = snprintf(payload, sizeof(payload), "{\"goal-id\":\"%s\"}", root_id);
+		if (plen > 0 && (size_t)plen < sizeof(payload))
+			goal_emit(root_id, "goal_tree_changed", payload, (size_t)plen);
+	}
 
 	return 1;
 }

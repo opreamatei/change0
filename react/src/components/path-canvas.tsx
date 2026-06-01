@@ -8,6 +8,7 @@ export interface PathNodeData {
   nodeState: NodeState
   num: number
   isMystery: boolean
+  isJournal?: boolean
   chapterTitle?: string
   tintColor?: string
   sideOverride?: -1 | 1
@@ -118,6 +119,33 @@ function drawStarPath(ctx: CanvasRenderingContext2D, cx: number, cy: number, out
   ctx.closePath()
 }
 
+// Open-book glyph used in place of the step number for journal-type goals.
+function drawBookPath(ctx: CanvasRenderingContext2D, cx: number, cy: number, s: number, color: string) {
+  const w = s, h = s * 0.8
+  ctx.save()
+  ctx.strokeStyle = color
+  ctx.lineWidth = Math.max(1.6, s * 0.18)
+  ctx.lineJoin = 'round'
+  ctx.lineCap = 'round'
+  // centre spine
+  ctx.beginPath(); ctx.moveTo(cx, cy - h); ctx.lineTo(cx, cy + h * 0.95); ctx.stroke()
+  // left page
+  ctx.beginPath()
+  ctx.moveTo(cx, cy - h)
+  ctx.quadraticCurveTo(cx - w * 0.55, cy - h * 1.15, cx - w, cy - h * 0.55)
+  ctx.lineTo(cx - w, cy + h * 0.85)
+  ctx.quadraticCurveTo(cx - w * 0.55, cy + h * 0.45, cx, cy + h * 0.95)
+  ctx.stroke()
+  // right page
+  ctx.beginPath()
+  ctx.moveTo(cx, cy - h)
+  ctx.quadraticCurveTo(cx + w * 0.55, cy - h * 1.15, cx + w, cy - h * 0.55)
+  ctx.lineTo(cx + w, cy + h * 0.85)
+  ctx.quadraticCurveTo(cx + w * 0.55, cy + h * 0.45, cx, cy + h * 0.95)
+  ctx.stroke()
+  ctx.restore()
+}
+
 function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number, maxLines: number): string[] {
   const words = text.split(/\s+/).filter(Boolean)
   const lines: string[] = []
@@ -138,7 +166,7 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number, max
 }
 
 export function PathCanvas({
-  nodes, width, height, hasMysteryZone, initialFocusIdx, onSelect, userOverlay,
+  nodes, width, height, hasMysteryZone, initialFocusIdx, onSelect, onLongPress, userOverlay,
 }: {
   nodes: PathNodeData[]
   width: number
@@ -146,6 +174,7 @@ export function PathCanvas({
   hasMysteryZone: boolean
   initialFocusIdx: number
   onSelect: (idx: number) => void
+  onLongPress?: (idx: number) => void
   userOverlay?: { nodeIdx: number; label: string; color: string }
 }) {
   const canvasRef   = useRef<HTMLCanvasElement>(null)
@@ -154,6 +183,8 @@ export function PathCanvas({
   const dragRef     = useRef<{ startX: number; startY: number; startOffset: number; moved: boolean; pointerId: number } | null>(null)
   const rafRef      = useRef<number | null>(null)
   const mountedRef  = useRef(false)
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const longPressFired = useRef(false)
 
   const n = nodes.length
 
@@ -353,18 +384,27 @@ export function PathCanvas({
         ctx.lineWidth = 3; ctx.strokeStyle = sc; ctx.stroke()
         ctx.lineJoin = 'miter'; ctx.lineCap = 'butt'
       } else if (node.nodeState === 'active') {
-        ctx.font = `bold ${Math.round(22 * gscale)}px ui-sans-serif,system-ui,-apple-system,sans-serif`
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-        ctx.fillStyle = (tint && tint !== '#ffffff') ? '#ffffff' : '#000000'
-        ctx.fillText(String(node.num), x, y + 1)
+        const ac = (tint && tint !== '#ffffff') ? '#ffffff' : '#000000'
+        if (node.isJournal) {
+          drawBookPath(ctx, x, y, 10 * gscale, ac)
+        } else {
+          ctx.font = `bold ${Math.round(22 * gscale)}px ui-sans-serif,system-ui,-apple-system,sans-serif`
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+          ctx.fillStyle = ac
+          ctx.fillText(String(node.num), x, y + 1)
+        }
       } else {
-        ctx.font = `bold ${Math.round(22 * gscale)}px ui-sans-serif,system-ui,-apple-system,sans-serif`
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-        const glyph  = node.isMystery ? '?' : String(node.num)
         const gColor = node.isMystery ? 'rgba(196,181,253,0.70)'
           : tint ? tint + 'bb'
           : 'rgba(255,255,255,0.38)'
-        ctx.fillStyle = gColor; ctx.fillText(glyph, x, y + 1)
+        if (node.isJournal && !node.isMystery) {
+          drawBookPath(ctx, x, y, 10 * gscale, gColor)
+        } else {
+          ctx.font = `bold ${Math.round(22 * gscale)}px ui-sans-serif,system-ui,-apple-system,sans-serif`
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+          const glyph = node.isMystery ? '?' : String(node.num)
+          ctx.fillStyle = gColor; ctx.fillText(glyph, x, y + 1)
+        }
       }
 
       /* label */
@@ -479,10 +519,42 @@ export function PathCanvas({
 
   useEffect(() => { offsetRef.current = clamp(offsetRef.current); draw() }, [maxOffset, clamp, draw])
 
+  // Map a viewport point to the node index under it (disc or its label), or -1.
+  function hitTestAt(clientX: number, clientY: number): number {
+    const canvas = canvasRef.current; if (!canvas) return -1
+    const rect = canvas.getBoundingClientRect()
+    const px = clientX - rect.left, py = clientY - rect.top
+    for (let i = 0; i < n; i++) {
+      const nx = nodeXForNode(i, nodes[i]!, width)
+      const ny = (nodeYsBase[i] ?? nodeYAt(i, contentH)) - offsetRef.current
+      const dx = px - nx, dh = py - ny
+      const r = radiusOf(i)
+      if (dx*dx + dh*dh <= (r + HIT_PAD)**2) return i
+      const lt = ny + r + LABEL_GAP - HIT_PAD
+      const lb = ny + r + LABEL_GAP + LABEL_LH * LABEL_LINES + HIT_PAD
+      if (px >= nx - LABEL_MAX_W/2 - HIT_PAD && px <= nx + LABEL_MAX_W/2 + HIT_PAD && py >= lt && py <= lb) return i
+    }
+    return -1
+  }
+  function clearLongPress() {
+    if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null }
+  }
+
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     if (e.pointerType === 'mouse' && e.button !== 0) return
     canvasRef.current?.setPointerCapture(e.pointerId)
     dragRef.current = { startX: e.clientX, startY: e.clientY, startOffset: offsetRef.current, moved: false, pointerId: e.pointerId }
+    longPressFired.current = false
+    if (onLongPress) {
+      const cx = e.clientX, cy = e.clientY
+      clearLongPress()
+      longPressTimer.current = setTimeout(() => {
+        longPressTimer.current = null
+        if (dragRef.current?.moved) return
+        const idx = hitTestAt(cx, cy)
+        if (idx >= 0) { longPressFired.current = true; onLongPress(idx) }
+      }, 500)
+    }
   }
   function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
     const d = dragRef.current; if (!d || d.pointerId !== e.pointerId) return
@@ -490,27 +562,17 @@ export function PathCanvas({
     const dx = e.clientX - d.startX
     // Horizontal motion counts as movement too, so a sideways page-swipe is never
     // mistaken for a node tap.
-    if (Math.abs(dy) > 4 || Math.abs(dx) > 4) d.moved = true
+    if (Math.abs(dy) > 4 || Math.abs(dx) > 4) { d.moved = true; clearLongPress() }
     offsetRef.current = clamp(d.startOffset - dy); draw()
   }
   function endDrag(e: React.PointerEvent<HTMLCanvasElement>, cancelled: boolean) {
     const d = dragRef.current; dragRef.current = null
+    clearLongPress()
     try { canvasRef.current?.releasePointerCapture(e.pointerId) } catch { /**/ }
+    if (longPressFired.current) { longPressFired.current = false; return }
     if (!d || cancelled || d.moved) return
-    const canvas = canvasRef.current; if (!canvas) return
-    const rect = canvas.getBoundingClientRect()
-    const px = e.clientX - rect.left, py = e.clientY - rect.top
-    for (let i = 0; i < n; i++) {
-      const nx = nodeXForNode(i, nodes[i]!, width)
-      const ny = (nodeYsBase[i] ?? nodeYAt(i, contentH)) - offsetRef.current
-      const dx = px - nx, dh = py - ny
-      const r = radiusOf(i)
-      if (dx*dx + dh*dh <= (r + HIT_PAD)**2) { onSelect(i); return }
-      const lt = ny + r + LABEL_GAP - HIT_PAD
-      const lb = ny + r + LABEL_GAP + LABEL_LH * LABEL_LINES + HIT_PAD
-      if (px >= nx - LABEL_MAX_W/2 - HIT_PAD && px <= nx + LABEL_MAX_W/2 + HIT_PAD && py >= lt && py <= lb)
-        { onSelect(i); return }
-    }
+    const idx = hitTestAt(e.clientX, e.clientY)
+    if (idx >= 0) onSelect(idx)
   }
   function onWheel(e: React.WheelEvent<HTMLCanvasElement>) { offsetRef.current = clamp(offsetRef.current + e.deltaY); draw() }
 

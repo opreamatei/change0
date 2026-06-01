@@ -8,7 +8,8 @@
 typedef struct UserType User;
 
 struct ScheduleEntry {
-	time_t time;
+	time_t time;        /* absolute wall-clock start of this work session */
+	time_t duration;    /* required_time of the goal, in seconds */
 	size_t goalIndex;
 	char journey_id[33];
 };

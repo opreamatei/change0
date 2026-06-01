@@ -980,9 +980,10 @@ GOAL_AGENT_SYSTEM_CONTEXT \
 "The final child goal should handle validation, integration, review, or usability preparation. "\
 "Each title must be concise and action-oriented. "\
 "Each extrainfo must include: scope of the child goal, success condition, boundary relative to sibling/uncle goals, and handoff to next child goal if applicable. "\
-"Each child must also include a short 'tips' string: a one or two sentence, coaching-toned UI summary that tells the user, plainly and warmly, what to actually do in this step and what 'done' looks like. Keep it pragmatic, direct, and encouraging — like a good coach in your corner, not a manual. It is a friendlier, much shorter distillation of extrainfo, never a copy of it. No jargon, no meta-process. "\
+"Each child must also include a 'tips' string: a short (2-4 sentence) coaching-toned resume of the parts of extrainfo that matter to the user as they sit down to DO this step. It must concretely cover three things in a warm, direct voice: (1) what to actually do in this session, (2) what 'done'/success looks like for this step, and (3) one practical pointer for making it doable right now (how to start, what to focus on, or a pitfall to avoid). Speak to the user as a good coach in their corner — encouraging and plain, never a manual or jargon. It is a friendlier distillation of extrainfo, never a verbatim copy of it, and never meta-process. "\
+"Each child must also include a 'goal_type' string, either \"timer\" or \"journal\". Use \"timer\" for the vast majority of steps: anything the user actively works on against the clock (practice, building, executing). Use \"journal\" ONLY for steps whose real deliverable is written reflection, planning, strategy, or self-assessment — e.g. 'sketch your practice strategy', 'reflect on what worked this week', 'write your plan before starting'. A journal step completes by the user writing an entry, not by spending time. Default to \"timer\" whenever in doubt; most decompositions will have zero or one journal step. "\
 "Return JSON only with exactly this structure and no extra text: "\
-"{\"subgoals\":[{\"title\":\"string\",\"extrainfo\":\"string\",\"tips\":\"string\",\"estimated_time\":1,\"min_pause_to_next\":0,\"pause_to_next\":0}]}"\
+"{\"subgoals\":[{\"title\":\"string\",\"extrainfo\":\"string\",\"tips\":\"string\",\"estimated_time\":1,\"min_pause_to_next\":0,\"pause_to_next\":0,\"goal_type\":\"timer\"}]}"\
 
 /*
  *

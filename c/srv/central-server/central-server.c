@@ -144,6 +144,7 @@ static void dispatch(int fd, CentralRequest *req)
 			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "approve-root")  == 0) { handle_approve_root_goal(fd, journey_id, req); return; }
 			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "decline-root")  == 0) { handle_decline_root_goal(fd, journey_id, req); return; }
 			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "finalize-root") == 0) { handle_finalize_root_goal(fd, journey_id, req); return; }
+			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "dismiss")       == 0) { handle_delete_shared_journey(fd, journey_id); return; }
 		} else {
 			const char *journey_id = rest;
 			if (strcmp(req->method, "GET")  == 0) { handle_get_shared_journey(fd, journey_id); return; }

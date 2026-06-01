@@ -6,7 +6,6 @@ import { SERVER_ENDPOINTS } from '../config/server'
 const HOUR_H        = 60    // px per hour
 const CAL_START     = 6     // 06:00
 const CAL_END       = 23    // 23:00
-const TOTAL_H       = CAL_END - CAL_START
 const BL            = 68    // left gutter
 const BR            = 16    // right margin
 const COL_GAP       = 3     // gap between overlapping blocks
@@ -30,6 +29,7 @@ const EVENT_COLORS = [
 
 interface ScheduleEntry {
   time: number
+  duration: number   // seconds
   goal_index: number
   title: string
 }
@@ -101,6 +101,7 @@ function getWeek(now: Date): Date[] {
 export default function DailyBriefView({ embedded = false }: { embedded?: boolean } = {}) {
   const bodyRef      = useRef<HTMLDivElement>(null)
   const [bodyW, setBodyW] = useState(360)
+  const [bodyH, setBodyH] = useState(600)
   const now          = useRef(new Date()).current
   const [selDate, setSelDate] = useState<Date>(now)
   const weekDays     = getWeek(now)
@@ -113,19 +114,18 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
   useEffect(() => {
     const el = bodyRef.current
     if (!el) return
-    const update = () => setBodyW(el.offsetWidth || 360)
+    const update = () => { setBodyW(el.offsetWidth || 360); setBodyH(el.clientHeight || 600) }
     update()
     const obs = new ResizeObserver(update)
     obs.observe(el)
     return () => obs.disconnect()
   }, [])
 
-  /* auto-scroll to current time */
+  /* the timeline zooms to the selected day's work period, so the content sits
+     near the top — reset the scroll when the day or data changes */
   useEffect(() => {
-    if (!bodyRef.current) return
-    const nowMin = (now.getHours() - CAL_START) * 60 + now.getMinutes()
-    bodyRef.current.scrollTop = Math.max(0, (nowMin * HOUR_H) / 60 - 120)
-  }, [now])
+    if (bodyRef.current) bodyRef.current.scrollTop = 0
+  }, [selDate, entries])
 
   /* silent GET — used on mount to load whatever the server has cached */
   const load = useCallback(async () => {
@@ -143,33 +143,58 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
     }
   }, [])
 
-  /* POST /schedule/refresh — forces health-check + full rebuild on the server */
-  const refresh = useCallback(async () => {
-    try {
-      setLoading(true)
-      const res = await fetch(SERVER_ENDPOINTS.scheduleRefresh, {
-        method: 'POST',
-        cache: 'no-store',
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = (await res.json()) as ScheduleResponse
-      setEntries(data.entries ?? [])
-      setError(null)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
   useEffect(() => { void load() }, [load])
 
-  /* build blocks for selected day */
-  const dayEntries = entries.filter((e) => isSameDay(new Date(e.time * 1000), selDate))
-  const blocks: Block[] = dayEntries.map((entry) => {
-    const d = new Date(entry.time * 1000)
-    const start = Math.max(0, (d.getHours() - CAL_START) * 60 + d.getMinutes())
-    const end   = Math.min(start + BLOCK_MIN, TOTAL_H * 60)
+  /* selected day's tasks, sorted in time order */
+  const dayEntries = entries
+    .filter((e) => isSameDay(new Date(e.time * 1000), selDate))
+    .sort((a, b) => a.time - b.time)
+
+  const absStart = (e: ScheduleEntry) => {
+    const d = new Date(e.time * 1000)
+    return d.getHours() * 60 + d.getMinutes()   // minutes from midnight
+  }
+  const durOf = (e: ScheduleEntry) => (e.duration > 0 ? e.duration / 60 : BLOCK_MIN)
+
+  /* content span (minutes from midnight); each task clamped to the next start */
+  let contentMin = Infinity, contentMax = -Infinity
+  dayEntries.forEach((e, i) => {
+    const s = absStart(e)
+    let en = s + durOf(e)
+    const next = dayEntries[i + 1]
+    if (next) en = Math.min(en, absStart(next))
+    contentMin = Math.min(contentMin, s)
+    contentMax = Math.max(contentMax, en)
+  })
+
+  /* zoom the visible window to the work period; fall back to the full day when
+     the selected day has nothing scheduled */
+  const hasContent = dayEntries.length > 0
+  let viewStartH = CAL_START
+  let viewEndH   = CAL_END
+  if (hasContent) {
+    viewStartH = Math.max(0,  Math.floor((contentMin - 30) / 60))
+    viewEndH   = Math.min(24, Math.ceil((contentMax + 30) / 60))
+    if (viewEndH - viewStartH < 3) {              // keep a little context for short days
+      viewEndH = Math.min(24, viewStartH + 3)
+      viewStartH = Math.max(0, viewEndH - 3)
+    }
+  }
+  const spanH = Math.max(1, viewEndH - viewStartH)
+  const viewStartMin = viewStartH * 60
+
+  /* vertical scale: fit the span to the viewport, but stay readable (>= default,
+     capped so a single short task doesn't become absurdly tall) */
+  const hourH = hasContent
+    ? Math.min(260, Math.max(HOUR_H, (bodyH - 16) / spanH))
+    : HOUR_H
+
+  const blocks: Block[] = dayEntries.map((entry, i) => {
+    const start = absStart(entry) - viewStartMin
+    let end = start + durOf(entry)
+    /* the scheduler lays tasks out sequentially, so never spill into the next */
+    const next = dayEntries[i + 1]
+    if (next) end = Math.min(end, absStart(next) - viewStartMin)
     return { start, end, entry }
   })
   layoutBlocks(blocks)
@@ -187,19 +212,10 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
             {now.getDate()} {MONTH[now.getMonth()]} {now.getFullYear()}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          disabled={loading}
-          className="text-xs pb-1"
-          style={{ color: 'rgba(255,255,255,.25)' }}
-        >
-          {loading ? '···' : 'Refresh'}
-        </button>
       </div>
 
       {/* ── week strip ── */}
-      <div className="flex gap-1.5 overflow-x-auto px-5 pt-3 pb-3 flex-shrink-0 no-scrollbar">
+      <div className="flex gap-1 px-3 pt-3 pb-3 flex-shrink-0">
         {weekDays.map((d, i) => {
           const isToday = isSameDay(d, now)
           const isSel   = isSameDay(d, selDate)
@@ -208,7 +224,7 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
               key={i}
               type="button"
               onClick={() => setSelDate(d)}
-              className="flex-shrink-0 flex flex-col items-center gap-0.5 px-3.5 py-2 rounded-2xl transition-colors"
+              className="flex-1 min-w-0 flex flex-col items-center gap-0.5 px-1 py-2 rounded-2xl transition-colors"
               style={{
                 background: isToday ? '#ffffff' : isSel ? '#1a1a1a' : 'transparent',
               }}
@@ -243,12 +259,12 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
       <div ref={bodyRef} className="flex-1 overflow-y-auto relative no-scrollbar">
         <div
           className="relative pb-8"
-          style={{ paddingLeft: BL, paddingRight: BR, minHeight: TOTAL_H * HOUR_H + 32 }}
+          style={{ paddingLeft: BL, paddingRight: BR, minHeight: spanH * hourH + 32 }}
         >
           {/* hour grid */}
-          {Array.from({ length: TOTAL_H + 1 }, (_, idx) => {
-            const h = CAL_START + idx
-            const y = idx * HOUR_H
+          {Array.from({ length: spanH + 1 }, (_, idx) => {
+            const h = viewStartH + idx
+            const y = idx * hourH
             return (
               <div key={h}>
                 <div
@@ -276,8 +292,10 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
           {blocks.map((b, i) => {
             const colW  = (avail - (b.numCols! - 1) * COL_GAP) / b.numCols!
             const left  = BL + b.col! * (colW + COL_GAP)
-            const top   = (b.start * HOUR_H) / 60
-            const h     = Math.max(((b.end - b.start) * HOUR_H) / 60, 28)
+            const top   = (b.start * hourH) / 60
+            /* Height comes from the (clamped) real duration; a small floor keeps
+               very short tasks visible without overlapping the next block. */
+            const h     = Math.max(((b.end - b.start) * hourH) / 60, 3)
             const color = EVENT_COLORS[b.entry.goal_index % EVENT_COLORS.length]
             const d     = new Date(b.entry.time * 1000)
             const tStr  = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -314,9 +332,9 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
 
           {/* current time indicator */}
           {isSameDay(selDate, now) && (() => {
-            const nowMin = (now.getHours() - CAL_START) * 60 + now.getMinutes()
-            if (nowMin < 0 || nowMin > TOTAL_H * 60) return null
-            const ny = (nowMin * HOUR_H) / 60
+            const nowMin = (now.getHours() * 60 + now.getMinutes()) - viewStartMin
+            if (nowMin < 0 || nowMin > spanH * 60) return null
+            const ny = (nowMin * hourH) / 60
             return (
               <>
                 <div
