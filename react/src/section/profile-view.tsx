@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { SERVER_ENDPOINTS } from '../config/server'
+import { CENTRAL_ENDPOINTS, SERVER_ENDPOINTS } from '../config/server'
 
 interface ProfileField {
   key: string
@@ -13,6 +13,33 @@ interface ProfileResponse {
   derived: string
   discoverable: boolean
   description: string
+}
+
+interface JourneyParticipant {
+  id: string
+  display_name: string
+  color?: string
+}
+
+interface SharedJourneyListItem {
+  id: string
+  participants: JourneyParticipant[]
+}
+
+interface SharedJourneyListResponse {
+  ok: boolean
+  journeys: SharedJourneyListItem[]
+}
+
+interface ProfileConnection {
+  state: number
+  other_id: string
+  other_name: string
+}
+
+interface ProfileConnectionsResponse {
+  ok: boolean
+  connections: ProfileConnection[]
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -81,6 +108,34 @@ function FieldCard({ field }: { field: ProfileField }) {
         >
           {expanded ? 'Show less' : 'Show more'}
         </button>
+      )}
+    </div>
+  )
+}
+
+function SharedPersonAvatar({ person }: { person: JourneyParticipant }) {
+  const [failed, setFailed] = useState(false)
+  const initial = (person.display_name || '?').slice(0, 1).toUpperCase()
+
+  return (
+    <div
+      className="h-10 w-10 overflow-hidden rounded-full border border-white/10 bg-[#1a1a1a] flex items-center justify-center text-xs font-semibold text-black"
+      style={{
+        background: person.color || '#2a2a2a',
+        color: person.color ? '#0a0a0a' : 'rgba(255,255,255,.65)',
+      }}
+      title={person.display_name}
+      aria-label={person.display_name}
+    >
+      {!failed ? (
+        <img
+          src={CENTRAL_ENDPOINTS.userAvatar(person.id)}
+          onError={() => setFailed(true)}
+          className="h-full w-full object-cover"
+          alt=""
+        />
+      ) : (
+        <span>{initial}</span>
       )}
     </div>
   )
@@ -158,9 +213,48 @@ async function postUpdate(key: string, value: string, extra?: Record<string, str
   if (!res.ok) throw new Error(`Update failed: ${res.status}`)
 }
 
+async function loadSharedPeople(userId: string): Promise<JourneyParticipant[]> {
+  const people = new Map<string, JourneyParticipant>()
+
+  const [journeysResult, connectionsResult] = await Promise.allSettled([
+    fetch(CENTRAL_ENDPOINTS.journeyList(userId), { cache: 'no-store' }),
+    fetch(CENTRAL_ENDPOINTS.connections(userId), { cache: 'no-store' }),
+  ])
+
+  if (journeysResult.status === 'fulfilled' && journeysResult.value.ok) {
+    const data = (await journeysResult.value.json()) as SharedJourneyListResponse
+    if (data.ok) {
+      for (const journey of data.journeys ?? []) {
+        for (const participant of journey.participants ?? []) {
+          if (participant.id && participant.id !== userId) {
+            people.set(participant.id, participant)
+          }
+        }
+      }
+    }
+  }
+
+  if (connectionsResult.status === 'fulfilled' && connectionsResult.value.ok) {
+    const data = (await connectionsResult.value.json()) as ProfileConnectionsResponse
+    if (data.ok) {
+      for (const conn of data.connections ?? []) {
+        if (conn.state === 1 && conn.other_id && !people.has(conn.other_id)) {
+          people.set(conn.other_id, {
+            id: conn.other_id,
+            display_name: conn.other_name || 'Connection',
+          })
+        }
+      }
+    }
+  }
+
+  return [...people.values()]
+}
+
 export default function ProfileView() {
   const [fields, setFields] = useState<ProfileField[]>([])
   const [userName, setUserName] = useState('')
+  const [sharedPeople, setSharedPeople] = useState<JourneyParticipant[]>([])
   const [discoverable, setDiscoverable] = useState(false)
   const [description, setDescription] = useState('')
   const [loading, setLoading] = useState(true)
@@ -176,6 +270,13 @@ export default function ProfileView() {
       setDiscoverable(data.discoverable ?? false)
       setDescription(data.description ?? '')
       setFields(parseDerived(data.derived ?? ''))
+      if (data.user_id) {
+        loadSharedPeople(data.user_id)
+          .then(setSharedPeople)
+          .catch(() => setSharedPeople([]))
+      } else {
+        setSharedPeople([])
+      }
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -266,6 +367,13 @@ export default function ProfileView() {
       {/* connection discoverability */}
       <section className="rounded-2xl border border-white/10 bg-[#111] px-5 py-4 space-y-3">
         <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40">Connections</p>
+        {sharedPeople.length > 0 && (
+          <div className="flex items-center gap-2">
+            {sharedPeople.map((person) => (
+              <SharedPersonAvatar key={person.id} person={person} />
+            ))}
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm font-medium">Open to meeting people</p>

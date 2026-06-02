@@ -2,6 +2,7 @@
 #define HTTP_SERVER_HEADER
 
 #include <stddef.h>
+#include "http-util.h"
 #include "user-management.h"
 
 /*
@@ -12,6 +13,8 @@ void start_server(int port, User *user);
 void stop_server();
 int server_is_running(void);
 int client_server_port(void);
+User *active_client_user(void);
+int handle_client_request(int fd, const HttpRequest *req, User *user);
 void ds_emit_event(const char* id, const char* type, const char* buffer, size_t buffer_len);
 void goal_emit_event(const char* id, const char* type, const char* buffer, size_t buffer_len);
 

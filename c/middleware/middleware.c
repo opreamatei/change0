@@ -690,6 +690,140 @@ String *GenerateMatchDescription(User *user)
 	return out;
 }
 
+/* ── Onboarding clarifying questions (two AI passes) ───────────────────────────
+ * Step 1 — a goal-scoping engine writes a few personalized clarifying questions
+ *          for the chosen goal as one natural message.
+ * Step 2 — an extractor turns that message into a structured form: each question
+ *          becomes either a free-text answer or a small set of choice options
+ *          (the UI still lets the user type their own answer either way).
+ * Returns the {"questions":[...]} object verbatim from step 2 (caller frees). */
+
+#define OPENAI_ONBOARDING_GEN_SCHEMA_JSON \
+"{" \
+  "\"type\":\"object\"," \
+  "\"additionalProperties\":false," \
+  "\"required\":[\"message\"]," \
+  "\"properties\":{\"message\":{\"type\":\"string\"}}" \
+"}"
+
+/* Placeholders (%s): goal title, scope/context, known-about-user summary. */
+#define ONBOARDING_GEN_PROMPT \
+"You are the goal-scoping engine inside CHANGE, a personal growth app. " \
+"A user is onboarding and has chosen this goal: \"%s\". " \
+"Scope/context for the goal: %s. " \
+"What is already known about the user: [%s]. " \
+"Produce a SHORT set of 3 to 4 clarifying questions that let the app scope and personalize THIS goal before it is created. " \
+"Cover, as relevant: the user's real starting point and prior experience, the concrete outcome they want, and how ambitious the scope is. " \
+"Never assume the user is past zero — always ask about their starting point. Do NOT ask about scheduling, daily hours, or step-by-step plans; the app handles those automatically. " \
+"Do NOT ask about deadlines, target dates, or time limits — the app does not handle deadlines well, so never raise the topic. " \
+"Keep each question short, warm, and plain. Write them as one natural message, one question per line, no preamble. " \
+"Reply in the user's language. " \
+"Return one strict JSON object only: {\"message\": \"...\"}."
+
+#define OPENAI_ONBOARDING_QUESTIONS_SCHEMA_JSON \
+"{" \
+  "\"type\":\"object\"," \
+  "\"additionalProperties\":false," \
+  "\"required\":[\"questions\"]," \
+  "\"properties\":{" \
+    "\"questions\":{\"type\":\"array\",\"items\":{" \
+      "\"type\":\"object\",\"additionalProperties\":false," \
+      "\"required\":[\"prompt\",\"type\",\"options\"]," \
+      "\"properties\":{" \
+        "\"prompt\":{\"type\":\"string\"}," \
+        "\"type\":{\"type\":\"string\",\"enum\":[\"free\",\"choice\"]}," \
+        "\"options\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}" \
+      "}}}" \
+  "}" \
+"}"
+
+/* Placeholder (%s): the clarifying-questions message from step 1. */
+#define ONBOARDING_EXTRACT_PROMPT \
+"You convert a short message of clarifying questions into a structured form. " \
+"The message: [%s]. " \
+"Extract each distinct question, in order. For each, choose an answer type: " \
+"\"choice\" when there is a small fixed set of natural answers — then provide 2 to 5 short options; " \
+"\"free\" when the answer is open or personal — then options must be an empty array. " \
+"Even for choice questions the user can still type their own answer, so only use choice when concrete options genuinely help. " \
+"Keep each prompt concise and in the same language as the message. " \
+"Return one strict JSON object only matching the schema."
+
+/* Pull a top-level string field out of a parsed JSON object into `out`. */
+static void copy_top_level_json_string(json_value *doc, const char *field, String *out)
+{
+	if (!doc || doc->type != json_object) return;
+	for (size_t i = 0; i < doc->u.object.length; i++) {
+		json_object_entry e = doc->u.object.values[i];
+		if (strcmp(e.name, field) == 0 && e.value && e.value->type == json_string) {
+			CatString(out, e.value->u.string.ptr, e.value->u.string.length);
+			return;
+		}
+	}
+}
+
+String *GenerateOnboardingQuestions(User *user, const char *goal_title, const char *scope)
+{
+	change_assert(user && goal_title && *goal_title,
+		"Onboarding: GenerateOnboardingQuestions called without a user or goal title.\n");
+
+	/* ── Step 1: generate the clarifying questions as one message ── */
+	String derived;
+	InitString(&derived, 2048);
+	SerializeUserProfileDerivedSummary(user, &derived);
+
+	String gen_prompt;
+	InitString(&gen_prompt, 6000);
+	CatTemplateString(&gen_prompt, ONBOARDING_GEN_PROMPT,
+		goal_title, scope ? scope : "", derived.p);
+	FreeString(&derived);
+
+	ai_gpt_request gen_req = {0};
+	gen_req.prompt = gen_prompt;
+	gen_req.model = AI_OPENAI_MODEL_GPT_5_4_MINI;
+	gen_req.schema_name = "onboarding_questions_gen";
+	InitString(&gen_req.schema, sizeof(OPENAI_ONBOARDING_GEN_SCHEMA_JSON) + 1);
+	CatString(&gen_req.schema, FSTRING_SIZE_PARAMS(OPENAI_ONBOARDING_GEN_SCHEMA_JSON));
+
+	String *gen_result = ai_openai_call_gpt_request(&gen_req);
+	FreeString(&gen_req.schema);
+	FreeString(&gen_prompt);
+	change_assert(gen_result,
+		"Onboarding: question-generation AI call returned NULL (step 1) for goal '%s'.\n", goal_title);
+
+	String message;
+	InitString(&message, 1024);
+	json_value *gen_doc = json_parse(gen_result->p, gen_result->len);
+	copy_top_level_json_string(gen_doc, "message", &message);
+	if (gen_doc) json_value_free(gen_doc);
+	change_assert(message.len > 0,
+		"Onboarding: question generator produced no 'message' (step 1) for goal '%s'. Raw AI output: %s\n",
+		goal_title, gen_result->p);
+	FreeString(gen_result);
+	free(gen_result);
+
+	/* ── Step 2: extract the questions into a structured form ── */
+	String ex_prompt;
+	InitString(&ex_prompt, message.len + 1024);
+	CatTemplateString(&ex_prompt, ONBOARDING_EXTRACT_PROMPT, message.p);
+	FreeString(&message);
+
+	ai_gpt_request ex_req = {0};
+	ex_req.prompt = ex_prompt;
+	ex_req.model = AI_OPENAI_MODEL_GPT_5_4_MINI;
+	ex_req.schema_name = "onboarding_questions";
+	InitString(&ex_req.schema, sizeof(OPENAI_ONBOARDING_QUESTIONS_SCHEMA_JSON) + 1);
+	CatString(&ex_req.schema, FSTRING_SIZE_PARAMS(OPENAI_ONBOARDING_QUESTIONS_SCHEMA_JSON));
+
+	String *ex_result = ai_openai_call_gpt_request(&ex_req);
+	FreeString(&ex_req.schema);
+	FreeString(&ex_prompt);
+	change_assert(ex_result,
+		"Onboarding: question-extraction AI call returned NULL (step 2) for goal '%s'.\n", goal_title);
+
+	/* ex_result is already the {"questions":[...]} object — hand it back verbatim. */
+	return ex_result;
+}
+
 static _Bool parse_action(json_value *item, MiddlewareAction *action, String *error)
 {
 	memset(action, 0, sizeof(*action));

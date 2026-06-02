@@ -264,6 +264,44 @@ void handle_get_middleware_session(int fd, const char *full_path, User *user)
 	free(result_json);
 }
 
+void handle_post_onboarding_questions(int fd, const HttpRequest *req, User *user)
+{
+	char    goal_title[256];
+	char    scope[2048];
+	String *questions;
+
+	goal_title[0] = scope[0] = '\0';
+
+	if (!req->body) {
+		http_send_json(fd, 400, "Bad Request",
+			"{\"ok\":false,\"error\":\"missing_body\"}");
+		return;
+	}
+
+	if (!json_get_string_field(req->body, "goalTitle", goal_title, sizeof(goal_title)) &&
+	    !json_get_string_field(req->body, "title",     goal_title, sizeof(goal_title))) {
+		http_send_json(fd, 400, "Bad Request",
+			"{\"ok\":false,\"error\":\"missing_goal_title\"}");
+		return;
+	}
+
+	json_get_string_field(req->body, "scope", scope, sizeof(scope));
+
+	printf("onboarding/questions goalTitle=%s\n", goal_title);
+
+	questions = GenerateOnboardingQuestions(user, goal_title, scope);
+	if (!questions) {
+		http_send_json(fd, 500, "Internal Server Error",
+			"{\"ok\":false,\"error\":\"question_generation_failed\"}");
+		return;
+	}
+
+	/* questions->p is already the {"questions":[...]} object. */
+	http_send_json(fd, 200, "OK", questions->p);
+	FreeString(questions);
+	free(questions);
+}
+
 void handle_get_chat_sessions(int fd, User *user)
 {
 	char  *json = ListChatSessionsJSON(user->id);

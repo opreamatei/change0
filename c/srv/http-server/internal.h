@@ -62,6 +62,7 @@ void handle_post_middleware_message(int fd, const HttpRequest *req, User *user);
 void handle_post_middleware_permission(int fd, const HttpRequest *req, User *user);
 void handle_get_middleware_events(int fd, const char *full_path, User *user);
 void handle_get_middleware_session(int fd, const char *full_path, User *user);
+void handle_post_onboarding_questions(int fd, const HttpRequest *req, User *user);
 void handle_get_chat_sessions(int fd, User *user);
 
 /* ── profile handlers (profile-handlers.c) ── */

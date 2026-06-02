@@ -20,92 +20,127 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 
-#define CENTRAL_BACKLOG    4
-#define CENTRAL_MAX_BODY   (16 * 1024)
+#define CENTRAL_BACKLOG    128
+/* Header read timeout (seconds) so idle/pre-warmed cloudflared connections that
+ * never send a request cannot tie up a connection thread forever. */
+#define CENTRAL_READ_TIMEOUT 30
 
 static _Bool           central_started = 0;
 static int             central_fd = -1;
 static pthread_t       central_thread;
 static pthread_mutex_t central_lock = PTHREAD_MUTEX_INITIALIZER;
 
-static int read_request(int fd, CentralRequest *req)
-{
-	char buf[CENTRAL_MAX_BODY + 1];
-	size_t total = 0;
-	ssize_t r;
-
-	memset(req, 0, sizeof(*req));
-
-	while (total < sizeof(buf) - 1) {
-		r = recv(fd, buf + total, sizeof(buf) - 1 - total, 0);
-		if (r <= 0) {
-			if (r < 0 && errno == EINTR) continue;
-			break;
-		}
-		total += (size_t)r;
-		buf[total] = '\0';
-		if (strstr(buf, "\r\n\r\n"))
-			break;
-	}
-
-	if (total == 0) return -1;
-	buf[total] = '\0';
-
-	char *header_end = strstr(buf, "\r\n\r\n");
-	if (!header_end) return -1;
-	size_t header_len = (size_t)(header_end - buf) + 4;
-
-	const char *nl = strstr(buf, "\r\n");
-	char first_line[256];
-	if (!nl || (size_t)(nl - buf) >= sizeof(first_line)) return -1;
-	memcpy(first_line, buf, (size_t)(nl - buf));
-	first_line[nl - buf] = '\0';
-
-	if (sscanf(first_line, "%7s %127s", req->method, req->path) != 2)
-		return -1;
-
-	size_t content_length = 0;
-	const char *cl = strcasestr(buf, "Content-Length:");
-	if (cl) {
-		cl += strlen("Content-Length:");
-		while (*cl == ' ' || *cl == '\t') cl++;
-		content_length = (size_t)strtoul(cl, NULL, 10);
-	}
-
-	if (content_length > 0 && content_length < sizeof(buf) - header_len) {
-		size_t already = total - header_len;
-		while (already < content_length) {
-			r = recv(fd, buf + total, content_length - already, 0);
-			if (r <= 0) break;
-			total   += (size_t)r;
-			already += (size_t)r;
-		}
-		req->body_len = content_length;
-		req->body = malloc(content_length + 1);
-		if (req->body) {
-			memcpy(req->body, buf + header_len, content_length);
-			req->body[content_length] = '\0';
-		}
-	}
-
-	return 0;
-}
-
-static void free_request(CentralRequest *req)
-{
-	if (req->body) free(req->body);
-	req->body = NULL;
-	req->body_len = 0;
-}
+/*
+ * Each connection is read on its own thread (so slow/idle clients can't block
+ * the accept loop), but the domain systems are not thread-safe, so handler
+ * execution is serialized. We use TWO locks, mirroring the original design
+ * where the central server and the per-user client server were independent
+ * single-threaded servers running in parallel:
+ *
+ *   - central_handler_lock guards central-native routes (users, journeys,
+ *     connections, messages, submissions).
+ *   - client_handler_lock  guards routes forwarded to the active user's client
+ *     handler (goals, profile, schedule, journal, ...).
+ *
+ * They MUST be separate: a forwarded client handler re-enters the central
+ * server over a socket (central_connect) to hit a central-native journey
+ * route. With a single lock that nested request would deadlock against the
+ * lock its own caller already holds (symptom: every route hangs / "infinite
+ * loading" and connection threads pile up). Two locks let the client->central
+ * re-entrancy cross a lock boundary safely.
+ */
+static pthread_mutex_t central_handler_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t client_handler_lock  = PTHREAD_MUTEX_INITIALIZER;
 
 static void handle_cors_preflight(int fd)
 {
 	http_send_json(fd, 204, "No Content", NULL);
 }
 
-static void dispatch(int fd, CentralRequest *req)
+static int dispatch_to_active_client(int fd, CentralRequest *req)
+{
+	User *user = active_client_user();
+	if (!user) {
+		http_send_json(fd, 404, "Not Found", "{\"ok\":false,\"error\":\"route_not_found\"}");
+		return 0;
+	}
+
+	/* CentralRequest is a typedef of HttpRequest, so we can forward directly. */
+	return handle_client_request(fd, req, user);
+}
+
+/*
+ * Match and run a central-native route. Returns the keep-open flag (0/1) when
+ * handled, or -1 when the path is not a central route (caller forwards it to
+ * the active client). Must be called under central_handler_lock.
+ */
+static int dispatch_central_native(int fd, CentralRequest *req,
+		const char *clean_path, const char *query)
+{
+	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/users") == 0)          { handle_list_users(fd); return 0; }
+	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/users/avatar") == 0)   { handle_get_user_avatar(fd, query); return 0; }
+	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/users/create") == 0)   { handle_create_user(fd, req); return 0; }
+	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/users/select") == 0)   { handle_select_user(fd, req); return 0; }
+
+	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/journey/dismiss") == 0) return -1; /* client route */
+
+	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/journey/create") == 0) { handle_create_shared_journey(fd, req); return 0; }
+	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/journey/list") == 0)   { handle_list_shared_journeys(fd, query); return 0; }
+	if (strncmp(clean_path, "/journey/", 9) == 0) {
+		const char *rest  = clean_path + 9;
+		const char *slash = strchr(rest, '/');
+		if (slash) {
+			char journey_id[64] = {0};
+			size_t id_len = (size_t)(slash - rest);
+			if (id_len >= sizeof(journey_id)) id_len = sizeof(journey_id) - 1;
+			memcpy(journey_id, rest, id_len);
+			const char *sub = slash + 1;
+			if (strcmp(req->method, "GET")  == 0 && strcmp(sub, "proposals")     == 0) { handle_list_root_proposals(fd, journey_id, query); return 0; }
+			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "propose-root")  == 0) { handle_propose_root_goal(fd, journey_id, req); return 0; }
+			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "approve-root")  == 0) { handle_approve_root_goal(fd, journey_id, req); return 0; }
+			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "decline-root")  == 0) { handle_decline_root_goal(fd, journey_id, req); return 0; }
+			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "finalize-root") == 0) { handle_finalize_root_goal(fd, journey_id, req); return 0; }
+			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "dismiss")       == 0) { handle_delete_shared_journey(fd, journey_id); return 0; }
+		} else {
+			const char *journey_id = rest;
+			if (strcmp(req->method, "GET")  == 0) { handle_get_shared_journey(fd, journey_id); return 0; }
+			if (strcmp(req->method, "POST") == 0) { handle_update_shared_journey(fd, journey_id, req); return 0; }
+		}
+	}
+
+	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/connections/discoverable") == 0) { handle_conn_discoverable(fd, req); return 0; }
+	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/connections/private") == 0)      { handle_conn_private(fd, req); return 0; }
+	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/connections/description") == 0)  { handle_conn_update_description(fd, req); return 0; }
+	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/connections") == 0)              { handle_conn_list(fd, query); return 0; }
+	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/connections/approve") == 0)      { handle_conn_approve(fd, req); return 0; }
+	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/connections/decline") == 0)      { handle_conn_decline(fd, req); return 0; }
+
+	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/messages/send") == 0)  { handle_msg_send(fd, req); return 0; }
+	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/messages") == 0)       { handle_msg_list(fd, query); return 0; }
+
+	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/submissions/pending") == 0) { handle_get_submissions_pending(fd, query); return 0; }
+	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/submissions/file")    == 0) { handle_get_submission_file(fd, query); return 0; }
+	if (strncmp(clean_path, "/submissions/", 13) == 0) {
+		const char *rest = clean_path + 13;
+		const char *slash = strchr(rest, '/');
+		if (slash) {
+			char sub_id[SUBMISSION_ID_SIZE] = {0};
+			size_t id_len = (size_t)(slash - rest);
+			if (id_len >= sizeof(sub_id)) id_len = sizeof(sub_id) - 1;
+			memcpy(sub_id, rest, id_len);
+			const char *sub = slash + 1;
+			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "review") == 0) { handle_post_submission_review(fd, sub_id, req); return 0; }
+			if (strcmp(req->method, "GET")  == 0 && strcmp(sub, "status") == 0) { handle_get_submission_status(fd, sub_id); return 0; }
+		}
+	}
+
+	return -1; /* not a central route — forward to the active client */
+}
+
+static int dispatch(int fd, CentralRequest *req)
 {
 	char clean_path[128];
 	const char *query = NULL;
@@ -121,64 +156,50 @@ static void dispatch(int fd, CentralRequest *req)
 		clean_path[sizeof(clean_path) - 1] = '\0';
 	}
 
-	if (strcmp(req->method, "OPTIONS") == 0) { handle_cors_preflight(fd); return; }
+	if (strcmp(req->method, "OPTIONS") == 0) { handle_cors_preflight(fd); return 0; }
 
-	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/users") == 0)          { handle_list_users(fd); return; }
-	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/users/avatar") == 0)   { handle_get_user_avatar(fd, query); return; }
-	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/users/create") == 0)   { handle_create_user(fd, req); return; }
-	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/users/select") == 0)   { handle_select_user(fd, req); return; }
+	/* Central-native routes run serialized under central_handler_lock. */
+	pthread_mutex_lock(&central_handler_lock);
+	int r = dispatch_central_native(fd, req, clean_path, query);
+	pthread_mutex_unlock(&central_handler_lock);
+	if (r >= 0)
+		return r;
 
-	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/journey/create") == 0) { handle_create_shared_journey(fd, req); return; }
-	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/journey/list") == 0)   { handle_list_shared_journeys(fd, query); return; }
-	if (strncmp(clean_path, "/journey/", 9) == 0) {
-		const char *rest  = clean_path + 9;
-		const char *slash = strchr(rest, '/');
-		if (slash) {
-			char journey_id[64] = {0};
-			size_t id_len = (size_t)(slash - rest);
-			if (id_len >= sizeof(journey_id)) id_len = sizeof(journey_id) - 1;
-			memcpy(journey_id, rest, id_len);
-			const char *sub = slash + 1;
-			if (strcmp(req->method, "GET")  == 0 && strcmp(sub, "proposals")     == 0) { handle_list_root_proposals(fd, journey_id, query); return; }
-			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "propose-root")  == 0) { handle_propose_root_goal(fd, journey_id, req); return; }
-			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "approve-root")  == 0) { handle_approve_root_goal(fd, journey_id, req); return; }
-			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "decline-root")  == 0) { handle_decline_root_goal(fd, journey_id, req); return; }
-			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "finalize-root") == 0) { handle_finalize_root_goal(fd, journey_id, req); return; }
-			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "dismiss")       == 0) { handle_delete_shared_journey(fd, journey_id); return; }
-		} else {
-			const char *journey_id = rest;
-			if (strcmp(req->method, "GET")  == 0) { handle_get_shared_journey(fd, journey_id); return; }
-			if (strcmp(req->method, "POST") == 0) { handle_update_shared_journey(fd, journey_id, req); return; }
-		}
+	/*
+	 * Forwarded client routes run serialized under a SEPARATE lock. The handler
+	 * may call back into this central server over a socket (client -> central
+	 * journey routes); that nested request takes central_handler_lock, never
+	 * this one, so there is no self-deadlock.
+	 */
+	pthread_mutex_lock(&client_handler_lock);
+	r = dispatch_to_active_client(fd, req);
+	pthread_mutex_unlock(&client_handler_lock);
+	return r;
+}
+
+static void *central_conn_main(void *arg)
+{
+	int client_fd = (int)(intptr_t)arg;
+
+	/* Bound the time we'll wait for a request so idle pre-warmed connections
+	 * (cloudflared keeps a pool of them) don't leak threads forever. */
+	struct timeval tv = { CENTRAL_READ_TIMEOUT, 0 };
+	setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+	CentralRequest req;
+	int keep_open = 0;
+	if (read_http_request(client_fd, &req) == 0) {
+		keep_open = dispatch(client_fd, &req);
+	} else {
+		http_send_json(client_fd, 400, "Bad Request",
+			"{\"ok\":false,\"error\":\"bad_request\"}");
 	}
 
-	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/connections/discoverable") == 0) { handle_conn_discoverable(fd, req); return; }
-	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/connections/private") == 0)      { handle_conn_private(fd, req); return; }
-	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/connections/description") == 0)  { handle_conn_update_description(fd, req); return; }
-	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/connections") == 0)              { handle_conn_list(fd, query); return; }
-	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/connections/approve") == 0)      { handle_conn_approve(fd, req); return; }
-	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/connections/decline") == 0)      { handle_conn_decline(fd, req); return; }
+	free_http_request(&req);
+	if (!keep_open)
+		close(client_fd);
 
-	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/messages/send") == 0)  { handle_msg_send(fd, req); return; }
-	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/messages") == 0)       { handle_msg_list(fd, query); return; }
-
-	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/submissions/pending") == 0) { handle_get_submissions_pending(fd, query); return; }
-	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/submissions/file")    == 0) { handle_get_submission_file(fd, query); return; }
-	if (strncmp(clean_path, "/submissions/", 13) == 0) {
-		const char *rest = clean_path + 13;
-		const char *slash = strchr(rest, '/');
-		if (slash) {
-			char sub_id[SUBMISSION_ID_SIZE] = {0};
-			size_t id_len = (size_t)(slash - rest);
-			if (id_len >= sizeof(sub_id)) id_len = sizeof(sub_id) - 1;
-			memcpy(sub_id, rest, id_len);
-			const char *sub = slash + 1;
-			if (strcmp(req->method, "POST") == 0 && strcmp(sub, "review") == 0) { handle_post_submission_review(fd, sub_id, req); return; }
-			if (strcmp(req->method, "GET")  == 0 && strcmp(sub, "status") == 0) { handle_get_submission_status(fd, sub_id); return; }
-		}
-	}
-
-	http_send_json(fd, 404, "Not Found", "{\"ok\":false,\"error\":\"route_not_found\"}");
+	return NULL;
 }
 
 static void *central_thread_main(void *arg)
@@ -204,15 +225,16 @@ static void *central_thread_main(void *arg)
 			continue;
 		}
 
-		CentralRequest req;
-		if (read_request(client_fd, &req) == 0)
-			dispatch(client_fd, &req);
-		else
-			http_send_json(client_fd, 400, "Bad Request",
-				"{\"ok\":false,\"error\":\"bad_request\"}");
-
-		free_request(&req);
-		close(client_fd);
+		/* One detached thread per connection: reading the request must never
+		 * block the accept loop, or a single slow/idle client takes the whole
+		 * server down (backlog fills -> cloudflared "dial i/o timeout"). */
+		pthread_t conn_thread;
+		if (pthread_create(&conn_thread, NULL, central_conn_main,
+				(void *)(intptr_t)client_fd) != 0) {
+			close(client_fd);
+			continue;
+		}
+		pthread_detach(conn_thread);
 	}
 
 	return NULL;

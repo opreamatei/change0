@@ -226,4 +226,12 @@ char* ListChatSessionsJSON(const char *user_prefix);
    (caller must FreeString then free), or NULL on failure / empty result. */
 String *GenerateMatchDescription(User *user);
 
+/* Generate a few personalized clarifying questions for a chosen onboarding goal,
+   returned as a structured form. Two AI passes: one writes the questions for the
+   goal, a second extracts them into { "questions": [ { "prompt", "type":
+   "free"|"choice", "options": [...] } ] }. Returns a newly-allocated String*
+   holding that JSON object (caller must FreeString then free), or NULL on failure.
+   `scope` may be NULL. */
+String *GenerateOnboardingQuestions(User *user, const char *goal_title, const char *scope);
+
 #endif

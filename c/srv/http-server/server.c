@@ -16,6 +16,7 @@
 _Bool           started     = 0;
 int             server_fd   = -1;
 int             server_port = 0;
+User           *client_user = NULL;
 pthread_t       server_thread;
 pthread_mutex_t server_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -35,6 +36,15 @@ int server_is_running(void)
 	running = started ? 1 : 0;
 	pthread_mutex_unlock(&server_lock);
 	return running;
+}
+
+User *active_client_user(void)
+{
+	User *user;
+	pthread_mutex_lock(&server_lock);
+	user = started ? client_user : NULL;
+	pthread_mutex_unlock(&server_lock);
+	return user;
 }
 
 static void *server_thread_main(void *arg)
@@ -146,11 +156,14 @@ void start_server(int port, User *user)
 		bound_port = port;
 
 	server_port = bound_port;
+	client_user = user;
 
 	if (listen(server_fd, SERVER_BACKLOG) < 0) {
 		perror("listen");
 		close(server_fd);
 		server_fd = -1;
+		server_port = 0;
+		client_user = NULL;
 		pthread_mutex_unlock(&server_lock);
 		cassert(0, "Failed listening at the server socket\n");
 		return;
@@ -161,8 +174,10 @@ void start_server(int port, User *user)
 	rc = pthread_create(&server_thread, NULL, server_thread_main, user);
 	if (rc != 0) {
 		started = 0;
+		client_user = NULL;
 		close(server_fd);
 		server_fd = -1;
+		server_port = 0;
 		pthread_mutex_unlock(&server_lock);
 		cassert(0, "Failed creating server thread\n");
 		return;
@@ -190,6 +205,7 @@ void stop_server(void)
 	local_fd    = server_fd;
 	server_fd   = -1;
 	server_port = 0;
+	client_user = NULL;
 	need_join   = 1;
 
 	pthread_mutex_unlock(&server_lock);

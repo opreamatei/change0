@@ -8,7 +8,7 @@ import {
   type Goal,
 } from '../goal'
 import type { LocalUser } from './login-view'
-import OnboardingChat from './onboarding-chat'
+import OnboardingQuestions from './onboarding-questions'
 
 /*
  * Onboarding intro shown once, right after a brand-new account is created.
@@ -245,7 +245,8 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
     creationDoneRef.current = true
   }
 
-  /* Direct creation — used as the fallback when the user skips the chat. */
+  /* Create the selected goal directly: title = the chosen goal, extraInfo = its
+     scope blended with the user's clarifying answers (or the bare scope on skip). */
   async function runCreation(goalTitle: string, scope: string, meta: { name: string; cat: string }) {
     setError(null)
     creationDoneRef.current = false
@@ -277,19 +278,6 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
     void persistOnboardingAnswers()
     setClarifyCtx({ goalTitle, scope, meta })
     navTo('clarify')
-  }
-
-  /* The clarify chat reported the goal was created (and decomposed) by the
-     middleware — show the build animation, then the journey. */
-  async function onClarifyGoalCreated(goalId: string) {
-    const meta = clarifyCtx?.meta ?? journeyMeta
-    creationDoneRef.current = false
-    navTo('loading')
-    try {
-      await finalizeCreatedGoal(goalId || undefined, meta)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    }
   }
 
   /* Loading screen: an endlessly looping "building your journey" animation.
@@ -500,13 +488,16 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
       <style>{OB_CSS}</style>
 
       {screen === 'clarify' && clarifyCtx && (
-        <OnboardingChat
+        <OnboardingQuestions
           goalTitle={clarifyCtx.goalTitle}
           scope={clarifyCtx.scope}
-          age={age}
-          durLabel={durLabel()}
-          startTime={startTime}
-          onGoalCreated={(id) => void onClarifyGoalCreated(id)}
+          onDone={(answers) =>
+            void runCreation(
+              clarifyCtx.goalTitle,
+              answers ? `${clarifyCtx.scope} ${answers}` : clarifyCtx.scope,
+              clarifyCtx.meta,
+            )
+          }
           onSkip={() => void runCreation(clarifyCtx.goalTitle, clarifyCtx.scope, clarifyCtx.meta)}
         />
       )}

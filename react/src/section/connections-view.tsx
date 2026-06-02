@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { CENTRAL_ENDPOINTS, SERVER_ENDPOINTS } from '../config/server'
+import GoalCard from '../components/goal-card'
 
 /* ─── Types ────────────────────────────────────────────────────── */
 
@@ -121,26 +122,31 @@ function ProposalBubble({
 
   return (
     <div className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-      <div className="max-w-[82%] rounded-2xl border border-white/10 bg-[#111] px-4 py-3">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40 mb-1">Goal proposal</p>
-        <p className="text-sm font-semibold text-white">{proposal.title}</p>
-        {proposal.extra_info && <p className="mt-0.5 text-xs text-white/55 line-clamp-3">{proposal.extra_info}</p>}
-        <p className="text-[10px] text-white/40 mt-1">{formatTime(at)}</p>
-        {!mine && !done && (
-          <div className="mt-2 flex gap-2">
-            <button disabled={busy} onClick={() => void decline()}
-              className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:border-red-700 hover:text-red-400 disabled:opacity-40">
-              Decline
-            </button>
-            <button disabled={busy} onClick={() => void approve()}
-              className="rounded-lg bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/20 disabled:opacity-40">
-              Approve
-            </button>
-          </div>
-        )}
-        {mine && !done && <p className="mt-1.5 text-[10px] italic text-white/40">Waiting for {conn.other_name}…</p>}
-        {done && <p className="mt-1.5 text-[10px] text-emerald-400">Done ✓</p>}
-      </div>
+      <GoalCard
+        label="Goal proposal"
+        accent="#a78bfa"
+        title={proposal.title}
+        description={proposal.extra_info || undefined}
+        footer={
+          <>
+            {!mine && !done && (
+              <div className="flex gap-2">
+                <button disabled={busy} onClick={() => void decline()}
+                  className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:border-red-700 hover:text-red-400 disabled:opacity-40">
+                  Decline
+                </button>
+                <button disabled={busy} onClick={() => void approve()}
+                  className="rounded-lg bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/20 disabled:opacity-40">
+                  Approve
+                </button>
+              </div>
+            )}
+            {mine && !done && <p className="text-[10px] italic text-white/40">Waiting for {conn.other_name}…</p>}
+            {done && <p className="text-[10px] text-emerald-400">Done ✓</p>}
+            <p className="mt-1.5 text-[10px] text-white/30">{formatTime(at)}</p>
+          </>
+        }
+      />
     </div>
   )
 }

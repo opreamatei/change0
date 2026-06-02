@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { SERVER_ENDPOINTS } from '../config/server'
 import GraphUpdateBubble from '../components/graph-update-bubble'
+import GoalCard from '../components/goal-card'
 
 type ChatEntryKind = 'user' | 'assistant' | 'action' | 'permission' | 'reminder_permission'
 
@@ -822,17 +823,16 @@ function PanelActionCard({ entry }: { entry: ChatEntry }) {
     let title = ''
     try { title = (JSON.parse(content) as GoalCreatedData).title } catch {}
     return (
-      <div className="px-3 py-2.5" style={{ background: 'rgba(22,163,74,.1)', border: '1px solid rgba(22,163,74,.26)', borderRadius: '16px 16px 16px 4px' }}>
-        <div className="flex items-center gap-1.5 mb-1">
-          <div className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(22,163,74,.22)' }}>
-            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="#4ade80" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="1.5 5 4 7.5 8.5 2" />
-            </svg>
-          </div>
-          <span className="text-[10px] font-semibold uppercase tracking-[1.4px]" style={{ color: '#4ade80' }}>Goal created</span>
-        </div>
-        {title && <div className="text-[13px] font-medium text-white/85 ml-[22px]">{title}</div>}
-      </div>
+      <GoalCard
+        label="Goal created"
+        accent="#4ade80"
+        title={title || 'New goal'}
+        icon={
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="4 12 10 18 20 6" />
+          </svg>
+        }
+      />
     )
   }
 

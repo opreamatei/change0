@@ -2,14 +2,15 @@
 #define CENTRAL_INTERNAL_H
 
 #include <stddef.h>
+#include "http-util.h"
 
-/* shared request type used by all handler files */
-typedef struct {
-	char   method[8];
-	char   path[128];
-	char  *body;
-	size_t body_len;
-} CentralRequest;
+/*
+ * Shared request type used by all handler files. It is intentionally identical
+ * to HttpRequest so the central server can reuse the client server's robust,
+ * dynamically-sized request reader (read_http_request) and forward requests to
+ * the client handler without copying.
+ */
+typedef HttpRequest CentralRequest;
 
 /* shared JSON utility (defined in central-users.c) */
 char *extract_string_field(const char *body, size_t body_len, const char *key);

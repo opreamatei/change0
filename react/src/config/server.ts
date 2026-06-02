@@ -190,6 +190,7 @@ export const SERVER_ENDPOINTS = {
   get middlewareSession() { return path('/middleware/session')() },
   get middlewareEvents() { return path('/middleware/events')() },
   get middlewarePermission() { return path('/middleware/permission')() },
+  get onboardingQuestions() { return path('/onboarding/questions')() },
   get chatSessions() { return path('/chat/sessions')() },
 
   get journalCreate()  { return path('/journal/create')() },

@@ -18,7 +18,7 @@ static void handle_bad_request(int fd)
 }
 
 /* returns 1 if caller should keep socket open (SSE) */
-static int handle_request(int fd, const HttpRequest *req, User *user)
+int handle_client_request(int fd, const HttpRequest *req, User *user)
 {
 	char path[256];
 	const char *query_unused = NULL;
@@ -40,6 +40,7 @@ static int handle_request(int fd, const HttpRequest *req, User *user)
 	if (POST("/middleware/permission")) { handle_post_middleware_permission(fd, req, user);  return 0; }
 	if (GET("/middleware/events"))      { handle_get_middleware_events(fd, req->path, user); return 1; }
 	if (GET("/middleware/session"))     { handle_get_middleware_session(fd, req->path, user);return 0; }
+	if (POST("/onboarding/questions"))  { handle_post_onboarding_questions(fd, req, user);   return 0; }
 	if (GET("/chat/sessions"))          { handle_get_chat_sessions(fd, user);                return 0; }
 
 	if (POST("/goal/create"))               { handle_post_goal_create(fd, req, user);                  return 0; }
@@ -108,7 +109,7 @@ void handle_client(int fd, User *user)
 		return;
 	}
 
-	keep_open = handle_request(fd, &req, user);
+	keep_open = handle_client_request(fd, &req, user);
 	free_http_request(&req);
 
 	if (!keep_open)
