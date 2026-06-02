@@ -158,6 +158,8 @@ void handle_post_submission_create(int fd, const HttpRequest *req, User *user)
         return;
     }
 
+    _Bool is_shared = journey && journey->is_shared;
+
     /* build context string for AI */
     String ctx;
     InitString(&ctx, 512);
@@ -167,16 +169,23 @@ void handle_post_submission_create(int fd, const HttpRequest *req, User *user)
     const char *info  = goal->extra_info.p ? goal->extra_info.p : "";
     const char *child = ctx.p              ? ctx.p              : "";
 
-    /* generate label */
-    String label_prompt;
-    InitString(&label_prompt, sizeof(REVIEW_LABEL_PROMPT) + strlen(title) + strlen(info) + strlen(child) + 32);
-    CatTemplateString(&label_prompt, REVIEW_LABEL_PROMPT, title, info, child);
+    /* Generate label. Shared-journey goals have no single owner, so we leave the
+     * reviewer-facing person title empty rather than attributing the work to one
+     * person. */
+    char *ai_label;
+    if (is_shared) {
+        ai_label = strdup("");
+    } else {
+        String label_prompt;
+        InitString(&label_prompt, sizeof(REVIEW_LABEL_PROMPT) + strlen(title) + strlen(info) + strlen(child) + 32);
+        CatTemplateString(&label_prompt, REVIEW_LABEL_PROMPT, title, info, child);
 
-    char *ai_label = ai_call_single_string(
-        label_prompt.p, REVIEW_LABEL_SCHEMA, "review_label", "label");
-    FreeString(&label_prompt);
+        ai_label = ai_call_single_string(
+            label_prompt.p, REVIEW_LABEL_SCHEMA, "review_label", "label");
+        FreeString(&label_prompt);
 
-    if (!ai_label) ai_label = strdup("Unknown");
+        if (!ai_label) ai_label = strdup("Unknown");
+    }
 
     /* generate description */
     String desc_prompt;
@@ -189,6 +198,23 @@ void handle_post_submission_create(int fd, const HttpRequest *req, User *user)
     FreeString(&ctx);
 
     if (!ai_desc) ai_desc = strdup("A completed personal goal.");
+
+    /* For shared journeys, note in the extra info who worked on the goal — kept
+     * approximate and private: we surface only the number of collaborators, never
+     * their names or ids. */
+    if (is_shared) {
+        size_t n = journey->user_count;
+        String d;
+        InitString(&d, strlen(ai_desc) + 96);
+        if (ai_desc[0]) CatTemplateString(&d, "%s\n\n", ai_desc);
+        if (n > 1)
+            CatTemplateString(&d, "Shared goal — worked on by %zu people (identities kept private).", n);
+        else
+            CatFixed(&d, "Shared goal — worked on collaboratively (identities kept private).");
+        free(ai_desc);
+        ai_desc = strdup(d.p);
+        FreeString(&d);
+    }
 
     GoalSubmission *sub = CreateSubmission(goal_id, user->id, ai_label, ai_desc, user_desc);
     free(ai_label);

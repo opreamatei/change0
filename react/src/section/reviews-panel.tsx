@@ -120,7 +120,7 @@ export default function ReviewsPanel({ open, onClose, userId, userLabel = '' }: 
           </button>
           <div className="min-w-0 flex-1">
             <div className="truncate text-[16px] font-bold text-white">Anonymous Work</div>
-            <div className="truncate text-[11px]" style={{ color: 'rgba(255,255,255,.4)' }}>{reviewingItem.ai_label}</div>
+            <div className="truncate text-[11px]" style={{ color: 'rgba(255,255,255,.4)' }}>{reviewingItem.ai_label.trim() || 'Shared goal'}</div>
           </div>
         </div>
 
@@ -128,7 +128,7 @@ export default function ReviewsPanel({ open, onClose, userId, userLabel = '' }: 
           <div className="mx-4 mt-3 overflow-hidden rounded-3xl p-5" style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)' }}>
             <div className="mb-1 inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-[11px] font-bold"
               style={{ background: 'rgba(255,200,50,.1)', color: 'rgba(255,200,50,.9)', border: '1px solid rgba(255,200,50,.2)' }}>
-              {reviewingItem.ai_label}
+              {reviewingItem.ai_label.trim() || 'Shared goal'}
             </div>
             <div className="mb-1 mt-3 text-[10px] font-bold uppercase tracking-wider" style={{ color: 'rgba(255,255,255,.3)' }}>AI summary</div>
             <div className="text-[14px] leading-[1.65]" style={{ color: 'rgba(255,255,255,.7)' }}>
@@ -279,7 +279,7 @@ export default function ReviewsPanel({ open, onClose, userId, userLabel = '' }: 
                 style={{ height: '48%', background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)' }}>
                 <div className="mb-2 inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-[11px] font-bold self-start"
                   style={{ background: 'rgba(255,200,50,.15)', color: 'rgba(255,200,50,.9)', border: '1px solid rgba(255,200,50,.25)' }}>
-                  {item.ai_label}
+                  {item.ai_label.trim() || 'Shared goal'}
                 </div>
                 <div className="text-[13px] leading-[1.55]" style={{ color: 'rgba(255,255,255,.6)', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical' as never, overflow: 'hidden' }}>
                   {item.ai_description}

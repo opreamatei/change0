@@ -215,6 +215,7 @@ export const CENTRAL_ENDPOINTS = {
   get users() { return `${centralBase()}/users` },
   get usersCreate() { return `${centralBase()}/users/create` },
   get usersSelect() { return `${centralBase()}/users/select` },
+  get usersDelete() { return `${centralBase()}/users/delete` },
   userAvatar: (userId: string) => `${centralBase()}/users/avatar?id=${encodeURIComponent(userId)}`,
   userProfile: (userId: string) => `${centralBase()}/users/profile?id=${encodeURIComponent(userId)}`,
   userAuthenticGoals: (userId: string) => `${centralBase()}/users/authentic-goals?id=${encodeURIComponent(userId)}`,

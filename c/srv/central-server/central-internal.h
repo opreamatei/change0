@@ -20,6 +20,8 @@ void init_shared_journeys(void);
 void free_shared_journeys(void);
 void handle_get_shared_journey(int fd, const char *journey_id);
 void handle_delete_shared_journey(int fd, const char *journey_id);
+/* Drop a shared journey for everyone (no HTTP response). 1 if it existed. */
+_Bool drop_shared_journey_by_id(const char *journey_id);
 void handle_create_shared_journey(int fd, CentralRequest *req);
 void handle_update_shared_journey(int fd, const char *journey_id, CentralRequest *req);
 /* List shared journeys for the user passed as ?user_id=... in the query string. */
@@ -50,6 +52,7 @@ void handle_get_submission_file(int fd, const char *query);
 void handle_list_users(int fd);
 void handle_create_user(int fd, CentralRequest *req);
 void handle_select_user(int fd, CentralRequest *req);
+void handle_delete_user(int fd, CentralRequest *req);
 void handle_get_user_avatar(int fd, const char *query);
 void handle_get_user_profile(int fd, const char *query);
 void handle_get_user_authentic_goals(int fd, const char *query);

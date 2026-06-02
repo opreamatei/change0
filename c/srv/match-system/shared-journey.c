@@ -282,17 +282,16 @@ void handle_get_shared_journey(int fd, const char *journey_id)
  * leaving dismisses the whole journey: we free the central copy and remove the
  * on-disk file, so subsequent fetches by any participant 404.
  */
-void handle_delete_shared_journey(int fd, const char *journey_id)
+/* Core of the dismiss: free the central copy + on-disk file and compact the
+ * table. Returns 1 if the journey existed, 0 otherwise. Reused by the user
+ * deletion flow, which removes every journey a user participates in. */
+_Bool drop_shared_journey_by_id(const char *journey_id)
 {
 	size_t idx = SharedJourneyCount;
 	for (size_t i = 0; i < SharedJourneyCount; i++)
 		if (strcmp(SharedJourneyTable[i].id, journey_id) == 0) { idx = i; break; }
 
-	if (idx == SharedJourneyCount) {
-		http_send_json(fd, 404, "Not Found",
-			"{\"ok\":false,\"error\":\"journey_not_found\"}");
-		return;
-	}
+	if (idx == SharedJourneyCount) return 0;
 
 	Journey *j = &SharedJourneyTable[idx];
 	FreeString(&j->title);
@@ -317,6 +316,17 @@ void handle_delete_shared_journey(int fd, const char *journey_id)
 	for (size_t i = idx; i + 1 < SharedJourneyCount; i++)
 		SharedJourneyTable[i] = SharedJourneyTable[i + 1];
 	SharedJourneyCount--;
+
+	return 1;
+}
+
+void handle_delete_shared_journey(int fd, const char *journey_id)
+{
+	if (!drop_shared_journey_by_id(journey_id)) {
+		http_send_json(fd, 404, "Not Found",
+			"{\"ok\":false,\"error\":\"journey_not_found\"}");
+		return;
+	}
 
 	http_send_json(fd, 200, "OK", "{\"ok\":true}");
 }

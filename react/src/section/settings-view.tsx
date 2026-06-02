@@ -764,8 +764,10 @@ function VerifyGoalModal({
             <div className="text-[48px]">✨</div>
             <div className="text-[20px] font-bold text-white">Submitted for review</div>
             <div className="rounded-2xl px-4 py-3 text-[13px] text-left w-full" style={{ background: 'rgba(255,200,50,.07)', border: '1px solid rgba(255,200,50,.18)' }}>
-              <div className="text-[11px] font-bold uppercase tracking-wider mb-1" style={{ color: 'rgba(255,200,50,.7)' }}>Reviewers will see you as</div>
-              <div className="text-[15px] font-bold text-white mb-1">{result.aiLabel}</div>
+              <div className="text-[11px] font-bold uppercase tracking-wider mb-1" style={{ color: 'rgba(255,200,50,.7)' }}>
+                {result.aiLabel.trim() ? 'Reviewers will see you as' : 'Shared goal'}
+              </div>
+              {result.aiLabel.trim() && <div className="text-[15px] font-bold text-white mb-1">{result.aiLabel}</div>}
               <div className="text-[13px] leading-[1.6]" style={{ color: 'rgba(255,255,255,.6)' }}>{result.aiDesc}</div>
             </div>
             <div className="text-[12px]" style={{ color: 'rgba(255,255,255,.3)' }}>
