@@ -9,7 +9,7 @@ import { SERVER_ENDPOINTS } from '../config/server'
  * always there too — options + free).
  *
  * Ultra-minimal: centred title, vibrant option chips, a bare input, and a single
- * Continue button that also works with no answer (an implicit skip per question).
+ * Skip/Continue button that changes once the user answers.
  */
 
 interface Question {
@@ -64,6 +64,8 @@ export default function OnboardingQuestions({ goalTitle, scope, onDone, onSkip }
 
   const current = questions[idx]
   const isLast = idx === questions.length - 1
+  const hasAnswer = input.trim().length > 0
+  const actionLabel = hasAnswer ? (isLast ? 'Create my journey' : 'Continue') : 'Skip'
 
   /* Continue: record the (possibly empty) answer and advance; empty = skip. */
   function next() {
@@ -105,7 +107,7 @@ export default function OnboardingQuestions({ goalTitle, scope, onDone, onSkip }
           <button type="button" onClick={onSkip}
             className="rounded-full px-7 py-3.5 text-[15px] font-bold active:scale-95 transition-transform"
             style={{ background: '#fff', color: '#000' }}>
-            Continue
+            Skip
           </button>
         </div>
       </Shell>
@@ -118,6 +120,15 @@ export default function OnboardingQuestions({ goalTitle, scope, onDone, onSkip }
         @keyframes obq-in {
           from { opacity: 0; transform: translateY(28px) scale(.94); filter: blur(8px); }
           to   { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+        }
+        @keyframes obq-label-in {
+          from { opacity: 0; transform: translateY(16px) scale(.96); filter: blur(5px); }
+          to   { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+        }
+        @keyframes obq-sheen {
+          from { transform: translateX(-140%) skewX(-18deg); opacity: 0; }
+          25%  { opacity: .55; }
+          to   { transform: translateX(160%) skewX(-18deg); opacity: 0; }
         }
       `}</style>
       <div className="flex flex-1 flex-col items-center justify-center px-8">
@@ -157,9 +168,17 @@ export default function OnboardingQuestions({ goalTitle, scope, onDone, onSkip }
 
       <div className="flex-shrink-0 px-8 pt-4 pb-10 flex justify-center">
         <button type="button" onClick={next}
-          className="w-full max-w-[340px] rounded-full py-5 text-[17px] font-bold active:scale-95 transition-transform"
-          style={{ background: '#fff', color: '#000' }}>
-          {isLast ? 'Create my journey' : 'Continue'}
+          className="relative w-full max-w-[340px] overflow-hidden rounded-full py-5 text-[17px] font-bold active:scale-95 transition-all duration-500"
+          style={hasAnswer
+            ? { background: '#fff', color: '#000', boxShadow: '0 18px 44px rgba(255,255,255,.18)' }
+            : { background: 'rgba(255,255,255,.08)', color: 'rgba(255,255,255,.66)', border: '1px solid rgba(255,255,255,.16)' }}>
+          {hasAnswer && (
+            <span aria-hidden="true" className="absolute inset-y-0 left-0 w-1/2 bg-white/60"
+              style={{ animation: 'obq-sheen .85s cubic-bezier(.22,1,.36,1)' }} />
+          )}
+          <span key={actionLabel} className="relative block" style={{ animation: 'obq-label-in .34s cubic-bezier(.22,1,.36,1)' }}>
+            {actionLabel}
+          </span>
         </button>
       </div>
     </Shell>

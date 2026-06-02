@@ -92,6 +92,11 @@ void start_server(int port, User *user)
 	int rc;
 	int bound_port = 0;
 
+	/* Keep the shareable goal snapshot fresh on every SaveUser. Idempotent.
+	 * Seed it once now so the active user is viewable before their first edit. */
+	SetProfileSnapshotHook(WriteUserProfileSnapshot);
+	if (user) WriteUserProfileSnapshot(user);
+
 	/*
 	 * Critical for SSE: browsers routinely close/reconnect EventSource
 	 * sockets. Without this, send() to a closed socket terminates the process.

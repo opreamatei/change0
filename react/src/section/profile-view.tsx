@@ -364,16 +364,27 @@ export default function ProfileView() {
         />
       </section>
 
-      {/* connection discoverability */}
+      {/* people you've interacted with — profile pictures only */}
       <section className="rounded-2xl border border-white/10 bg-[#111] px-5 py-4 space-y-3">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40">Connections</p>
-        {sharedPeople.length > 0 && (
-          <div className="flex items-center gap-2">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40">
+          People you've connected with
+        </p>
+        {sharedPeople.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2.5">
             {sharedPeople.map((person) => (
               <SharedPersonAvatar key={person.id} person={person} />
             ))}
           </div>
+        ) : (
+          <p className="text-[11px] text-white/35">
+            No one yet — people you share a journey or connection with will appear here.
+          </p>
         )}
+      </section>
+
+      {/* connection discoverability */}
+      <section className="rounded-2xl border border-white/10 bg-[#111] px-5 py-4 space-y-3">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-white/40">Connections</p>
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm font-medium">Open to meeting people</p>

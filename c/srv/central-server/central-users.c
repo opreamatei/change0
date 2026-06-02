@@ -3,6 +3,7 @@
 #include "http-server.h"
 #include "http-util.h"
 #include "user-management.h"
+#include "reviews.h"
 #include "util.h"
 #include "json.h"
 
@@ -158,6 +159,68 @@ void handle_get_user_avatar(int fd, const char *query)
 		"Connection: close\r\n"
 		"\r\n",
 		central_avatar_mime(ext), len);
+
+	http_send_all(fd, header, (size_t)hlen);
+	if (data && len) http_send_all(fd, data, len);
+	free(data);
+}
+
+/* GET /users/authentic-goals?id=<userId> — the goal ids this user has had
+ * peer-verified, so a viewer can mark those achievements as authentic.
+ * Computed live from the submissions table (always fresh). */
+void handle_get_user_authentic_goals(int fd, const char *query)
+{
+	char id[64] = {0};
+	if (!query || !query_get_param(query, "id", id, sizeof(id)) || !id[0]) {
+		http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_id\"}");
+		return;
+	}
+
+	const char *ids[MAX_SUBMISSIONS];
+	size_t n = ListAuthenticGoalIds(id, ids, MAX_SUBMISSIONS);
+
+	String out;
+	InitString(&out, 128 + n * 40);
+	CatFixed(&out, "{\"ok\":true,\"goal_ids\":[");
+	for (size_t i = 0; i < n; i++) {
+		char *esc = json_escape_dup(ids[i]);
+		CatTemplateString(&out, "%s\"%s\"", i ? "," : "", esc ? esc : "");
+		free(esc);
+	}
+	CatFixed(&out, "]}");
+
+	http_send_json(fd, 200, "OK", out.p);
+	FreeString(&out);
+}
+
+/* GET /users/profile?id=<userId> — serves a user's public goal-portfolio
+ * snapshot (data/users/<id>/profile.json) so others can view their goals and
+ * achievements. 404 when the user has not shared (no snapshot file). */
+void handle_get_user_profile(int fd, const char *query)
+{
+	char id[64] = {0};
+	if (!query || !query_get_param(query, "id", id, sizeof(id)) || !id[0]) {
+		http_send_json(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_id\"}");
+		return;
+	}
+
+	void  *data = NULL;
+	size_t len  = 0;
+	if (ReadUserProfileSnapshot(id, &data, &len) != 0) {
+		http_send_json(fd, 404, "Not Found", "{\"ok\":false,\"error\":\"not_shared\"}");
+		return;
+	}
+
+	char header[256];
+	int hlen = snprintf(header, sizeof(header),
+		"HTTP/1.1 200 OK\r\n"
+		"Content-Type: application/json\r\n"
+		"Access-Control-Allow-Origin: *\r\n"
+		"Cache-Control: no-cache\r\n"
+		"Content-Length: %zu\r\n"
+		"Connection: close\r\n"
+		"\r\n",
+		len);
 
 	http_send_all(fd, header, (size_t)hlen);
 	if (data && len) http_send_all(fd, data, len);

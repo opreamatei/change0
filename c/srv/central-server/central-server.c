@@ -82,6 +82,8 @@ static int dispatch_central_native(int fd, CentralRequest *req,
 {
 	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/users") == 0)          { handle_list_users(fd); return 0; }
 	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/users/avatar") == 0)   { handle_get_user_avatar(fd, query); return 0; }
+	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/users/profile") == 0)  { handle_get_user_profile(fd, query); return 0; }
+	if (strcmp(req->method, "GET")  == 0 && strcmp(clean_path, "/users/authentic-goals") == 0) { handle_get_user_authentic_goals(fd, query); return 0; }
 	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/users/create") == 0)   { handle_create_user(fd, req); return 0; }
 	if (strcmp(req->method, "POST") == 0 && strcmp(clean_path, "/users/select") == 0)   { handle_select_user(fd, req); return 0; }
 

@@ -205,7 +205,7 @@ static void append_goal_json(String *out, Goal *g)
 	free(esc_id);
 }
 
-static char *serialize_goals_container_json(const char *journey_id)
+char *serialize_goals_container_json(const char *journey_id)
 {
 	size_t len   = 0;
 	size_t active = 0;

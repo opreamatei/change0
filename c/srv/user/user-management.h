@@ -35,6 +35,12 @@ typedef struct UserType {
 	_Bool discoverable;
 	String description;
 
+	/* When true, the client server writes a public goal-portfolio snapshot
+	 * (data/users/<id>/profile.json) that the central server serves to other
+	 * users so they can view this user's goals/achievements. Opt-out only;
+	 * defaults to true, mirroring avatar exposure. */
+	_Bool share_profile;
+
 	/* Identity colour: a #rrggbb hex used to represent the user across the UI
 	 * (avatar fallback, collab tints). Assigned at random from a curated palette
 	 * when the account is created, then replaced by the dominant colour of the
@@ -79,9 +85,28 @@ void GetUserMetaPath(const User *u, char *path);
 int SaveUserAvatar(const char *user_id, const char *ext, const void *data, size_t len);
 int ReadUserAvatar(const char *user_id, void **out, size_t *out_len, char *ext_out, size_t ext_cap);
 
+/*
+ * Public goal-portfolio snapshot, stored as JSON under the user's data dir
+ * (data/users/<id>/profile.json). Written by the owning client server (it has
+ * the goal tree) and served by the central server to other users — same
+ * shared-disk pattern as avatars. SaveUserProfileSnapshot returns 0 on success;
+ * RemoveUserProfileSnapshot deletes it (used when a user opts out of sharing);
+ * ReadUserProfileSnapshot mallocs *out. */
+int SaveUserProfileSnapshot(const char *user_id, const char *json, size_t len);
+int ReadUserProfileSnapshot(const char *user_id, void **out, size_t *out_len);
+void RemoveUserProfileSnapshot(const char *user_id);
+
 void AddToJourney(User *u, const Journey *j);
 
 /* Saves meta, graph, and all journeys for the given user. */
 void SaveUser(User *u);
+
+/*
+ * Hook invoked at the end of SaveUser. Lets the http-server layer refresh the
+ * shareable profile snapshot on every persist without user-management needing to
+ * depend on the goal serializer (same inversion as start_ds_session_like_func).
+ */
+typedef void (*ProfileSnapshotHook)(User *u);
+void SetProfileSnapshotHook(ProfileSnapshotHook hook);
 
 #endif

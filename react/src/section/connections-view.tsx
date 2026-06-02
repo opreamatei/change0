@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { CENTRAL_ENDPOINTS, SERVER_ENDPOINTS } from '../config/server'
+import { openUserProfile } from '../profile-nav'
 import GoalCard from '../components/goal-card'
 
 /* ─── Types ────────────────────────────────────────────────────── */
@@ -229,11 +230,15 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
         </button>
         {/* fused avatar */}
         <div className="relative w-9 h-9 shrink-0">
-          <div className="absolute left-0 top-0 w-7 h-7 rounded-full border-2 flex items-center justify-center text-[10px] font-bold text-white"
+          <div
+            onClick={(e) => { e.stopPropagation(); openUserProfile({ id: userId, display_name: '' }) }}
+            className="absolute left-0 top-0 w-7 h-7 cursor-pointer rounded-full border-2 flex items-center justify-center text-[10px] font-bold text-white"
             style={{ background: myColor, borderColor: '#0d0d0d' }}>
             {userId.charAt(0).toUpperCase()}
           </div>
-          <div className="absolute right-0 bottom-0 w-7 h-7 rounded-full border-2 flex items-center justify-center text-[10px] font-bold text-white"
+          <div
+            onClick={(e) => { e.stopPropagation(); openUserProfile({ id: conn.other_id, display_name: conn.other_name, color: theirColor }) }}
+            className="absolute right-0 bottom-0 w-7 h-7 cursor-pointer rounded-full border-2 flex items-center justify-center text-[10px] font-bold text-white"
             style={{ background: theirColor, borderColor: '#0d0d0d' }}>
             {conn.other_name.charAt(0).toUpperCase()}
           </div>
@@ -427,11 +432,15 @@ function CollabCard({ conn, userId, onOpen }: { conn: Connection; userId: string
       {/* overlapping avatars */}
       <div className="px-5 -mt-5 flex items-end gap-3">
         <div className="relative flex shrink-0">
-          <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white z-10"
+          <div
+            onClick={(e) => { e.stopPropagation(); openUserProfile({ id: userId, display_name: '' }) }}
+            className="w-10 h-10 cursor-pointer rounded-full flex items-center justify-center text-sm font-bold text-white z-10"
             style={{ background: myColor, border: '2.5px solid #111', boxShadow: `0 0 12px ${hexOrHslToRgba(myColor, 0.4)}` }}>
             {userId.charAt(0).toUpperCase()}
           </div>
-          <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white -ml-2"
+          <div
+            onClick={(e) => { e.stopPropagation(); openUserProfile({ id: conn.other_id, display_name: conn.other_name, color: theirColor }) }}
+            className="w-10 h-10 cursor-pointer rounded-full flex items-center justify-center text-sm font-bold text-white -ml-2"
             style={{ background: theirColor, border: '2.5px solid #111', boxShadow: `0 0 12px ${hexOrHslToRgba(theirColor, 0.4)}` }}>
             {conn.other_name.charAt(0).toUpperCase()}
           </div>
@@ -480,7 +489,9 @@ function ProposalCard({ conn, userId, onApprove, onDecline }: {
 
       {/* avatar */}
       <div className="px-6 -mt-6">
-        <div className="w-12 h-12 rounded-full flex items-center justify-center text-base font-bold text-white"
+        <div
+          onClick={(e) => { e.stopPropagation(); openUserProfile({ id: conn.other_id, display_name: conn.other_name, color: theirColor }) }}
+          className="w-12 h-12 cursor-pointer rounded-full flex items-center justify-center text-base font-bold text-white"
           style={{ background: theirColor, border: '3px solid #111', boxShadow: `0 0 20px ${hexOrHslToRgba(theirColor, 0.5)}` }}>
           {conn.other_name.charAt(0).toUpperCase()}
         </div>

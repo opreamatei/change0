@@ -190,7 +190,7 @@ void handle_post_submission_create(int fd, const HttpRequest *req, User *user)
 
     if (!ai_desc) ai_desc = strdup("A completed personal goal.");
 
-    GoalSubmission *sub = CreateSubmission(ai_label, ai_desc, user_desc);
+    GoalSubmission *sub = CreateSubmission(goal_id, user->id, ai_label, ai_desc, user_desc);
     free(ai_label);
     free(ai_desc);
 

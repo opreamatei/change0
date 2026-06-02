@@ -171,6 +171,55 @@ int ReadUserAvatar(const char *user_id, void **out, size_t *out_len, char *ext_o
 	return 0;
 }
 
+int SaveUserProfileSnapshot(const char *user_id, const char *json, size_t len)
+{
+	if (!avatar_safe_id(user_id) || !json || len == 0) return -1;
+
+	char path[USER_DIRECTORY_SIZE];
+	int n = snprintf(path, sizeof(path), USER_DATA_DIRECTORY "%s/profile.json", user_id);
+	if (n <= 0 || (size_t)n >= sizeof(path)) return -1;
+
+	FILE *f = fopen(path, "wb");
+	if (!f) return -1;
+	size_t w = fwrite(json, 1, len, f);
+	fclose(f);
+	return w == len ? 0 : -1;
+}
+
+int ReadUserProfileSnapshot(const char *user_id, void **out, size_t *out_len)
+{
+	if (!avatar_safe_id(user_id) || !out || !out_len) return -1;
+
+	char path[USER_DIRECTORY_SIZE];
+	int n = snprintf(path, sizeof(path), USER_DATA_DIRECTORY "%s/profile.json", user_id);
+	if (n <= 0 || (size_t)n >= sizeof(path)) return -1;
+
+	FILE *f = fopen(path, "rb");
+	if (!f) return -1;
+	fseek(f, 0, SEEK_END);
+	long sz = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	if (sz <= 0) { fclose(f); return -1; }
+
+	void *buf = malloc((size_t)sz);
+	if (!buf) { fclose(f); return -1; }
+	size_t r = fread(buf, 1, (size_t)sz, f);
+	fclose(f);
+	if (r != (size_t)sz) { free(buf); return -1; }
+
+	*out = buf;
+	*out_len = (size_t)sz;
+	return 0;
+}
+
+void RemoveUserProfileSnapshot(const char *user_id)
+{
+	if (!avatar_safe_id(user_id)) return;
+	char path[USER_DIRECTORY_SIZE];
+	int n = snprintf(path, sizeof(path), USER_DATA_DIRECTORY "%s/profile.json", user_id);
+	if (n > 0 && (size_t)n < sizeof(path)) remove(path);
+}
+
 void GetUserMetaPath(const User *u, char *path)
 {
 	GetUserFilePath(u, USER_META_FILENAME, path);

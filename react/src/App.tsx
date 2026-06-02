@@ -9,6 +9,7 @@ import LoginView, { type LocalUser } from './section/login-view'
 import OnboardingView from './section/onboarding-view'
 import LoadingOrb from './components/loading-orb'
 import NavBar, { type NavPanel } from './components/nav-bar'
+import { OPEN_USER_PROFILE_EVENT, type ProfilePerson } from './profile-nav'
 import FocusSession, { type FocusTarget } from './section/focus-session'
 import JournalFocusSession, { type JournalFocusActions } from './section/journal-focus-session'
 import type { GoalSelection } from './section/current-goals-view'
@@ -60,6 +61,7 @@ function App() {
   const [needsOnboarding, setNeedsOnboarding] = useState(false)
   const [devPanelOpen, setDevPanelOpen] = useState(false)
   const [journalOpenEntryId, setJournalOpenEntryId] = useState<string | null>(null)
+  const [profileTarget, setProfileTarget] = useState<ProfilePerson | null>(null)
   const [journeyChatOpen, setJourneyChatOpen] = useState(false)
   const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null)
   const [journalFocus, setJournalFocus] = useState<JournalFocusActions | null>(null)
@@ -177,6 +179,21 @@ function App() {
     window.addEventListener('open-journal-entry', onOpenJournalEntry as EventListener)
     return () => window.removeEventListener('open-journal-entry', onOpenJournalEntry as EventListener)
   }, [])
+
+  useEffect(() => {
+    function onOpenUserProfile(event: Event) {
+      const custom = event as CustomEvent<ProfilePerson>
+      const person = custom.detail
+      if (!person?.id) return
+      setGoalPanel('profile')
+      /* Your own avatar just lands you on your profile; anyone else opens their
+       * read-only profile panel over it. */
+      setProfileTarget(person.id === localUser?.id ? null : person)
+    }
+
+    window.addEventListener(OPEN_USER_PROFILE_EVENT, onOpenUserProfile as EventListener)
+    return () => window.removeEventListener(OPEN_USER_PROFILE_EVENT, onOpenUserProfile as EventListener)
+  }, [localUser?.id])
 
   async function refreshGoals(options?: { silent?: boolean }) {
     try {
@@ -788,7 +805,7 @@ function App() {
           ) : goalPanel === 'schedule' ? (
             <SchedulePanel />
           ) : goalPanel === 'profile' ? (
-            <SettingsView />
+            <SettingsView viewPerson={profileTarget} onViewPersonConsumed={() => setProfileTarget(null)} />
           ) : (
             <JournalView openEntryId={journalOpenEntryId} />
           )}

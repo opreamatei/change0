@@ -712,11 +712,12 @@ String *GenerateMatchDescription(User *user)
 "A user is onboarding and has chosen this goal: \"%s\". " \
 "Scope/context for the goal: %s. " \
 "What is already known about the user: [%s]. " \
-"Produce a SHORT set of 3 to 4 clarifying questions that let the app scope and personalize THIS goal before it is created. " \
-"Cover, as relevant: the user's real starting point and prior experience, the concrete outcome they want, and how ambitious the scope is. " \
+"Produce 3 essential clarifying questions; use 4 or 5 only if truly necessary. " \
+"Questions must be short, engaging, and high-signal: ideally under 10 words each. " \
+"Focus only on: starting point, desired outcome, and scope/ambition. " \
 "Never assume the user is past zero — always ask about their starting point. Do NOT ask about scheduling, daily hours, or step-by-step plans; the app handles those automatically. " \
 "Do NOT ask about deadlines, target dates, or time limits — the app does not handle deadlines well, so never raise the topic. " \
-"Keep each question short, warm, and plain. Write them as one natural message, one question per line, no preamble. " \
+"Avoid long, boring, generic questions. Write one question per line, no preamble. " \
 "Reply in the user's language. " \
 "Return one strict JSON object only: {\"message\": \"...\"}."
 

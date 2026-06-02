@@ -280,6 +280,21 @@ export function formatGoalDate(value: number | null) {
   return date.toLocaleString()
 }
 
+/* Parse a goal-list container ({ goals: [...] }) into Goal objects, deduping by
+ * localIndex. Shared by the live loader and the cached profile-snapshot viewer. */
+export function goalsFromContainer(payload: GoalListResponse | null | undefined): Goal[] {
+  const items = Array.isArray(payload?.goals) ? payload!.goals : []
+  const seen = new Set<number>()
+
+  return items
+    .filter((item) => {
+      if (seen.has(item.localIndex)) return false
+      seen.add(item.localIndex)
+      return true
+    })
+    .map(Goal.fromServer)
+}
+
 export async function loadGoalsFromServer(baseUrl = getClientBaseUrl() ?? '') {
   const response = await fetch(buildGoalListUrl(baseUrl), {
     method: 'GET',
@@ -291,16 +306,7 @@ export async function loadGoalsFromServer(baseUrl = getClientBaseUrl() ?? '') {
   }
 
   const payload = (await response.json()) as GoalListResponse
-  const items = Array.isArray(payload.goals) ? payload.goals : []
-  const seen = new Set<number>()
-
-  return items
-    .filter((item) => {
-      if (seen.has(item.localIndex)) return false
-      seen.add(item.localIndex)
-      return true
-    })
-    .map(Goal.fromServer)
+  return goalsFromContainer(payload)
 }
 
 async function postGoalStatusAction(

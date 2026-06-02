@@ -78,6 +78,8 @@ static void persist_metadata(const GoalSubmission *s)
 
     CatTemplateString(&out,
         "{\"id\":\"%s\","
+        "\"goal_id\":\"%s\","
+        "\"owner_id\":\"%s\","
         "\"ai_label\":\"%s\","
         "\"ai_description\":\"%s\","
         "\"user_description\":\"%s\","
@@ -86,6 +88,8 @@ static void persist_metadata(const GoalSubmission *s)
         "\"submitted_at\":%lld,"
         "\"files\":[",
         s->id,
+        s->goal_id,
+        s->owner_id,
         esc_label,
         esc_ai,
         esc_user,
@@ -125,6 +129,14 @@ static void load_metadata(GoalSubmission *s, const char *path)
     v = json_object_get(doc, "id");
     if (v && v->type == json_string)
         snprintf(s->id, sizeof(s->id), "%s", v->u.string.ptr);
+
+    v = json_object_get(doc, "goal_id");
+    if (v && v->type == json_string)
+        snprintf(s->goal_id, sizeof(s->goal_id), "%s", v->u.string.ptr);
+
+    v = json_object_get(doc, "owner_id");
+    if (v && v->type == json_string)
+        snprintf(s->owner_id, sizeof(s->owner_id), "%s", v->u.string.ptr);
 
     v = json_object_get(doc, "ai_label");
     if (v && v->type == json_string)
@@ -217,7 +229,9 @@ void FreeReviewSystem(void)
 
 /* ── creation ── */
 
-GoalSubmission *CreateSubmission(const char *ai_label,
+GoalSubmission *CreateSubmission(const char *goal_id,
+                                 const char *owner_id,
+                                 const char *ai_label,
                                  const char *ai_description,
                                  const char *user_description)
 {
@@ -234,6 +248,8 @@ GoalSubmission *CreateSubmission(const char *ai_label,
     random_id(s->id, SUBMISSION_ID_SIZE - 1);
     s->id[SUBMISSION_ID_SIZE - 1] = '\0';
 
+    snprintf(s->goal_id,  sizeof(s->goal_id),  "%s", goal_id  ? goal_id  : "");
+    snprintf(s->owner_id, sizeof(s->owner_id), "%s", owner_id ? owner_id : "");
     snprintf(s->ai_label, sizeof(s->ai_label), "%s", ai_label ? ai_label : "");
 
     size_t ai_len   = ai_description   ? strlen(ai_description)   : 0;
@@ -313,6 +329,18 @@ GoalSubmission *FindSubmission(const char *sub_id)
         if (strcmp(SubmissionTable[i].id, sub_id) == 0)
             return &SubmissionTable[i];
     return NULL;
+}
+
+size_t ListAuthenticGoalIds(const char *owner_id, const char **out_ids, size_t max)
+{
+    if (!owner_id || !owner_id[0] || !out_ids || max == 0) return 0;
+    size_t count = 0;
+    for (size_t i = 0; i < SubmissionCount && count < max; i++) {
+        GoalSubmission *s = &SubmissionTable[i];
+        if (s->authentic && s->goal_id[0] && strcmp(s->owner_id, owner_id) == 0)
+            out_ids[count++] = s->goal_id;
+    }
+    return count;
 }
 
 /* ── review status checks ── */

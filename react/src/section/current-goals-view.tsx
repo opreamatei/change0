@@ -199,7 +199,7 @@ export default function CurrentGoalsView({
         <div className="min-w-0">
           <h1 className="text-2xl font-bold leading-tight tracking-tight text-white line-clamp-2 break-words">{activeJourney.root.title}</h1>
           <div className="mt-2 flex items-center gap-2.5">
-            <div className="h-[3px] w-36 overflow-hidden rounded-full" style={{ background: 'rgba(255,255,255,.15)' }}>
+            <div className="h-[3px] w-36 overflow-hidden rounded-full" style={{ background: 'rgba(255,255,255,0)' }}>
               <div
                 className="h-full rounded-full transition-all"
                 style={{ width: `${activeJourney.progressPct}%`, background: 'rgba(255,255,255,.55)' }}

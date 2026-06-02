@@ -55,6 +55,10 @@ void handle_post_schedule_refresh(int fd, User *user);
 void handle_post_goal_shared_action(int fd, const HttpRequest *req, User *user);
 void handle_post_goal_create_shared_root(int fd, const HttpRequest *req, User *user);
 
+/* Serializes a journey's goals as {"ok":true,"count":..,"goals":[...]} — the
+ * /goal/list payload. Exposed so the profile snapshot can embed it. Caller frees. */
+char *serialize_goals_container_json(const char *journey_id);
+
 /* ── middleware + research handlers (middleware-handlers.c) ── */
 void handle_post_research_start(int fd, const HttpRequest *req, User *user);
 void handle_get_research_events(int fd, const char *full_path);
@@ -70,6 +74,9 @@ void handle_get_profile(int fd, User *user);
 void handle_post_profile_update(int fd, const HttpRequest *req, User *user);
 void handle_post_profile_avatar(int fd, const HttpRequest *req, User *user);
 void handle_get_profile_avatar(int fd, const HttpRequest *req, User *user);
+/* Snapshot hook registered with SetProfileSnapshotHook; writes (or removes, when
+ * the user has opted out) data/users/<id>/profile.json from the live goal tree. */
+void WriteUserProfileSnapshot(User *user);
 
 /* ── dev/time handlers (dev-handlers.c) ── */
 void handle_get_dev_time(int fd);

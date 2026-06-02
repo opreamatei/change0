@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CENTRAL_ENDPOINTS, SERVER_ENDPOINTS } from '../config/server'
+import { openUserProfile } from '../profile-nav'
 import { PathCanvas } from '../components/path-canvas'
 import type { PathNodeData, NodeState } from '../components/path-canvas'
 import { SwipeDeck } from '../components/swipe-deck'
@@ -37,7 +38,8 @@ function ParticipantAvatar({
   const initial = (name || '?').slice(0, 1).toUpperCase()
   return (
     <div
-      className={`overflow-hidden flex items-center justify-center ${className ?? ''}`}
+      onClick={(e) => { e.stopPropagation(); openUserProfile({ id, display_name: name, color }) }}
+      className={`cursor-pointer overflow-hidden flex items-center justify-center ${className ?? ''}`}
       style={{ background: color, color: '#0a0a0a', ...style }}
     >
       {!failed ? (

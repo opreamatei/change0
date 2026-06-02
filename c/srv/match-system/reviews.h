@@ -16,6 +16,8 @@ typedef char submission_id_like[SUBMISSION_ID_SIZE];
 
 typedef struct {
     submission_id_like id;
+    char goal_id[33];      /* root goal this submission verifies (GOAL_ID_SIZE) */
+    char owner_id[64];     /* user who submitted it */
     char ai_label[SUBMISSION_LABEL_MAX];
     String ai_description;
     String user_description;
@@ -29,9 +31,15 @@ void InitReviewSystem(void);
 void FreeReviewSystem(void);
 
 /* Creates a submission directory + metadata.json. Returns new entry or NULL. */
-GoalSubmission *CreateSubmission(const char *ai_label,
+GoalSubmission *CreateSubmission(const char *goal_id,
+                                 const char *owner_id,
+                                 const char *ai_label,
                                  const char *ai_description,
                                  const char *user_description);
+
+/* Fills out_ids[] with the goal ids of a user's authentic (peer-verified)
+ * submissions. Pointers reference internal storage. Returns the count. */
+size_t ListAuthenticGoalIds(const char *owner_id, const char **out_ids, size_t max);
 
 /* Writes data into <sub_id>/attachments/<filename>. Returns 0 on success. */
 int AddSubmissionFile(const char *sub_id, const char *filename,

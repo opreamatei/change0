@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CENTRAL_ENDPOINTS, SERVER_ENDPOINTS } from '../config/server'
 import {
   findGoalByGlobalIndex,
+  goalsFromContainer,
   inferGoalState,
   isLeafGoal,
   loadGoalsFromServer,
   type Goal,
+  type GoalListResponse,
 } from '../goal'
 
 const RING_R = 80
@@ -35,9 +37,102 @@ interface ProfileResponse {
   user_id: string
   derived: string
   discoverable: boolean
+  share_profile: boolean
   description: string
   color?: string
   memories: MemoryItem[]
+}
+
+/* A person the user has interacted with — drawn from shared journeys (ongoing
+ * and finished) and from confirmed connections. */
+interface SharedPerson {
+  id: string
+  display_name: string
+  color?: string
+}
+
+interface SharedJourneyListResponse {
+  ok: boolean
+  journeys: { id: string; participants: SharedPerson[] }[]
+}
+
+interface ConnectionsListResponse {
+  ok: boolean
+  connections: { state: number; other_id: string; other_name: string }[]
+}
+
+/* Gather everyone the user shares a journey with (any state — ongoing or
+ * completed) plus everyone they have a confirmed connection with. Deduped by id,
+ * self excluded. Failures on either source are non-fatal. */
+async function loadSharedPeople(userId: string): Promise<SharedPerson[]> {
+  const people = new Map<string, SharedPerson>()
+
+  const [journeysResult, connectionsResult] = await Promise.allSettled([
+    fetch(CENTRAL_ENDPOINTS.journeyList(userId), { cache: 'no-store' }),
+    fetch(CENTRAL_ENDPOINTS.connections(userId), { cache: 'no-store' }),
+  ])
+
+  if (journeysResult.status === 'fulfilled' && journeysResult.value.ok) {
+    const data = (await journeysResult.value.json()) as SharedJourneyListResponse
+    if (data.ok) {
+      for (const journey of data.journeys ?? []) {
+        for (const participant of journey.participants ?? []) {
+          if (participant.id && participant.id !== userId) {
+            people.set(participant.id, participant)
+          }
+        }
+      }
+    }
+  }
+
+  if (connectionsResult.status === 'fulfilled' && connectionsResult.value.ok) {
+    const data = (await connectionsResult.value.json()) as ConnectionsListResponse
+    if (data.ok) {
+      for (const conn of data.connections ?? []) {
+        /* state 1 = confirmed */
+        if (conn.state === 1 && conn.other_id && !people.has(conn.other_id)) {
+          people.set(conn.other_id, {
+            id: conn.other_id,
+            display_name: conn.other_name || 'Connection',
+          })
+        }
+      }
+    }
+  }
+
+  return [...people.values()]
+}
+
+/* A connected person's public goal portfolio, served by the central server from
+ * the snapshot file their own client wrote. `goals` is the /goal/list container. */
+interface ProfileSnapshot {
+  ok: boolean
+  user_id: string
+  name: string
+  color?: string
+  share_profile: boolean
+  goals: GoalListResponse
+}
+
+/* Cache snapshots in localStorage so a profile opens instantly and remains
+ * viewable offline / when the owner's server is down. */
+const SNAPSHOT_CACHE_PREFIX = 'change.profileSnapshot.'
+
+function readSnapshotCache(userId: string): ProfileSnapshot | null {
+  try {
+    const raw = localStorage.getItem(SNAPSHOT_CACHE_PREFIX + userId)
+    return raw ? (JSON.parse(raw) as ProfileSnapshot) : null
+  } catch {
+    return null
+  }
+}
+
+function writeSnapshotCache(userId: string, snap: ProfileSnapshot) {
+  try {
+    localStorage.setItem(SNAPSHOT_CACHE_PREFIX + userId, JSON.stringify(snap))
+  } catch {
+    /* quota / serialization issues are non-fatal */
+  }
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -280,6 +375,37 @@ function DescriptionEditor({ initial, onSave }: { initial: string; onSave: (v: s
   )
 }
 
+/* Profile picture for a connected person. Served from the central server's
+ * shared avatar layout; falls back to the coloured initial on error. */
+function PersonAvatar({ person, onClick }: { person: SharedPerson; onClick?: (p: SharedPerson) => void }) {
+  const [failed, setFailed] = useState(false)
+  const initial = (person.display_name || '?').charAt(0).toUpperCase()
+  return (
+    <div
+      onClick={onClick ? () => onClick(person) : undefined}
+      className={`w-[54px] h-[54px] rounded-full flex-shrink-0 flex items-center justify-center overflow-hidden text-lg font-bold ${onClick ? 'cursor-pointer active:opacity-70' : ''}`}
+      style={{
+        background: person.color || 'var(--surface2)',
+        color: person.color ? '#0a0a0a' : 'var(--white-dim)',
+        border: '2px solid var(--border-light)',
+      }}
+      title={person.display_name}
+      aria-label={person.display_name}
+    >
+      {!failed ? (
+        <img
+          src={CENTRAL_ENDPOINTS.userAvatar(person.id)}
+          onError={() => setFailed(true)}
+          className="w-full h-full object-cover"
+          alt=""
+        />
+      ) : (
+        <span>{initial}</span>
+      )}
+    </div>
+  )
+}
+
 function RingCard({ name, prog }: { name: string; prog: { done: number; total: number; pct: number } }) {
   const offset = (RING_CIRC * (1 - prog.pct)).toFixed(2)
   const [shown, setShown] = useState(false)
@@ -310,6 +436,162 @@ function RingCard({ name, prog }: { name: string; prog: { done: number; total: n
       </div>
       <div className="text-[11px] mt-2 font-semibold" style={{ color: 'var(--white-dim)' }}>
         {prog.done}/{prog.total} goals
+      </div>
+    </div>
+  )
+}
+
+/* Read-only view of another person's goal portfolio. Renders from the cached
+ * snapshot first, then refreshes from the central server. Reuses RingCard and
+ * calcRootProgress, the same primitives the owner's own profile uses. */
+function ViewedProfilePanel({ person, onClose }: { person: SharedPerson; onClose: () => void }) {
+  const [goals, setGoals] = useState<Goal[]>([])
+  const [name, setName] = useState(person.display_name)
+  const [color, setColor] = useState<string | undefined>(person.color)
+  const [authenticIds, setAuthenticIds] = useState<Set<string>>(new Set())
+  const [status, setStatus] = useState<'loading' | 'ready' | 'not_shared' | 'error'>('loading')
+
+  useEffect(() => {
+    let cancelled = false
+
+    const applySnapshot = (snap: ProfileSnapshot) => {
+      setGoals(goalsFromContainer(snap.goals))
+      if (snap.name) setName(snap.name)
+      if (snap.color) setColor(snap.color)
+      setStatus('ready')
+    }
+
+    const cached = readSnapshotCache(person.id)
+    if (cached) applySnapshot(cached)
+
+    fetch(CENTRAL_ENDPOINTS.userProfile(person.id), { cache: 'no-store' })
+      .then(async (res) => {
+        if (cancelled) return
+        if (res.status === 404) { if (!cached) setStatus('not_shared'); return }
+        if (!res.ok) throw new Error(`profile fetch failed (${res.status})`)
+        const data = (await res.json()) as ProfileSnapshot
+        if (cancelled) return
+        writeSnapshotCache(person.id, data)
+        applySnapshot(data)
+      })
+      .catch(() => { if (!cancelled && !cached) setStatus('error') })
+
+    /* Which of their goals are peer-verified — fetched live so it reflects
+     * reviews that completed after their snapshot was last written. */
+    fetch(CENTRAL_ENDPOINTS.userAuthenticGoals(person.id), { cache: 'no-store' })
+      .then(async (res) => {
+        if (cancelled || !res.ok) return
+        const data = (await res.json()) as { ok: boolean; goal_ids?: string[] }
+        if (!cancelled && data.ok) setAuthenticIds(new Set(data.goal_ids ?? []))
+      })
+      .catch(() => { /* non-fatal: just no verified badges */ })
+
+    return () => { cancelled = true }
+  }, [person.id])
+
+  const rootGoals = goals.filter((g) => g.parent === null)
+  const activeRoots = rootGoals.filter((g) => calcRootProgress(g, goals).total > 0)
+  const achievements = rootGoals
+    .filter((g) => { const p = calcRootProgress(g, goals); return p.total > 0 && p.done === p.total })
+    .map((g) => ({ id: g.id, name: g.title, total: calcRootProgress(g, goals).total }))
+
+  return (
+    <div className="fixed inset-0 z-[205] flex flex-col anim-pg-in" style={{ background: 'var(--bg)' }}>
+      <div className="px-5 pt-12 pb-4 flex items-center gap-3.5 flex-shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,.07)' }}>
+        <button
+          type="button"
+          onClick={onClose}
+          className="w-[34px] h-[34px] rounded-[11px] flex items-center justify-center flex-shrink-0"
+          style={{ background: 'var(--surface2)', border: '1px solid var(--border)' }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+        </button>
+        <PersonAvatar person={{ id: person.id, display_name: name, color }} />
+        <div className="text-lg font-bold tracking-tight truncate">{name || 'Profile'}</div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto overflow-x-hidden pb-6 no-scrollbar">
+        {status === 'loading' && (
+          <div className="flex items-center justify-center py-20 text-sm text-white/40">Loading…</div>
+        )}
+        {status === 'not_shared' && (
+          <div className="px-6 py-20 text-center text-[13px]" style={{ color: 'var(--white-dim)' }}>
+            {name || 'This person'} hasn't shared their profile.
+          </div>
+        )}
+        {status === 'error' && (
+          <div className="px-6 py-20 text-center text-[13px]" style={{ color: 'var(--white-dim)' }}>
+            Couldn't load this profile right now.
+          </div>
+        )}
+
+        {status === 'ready' && (
+          <>
+            {activeRoots.length > 0 && (
+              <div className="mb-8 mt-2">
+                <div className="flex items-center gap-2 px-6 mb-4">
+                  <span className="text-[11px] font-bold tracking-[2px] uppercase" style={{ color: 'var(--white-dim)' }}>Personal</span>
+                </div>
+                <div className="flex gap-3.5 px-6 overflow-x-auto no-scrollbar snap-x-m">
+                  {activeRoots.map((g) => (
+                    <RingCard key={g.localIndex} name={g.title} prog={calcRootProgress(g, goals)} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mb-8">
+              <div className="flex items-center gap-2 px-6 mb-4">
+                <span className="text-[11px] font-bold tracking-[2px] uppercase" style={{ color: 'var(--white-dim)' }}>Achievements</span>
+              </div>
+              {achievements.length === 0 ? (
+                <div className="px-6 py-4 text-center text-[13px]" style={{ color: 'var(--white-dim)' }}>
+                  No completed journeys yet
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2.5 px-6">
+                  {achievements.map((a) => {
+                    const isAuthentic = authenticIds.has(a.id)
+                    return (
+                      <div
+                        key={a.id}
+                        className="flex items-center gap-4 p-3.5 rounded-2xl"
+                        style={{ background: 'var(--surface2)', border: `1px solid ${isAuthentic ? 'rgba(255,200,50,.35)' : 'rgba(255,255,255,.1)'}` }}
+                      >
+                        <div className="w-11 h-11 rounded-[13px] flex items-center justify-center flex-shrink-0"
+                          style={{ background: isAuthentic ? 'rgba(255,200,50,.15)' : '#fff' }}>
+                          {isAuthentic ? (
+                            <span className="text-[22px]">⭐</span>
+                          ) : (
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M6 9H4a2 2 0 0 1-2-2V5h4" /><path d="M18 9h2a2 2 0 0 0 2-2V5h-4" />
+                              <path d="M12 17v4" /><path d="M8 21h8" /><path d="M6 2h12v7a6 6 0 0 1-12 0V2z" />
+                            </svg>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[15px] font-bold truncate">{a.name}</div>
+                          <div className="text-xs mt-0.5 flex items-center gap-1.5" style={{ color: 'var(--white-dim)' }}>
+                            <span>100% · {a.total} goals completed</span>
+                            {isAuthentic && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(255,200,50,.15)', color: 'rgba(255,200,50,.9)' }}>Authentic</span>}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {activeRoots.length === 0 && achievements.length === 0 && (
+              <div className="px-6 py-20 text-center text-[13px]" style={{ color: 'var(--white-dim)' }}>
+                {name || 'This person'} has no goals to show yet.
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   )
@@ -604,7 +886,13 @@ async function dominantColorFromFile(file: File): Promise<string | null> {
   }
 }
 
-export default function SettingsView() {
+export default function SettingsView({
+  viewPerson = null,
+  onViewPersonConsumed,
+}: {
+  viewPerson?: SharedPerson | null
+  onViewPersonConsumed?: () => void
+} = {}) {
   const [fields, setFields] = useState<ProfileField[]>([])
   const [userName, setUserName] = useState('')
   const [userId, setUserId] = useState('')
@@ -617,6 +905,9 @@ export default function SettingsView() {
   const [loading, setLoading] = useState(true)
   const [goals, setGoals] = useState<Goal[]>([])
   const [memories, setMemories] = useState<MemoryItem[]>([])
+  const [sharedPeople, setSharedPeople] = useState<SharedPerson[]>([])
+  const [viewingPerson, setViewingPerson] = useState<SharedPerson | null>(null)
+  const [shareProfile, setShareProfile] = useState(true)
   const [showSettings, setShowSettings] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
   const [activeMemoryIdx, setActiveMemoryIdx] = useState(0)
@@ -637,16 +928,33 @@ export default function SettingsView() {
       setUserId(data.user_id ?? '')
       setUserColor(data.color ?? '')
       setDiscoverable(data.discoverable ?? false)
+      setShareProfile(data.share_profile ?? true)
       setDescription(data.description ?? '')
       setFields(parseDerived(data.derived ?? ''))
       setGoals(loadedGoals)
       setMemories(Array.isArray(data.memories) ? data.memories : [])
+      if (data.user_id) {
+        loadSharedPeople(data.user_id)
+          .then(setSharedPeople)
+          .catch(() => setSharedPeople([]))
+      } else {
+        setSharedPeople([])
+      }
     } finally {
       setLoading(false)
     }
   }, [])
 
   useEffect(() => { void refresh() }, [refresh])
+
+  /* Opening another person's profile from elsewhere in the app (App routes the
+   * tap here via the open-user-profile event). */
+  useEffect(() => {
+    if (viewPerson) {
+      setViewingPerson(viewPerson)
+      onViewPersonConsumed?.()
+    }
+  }, [viewPerson, onViewPersonConsumed])
 
   const avatarUrl = `${SERVER_ENDPOINTS.profileAvatar}?id=${encodeURIComponent(userId)}&v=${avatarVersion}`
 
@@ -694,6 +1002,9 @@ export default function SettingsView() {
     return () => { cancelled = true; clearInterval(id) }
   }, [submittedGoals])
 
+  /* A single privacy switch now drives both discoverability (matchmaking) and
+   * goal-profile sharing; treat the user as public if either is currently on. */
+  const isPublic = discoverable || shareProfile
   const fieldVal = (key: string) => fields.find((f) => f.key === key)?.value ?? ({ work_day_start: '09:00', daily_work_hours: '8' }[key] ?? '')
   const profileFields = fields.filter((f) => !DS_KEYS.has(f.key) && !SCHEDULE_KEYS.includes(f.key))
   const dsTask = fields.find((f) => f.key === 'last_ds_task')
@@ -776,6 +1087,19 @@ export default function SettingsView() {
             <div className="flex gap-3.5 px-6 overflow-x-auto no-scrollbar snap-x-m">
               {activeRoots.map((g) => (
                 <RingCard key={g.localIndex} name={g.title} prog={calcRootProgress(g, goals)} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {sharedPeople.length > 0 && (
+          <div className="mb-8">
+            <div className="flex items-center gap-2 px-6 mb-4">
+              <span className="text-[11px] font-bold tracking-[2px] uppercase" style={{ color: 'var(--white-dim)' }}>People</span>
+            </div>
+            <div className="flex gap-3 px-6 overflow-x-auto no-scrollbar">
+              {sharedPeople.map((person) => (
+                <PersonAvatar key={person.id} person={person} onClick={setViewingPerson} />
               ))}
             </div>
           </div>
@@ -920,6 +1244,10 @@ export default function SettingsView() {
         onSelect={setActiveMemoryIdx}
       />
 
+      {viewingPerson && (
+        <ViewedProfilePanel person={viewingPerson} onClose={() => setViewingPerson(null)} />
+      )}
+
       <div
         className="fixed inset-0 z-[200] flex flex-col"
         style={{
@@ -954,29 +1282,33 @@ export default function SettingsView() {
               <EditRow label="Daily hours" value={fieldVal('daily_work_hours')} inputType="number" placeholder="e.g. 8" onSave={(v) => postUpdate('daily_work_hours', v)} />
             </Group>
 
-            <Group label="Connections">
+            <Group label="Privacy">
               <div className="px-4 py-3.5 border-b border-white/[0.06]">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-white">Open to meeting people</p>
+                    <p className="text-sm font-medium text-white">Open to others</p>
                     <p className="text-[11px] mt-0.5 leading-snug" style={{ color: 'rgba(255,255,255,.35)' }}>
-                      The server finds compatible people. Your private description stays server-side.
+                      The server matches you with compatible people, and those you connect with can open your profile to see your goals and achievements. Off keeps everything private.
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={async () => {
-                      const next = !discoverable
-                      await postUpdate('discoverable', next ? 'true' : 'false')
+                      const next = !isPublic
+                      await Promise.all([
+                        postUpdate('discoverable', next ? 'true' : 'false'),
+                        postUpdate('share_profile', next ? 'true' : 'false'),
+                      ])
                       setDiscoverable(next)
+                      setShareProfile(next)
                     }}
-                    className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors ${discoverable ? 'bg-[#34c759]' : 'bg-[#333]'}`}
+                    className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors ${isPublic ? 'bg-[#34c759]' : 'bg-[#333]'}`}
                   >
-                    <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition-transform ${discoverable ? 'translate-x-5' : 'translate-x-0'}`} />
+                    <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition-transform ${isPublic ? 'translate-x-5' : 'translate-x-0'}`} />
                   </button>
                 </div>
               </div>
-              {discoverable && (
+              {isPublic && (
                 <div className="px-4 py-3">
                   <DescriptionEditor initial={description} onSave={async (v) => { await postUpdate('description', v); setDescription(v) }} />
                 </div>

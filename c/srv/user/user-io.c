@@ -63,9 +63,10 @@ static void write_user_meta(const User *u)
 	InitString(&out, 512 + (u->description.p ? u->description.len : 0));
 	CatTemplateString(&out,
 		"{\"id\":\"%s\",\"name\":\"%s\",\"port\":%d,"
-		"\"discoverable\":%s,\"description\":\"%s\",\"color\":\"%s\",\"journeys\":[",
+		"\"discoverable\":%s,\"share_profile\":%s,\"description\":\"%s\",\"color\":\"%s\",\"journeys\":[",
 		u->id, esc_name, u->port,
-		u->discoverable ? "true" : "false", esc_desc,
+		u->discoverable ? "true" : "false",
+		u->share_profile ? "true" : "false", esc_desc,
 		u->color.p ? u->color.p : "");
 	for (size_t i = 0; i < u->journey_count; i++) {
 		if (i > 0) CatFixed(&out, ",");
@@ -136,6 +137,11 @@ static _Bool load_user_from_dir(const char *id_dirname)
 		if (v && v->type == json_boolean)
 			u->discoverable = v->u.boolean ? 1 : 0;
 
+		/* Missing flag = legacy account; default to sharing (same exposure as
+		 * avatars), so existing users are viewable without re-opting-in. */
+		v = json_object_get(doc, "share_profile");
+		u->share_profile = (v && v->type == json_boolean) ? (v->u.boolean ? 1 : 0) : 1;
+
 		v = json_object_get(doc, "description");
 		if (v && v->type == json_string)
 			CatString(&u->description, v->u.string.ptr, v->u.string.length);
@@ -205,6 +211,7 @@ User *NewUser(const String *name)
 
 	u->port = 9000 + (int)(USER_COUNT - 1);
 	u->journey_count = 0;
+	u->share_profile = 1;
 
 	String journey_title;
 	InitString(&journey_title, FSIZE(DEFAULT_JOURNEY_TITLE) + 2);
@@ -239,6 +246,13 @@ void FreeUserSystem(void)
 	USER_COUNT = 0;
 }
 
+static ProfileSnapshotHook profile_snapshot_hook = NULL;
+
+void SetProfileSnapshotHook(ProfileSnapshotHook hook)
+{
+	profile_snapshot_hook = hook;
+}
+
 void SaveUser(User *u)
 {
 	write_user_meta(u);
@@ -254,4 +268,7 @@ void SaveUser(User *u)
 		GetUserJourneyPath(u, j->id, jpath);
 		ExportJourneyTo(j, jpath);
 	}
+
+	/* Refresh the shareable goal snapshot (http-server layer registers this). */
+	if (profile_snapshot_hook) profile_snapshot_hook(u);
 }

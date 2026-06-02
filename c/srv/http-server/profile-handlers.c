@@ -47,9 +47,10 @@ void handle_get_profile(int fd, User *user)
 
 	CatTemplateString(&response,
 		"{\"ok\":true,\"name\":\"%s\",\"user_id\":\"%s\",\"derived\":\"%s\","
-		"\"discoverable\":%s,\"description\":\"%s\",\"color\":\"%s\",\"onboarded\":%s,\"memories\":%s}",
+		"\"discoverable\":%s,\"share_profile\":%s,\"description\":\"%s\",\"color\":\"%s\",\"onboarded\":%s,\"memories\":%s}",
 		esc_name, user->id, esc_derived,
 		user->discoverable ? "true" : "false",
+		user->share_profile ? "true" : "false",
 		esc_desc,
 		user->color.p ? user->color.p : "",
 		onboarded ? "true" : "false",
@@ -64,6 +65,37 @@ void handle_get_profile(int fd, User *user)
 
 	FreeString(&response);
 	FreeString(&derived);
+}
+
+/* Rebuild data/users/<id>/profile.json from the live goal tree so the central
+ * server can serve this user's portfolio to others. Registered as the SaveUser
+ * snapshot hook, so it runs after every persist. Opt-out removes the file. */
+void WriteUserProfileSnapshot(User *user)
+{
+	if (!user) return;
+	if (!user->share_profile) {
+		RemoveUserProfileSnapshot(user->id);
+		return;
+	}
+
+	char *goals = serialize_goals_container_json(user->journeys[0]);
+	if (!goals) return;
+
+	char *esc_name = json_escape_dup(user->name.p ? user->name.p : "");
+
+	String out;
+	InitString(&out, strlen(goals) + 256);
+	CatTemplateString(&out,
+		"{\"ok\":true,\"user_id\":\"%s\",\"name\":\"%s\",\"color\":\"%s\","
+		"\"share_profile\":true,\"goals\":%s}",
+		user->id, esc_name ? esc_name : "",
+		user->color.p ? user->color.p : "", goals);
+
+	SaveUserProfileSnapshot(user->id, out.p, out.len);
+
+	FreeString(&out);
+	free(esc_name);
+	free(goals);
 }
 
 void handle_post_profile_update(int fd, const HttpRequest *req, User *user)
@@ -107,6 +139,16 @@ void handle_post_profile_update(int fd, const HttpRequest *req, User *user)
 		} else {
 			SetUserPrivate(user);
 		}
+		http_send_json(fd, 200, "OK", "{\"ok\":true}");
+		return;
+	}
+
+	if (strcmp(key, "share_profile") == 0) {
+		json_get_string_field(req->body, "value", value, sizeof(value));
+		user->share_profile = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0);
+		/* SaveUser runs the snapshot hook, which writes or removes the file to
+		 * match the new flag. */
+		SaveUser(user);
 		http_send_json(fd, 200, "OK", "{\"ok\":true}");
 		return;
 	}
