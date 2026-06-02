@@ -47,7 +47,6 @@ function parseProposal(text: string): ProposalMessage | null {
 }
 
 const STATE_PROPOSED  = 0
-const STATE_CONFIRMED = 1
 const STATE_DECLINED  = 2
 
 function formatTime(ts: number): string {
@@ -411,57 +410,6 @@ function SearchingState({ onCancel }: { onCancel: () => void }) {
   )
 }
 
-/* ─── Collab card (confirmed) ──────────────────────────────────── */
-
-function CollabCard({ conn, userId, onOpen }: { conn: Connection; userId: string; onOpen: () => void }) {
-  const myColor = colorFromString(userId)
-  const theirColor = colorFromString(conn.other_id || conn.other_name)
-
-  return (
-    <button onClick={onOpen} className="w-full text-left rounded-3xl overflow-hidden transition-transform active:scale-[.98]"
-      style={{ border: '1px solid rgba(255,255,255,.1)', background: '#111' }}>
-      {/* gradient banner */}
-      <div className="relative h-14 overflow-hidden">
-        <div className="absolute inset-0"
-          style={{ background: `linear-gradient(135deg, ${hexOrHslToRgba(myColor, 0.35)} 0%, transparent 45%, ${hexOrHslToRgba(theirColor, 0.35)} 100%)` }} />
-        {/* shine line */}
-        <div className="absolute inset-x-0 top-0 h-px"
-          style={{ background: `linear-gradient(90deg, transparent, ${hexOrHslToRgba(myColor, 0.6)}, ${hexOrHslToRgba(theirColor, 0.6)}, transparent)` }} />
-      </div>
-
-      {/* overlapping avatars */}
-      <div className="px-5 -mt-5 flex items-end gap-3">
-        <div className="relative flex shrink-0">
-          <div
-            onClick={(e) => { e.stopPropagation(); openUserProfile({ id: userId, display_name: '' }) }}
-            className="w-10 h-10 cursor-pointer rounded-full flex items-center justify-center text-sm font-bold text-white z-10"
-            style={{ background: myColor, border: '2.5px solid #111', boxShadow: `0 0 12px ${hexOrHslToRgba(myColor, 0.4)}` }}>
-            {userId.charAt(0).toUpperCase()}
-          </div>
-          <div
-            onClick={(e) => { e.stopPropagation(); openUserProfile({ id: conn.other_id, display_name: conn.other_name, color: theirColor }) }}
-            className="w-10 h-10 cursor-pointer rounded-full flex items-center justify-center text-sm font-bold text-white -ml-2"
-            style={{ background: theirColor, border: '2.5px solid #111', boxShadow: `0 0 12px ${hexOrHslToRgba(theirColor, 0.4)}` }}>
-            {conn.other_name.charAt(0).toUpperCase()}
-          </div>
-        </div>
-        <div className="pb-1 min-w-0">
-          <p className="font-semibold text-sm text-white leading-tight truncate">{conn.other_name}</p>
-        </div>
-        <div className="ml-auto pb-1 shrink-0">
-          <span className="text-white/30">›</span>
-        </div>
-      </div>
-
-      {/* reason */}
-      <div className="px-5 pt-2.5 pb-5">
-        <p className="text-[11px] text-white/45 leading-relaxed line-clamp-2">{conn.reason}</p>
-        <p className="text-[10px] text-white/25 mt-1.5">{formatTime(conn.proposed_at)}</p>
-      </div>
-    </button>
-  )
-}
-
 /* ─── Proposal card ─────────────────────────────────────────────── */
 
 function ProposalCard({ conn, userId, onApprove, onDecline }: {
@@ -630,14 +578,13 @@ export default function ConnectionsView({ userId }: { userId: string }) {
   }
 
   const proposals = connections.filter((c) => c.state === STATE_PROPOSED)
-  const confirmed = connections.filter((c) => c.state === STATE_CONFIRMED)
   const declined  = connections.filter((c) => c.state === STATE_DECLINED)
 
   if (loading) {
     return <div className="flex items-center justify-center h-full text-sm text-white/30">Loading…</div>
   }
 
-  const empty = proposals.length === 0 && confirmed.length === 0
+  const empty = proposals.length === 0 && declined.length === 0
 
   return (
     <>
@@ -750,35 +697,20 @@ export default function ConnectionsView({ userId }: { userId: string }) {
             )
           })()}
 
-          {/* ── Confirmed (collab cards) ── */}
-          {confirmed.length > 0 && (
+          {/* ── Past collaborators (declined / ended) ── */}
+          {declined.length > 0 && (
             <section className="space-y-3">
               <p className="text-[10px] font-semibold uppercase tracking-widest text-white/35 px-1">
-                Collaborators
+                Past collaborators
               </p>
-              {confirmed.map((c) => (
-                <CollabCard key={c.id} conn={c} userId={userId} onOpen={() => setThread(c)} />
+              {declined.map((c) => (
+                <div key={c.id} className="px-4 py-3 rounded-2xl"
+                  style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)' }}>
+                  <p className="text-sm font-semibold text-white/55">{c.other_name}</p>
+                  {c.reason && <p className="text-xs text-white/25 mt-0.5 line-clamp-2">{c.reason}</p>}
+                </div>
               ))}
             </section>
-          )}
-
-          {/* ── Declined (collapsed) ── */}
-          {declined.length > 0 && (
-            <details>
-              <summary className="text-[10px] text-white/25 cursor-pointer select-none list-none flex items-center gap-1.5 px-1">
-                <span className="text-white/20">▸</span>
-                {declined.length} passed
-              </summary>
-              <div className="mt-3 space-y-2">
-                {declined.map((c) => (
-                  <div key={c.id} className="px-4 py-3 rounded-2xl"
-                    style={{ background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.07)' }}>
-                    <p className="text-sm font-medium text-white/35">{c.other_name}</p>
-                    <p className="text-xs text-white/20 mt-0.5 line-clamp-1">{c.reason}</p>
-                  </div>
-                ))}
-              </div>
-            </details>
           )}
         </div>
       </div>

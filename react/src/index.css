@@ -87,6 +87,14 @@ body,
   to   { opacity: 1; transform: translateY(0) }
 }
 @keyframes pgIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes findRing {
+  0%, 100% { opacity: .22; transform: scale(1); }
+  50% { opacity: .6; transform: scale(1.07); }
+}
+.anim-find-1 { animation: findRing 2.2s ease-in-out infinite; }
+.anim-find-2 { animation: findRing 2.2s ease-in-out .38s infinite; }
+.anim-find-3 { animation: findRing 2.2s ease-in-out .76s infinite; }
+
 @keyframes pulse {
   0%, 100% { box-shadow: 0 0 0 5px rgba(255,255,255,.18), 0 0 0 10px rgba(255,255,255,.07); }
   50%      { box-shadow: 0 0 0 8px rgba(255,255,255,.22), 0 0 0 18px rgba(255,255,255,.04); }
