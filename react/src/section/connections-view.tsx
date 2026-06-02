@@ -626,7 +626,7 @@ export default function ConnectionsView({ userId }: { userId: string }) {
     return <div className="flex items-center justify-center h-full text-sm text-white/30">Loading…</div>
   }
 
-  const empty = proposals.length === 0 && confirmed.length === 0
+  const empty = proposals.length === 0 && declined.length === 0
 
   return (
     <>
@@ -739,35 +739,20 @@ export default function ConnectionsView({ userId }: { userId: string }) {
             )
           })()}
 
-          {/* ── Confirmed (collab cards) ── */}
-          {confirmed.length > 0 && (
+          {/* ── Past collaborators (declined / ended) ── */}
+          {declined.length > 0 && (
             <section className="space-y-3">
               <p className="text-[10px] font-semibold uppercase tracking-widest text-white/35 px-1">
-                Collaborators
+                Past collaborators
               </p>
-              {confirmed.map((c) => (
-                <CollabCard key={c.id} conn={c} userId={userId} onOpen={() => setThread(c)} />
+              {declined.map((c) => (
+                <div key={c.id} className="px-4 py-3 rounded-2xl"
+                  style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)' }}>
+                  <p className="text-sm font-semibold text-white/55">{c.other_name}</p>
+                  {c.reason && <p className="text-xs text-white/25 mt-0.5 line-clamp-2">{c.reason}</p>}
+                </div>
               ))}
             </section>
-          )}
-
-          {/* ── Declined (collapsed) ── */}
-          {declined.length > 0 && (
-            <details>
-              <summary className="text-[10px] text-white/25 cursor-pointer select-none list-none flex items-center gap-1.5 px-1">
-                <span className="text-white/20">▸</span>
-                {declined.length} passed
-              </summary>
-              <div className="mt-3 space-y-2">
-                {declined.map((c) => (
-                  <div key={c.id} className="px-4 py-3 rounded-2xl"
-                    style={{ background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.07)' }}>
-                    <p className="text-sm font-medium text-white/35">{c.other_name}</p>
-                    <p className="text-xs text-white/20 mt-0.5 line-clamp-1">{c.reason}</p>
-                  </div>
-                ))}
-              </div>
-            </details>
           )}
         </div>
       </div>

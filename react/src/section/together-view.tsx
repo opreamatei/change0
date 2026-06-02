@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { CENTRAL_ENDPOINTS, SERVER_ENDPOINTS } from '../config/server'
 import { PathCanvas } from '../components/path-canvas'
 import type { PathNodeData, NodeState } from '../components/path-canvas'
@@ -7,6 +8,588 @@ import ConnectionsView from './connections-view'
 import ReviewsPanel from './reviews-panel'
 import type { FocusTarget } from './focus-session'
 import type { JournalFocusActions } from './journal-focus-session'
+
+/* ─── Onboarding ─────────────────────────────────────────────────────────── */
+
+const OB_KEY = 'collab_ob_v1'
+type OBPhase = 'question' | 'declined' | 'finding' | 'active'
+
+// Minimal connection shape needed for the match card
+interface OBConnection {
+  id: string
+  state: number
+  other_id: string
+  other_name: string
+  reason: string
+  proposed_at: number
+  my_approved: boolean
+}
+
+const PALETTE_HUES_OB = [252, 338, 198, 152, 28, 286, 175, 55]
+function colorFromStringOB(s: string): string {
+  let h = 5381
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i)
+  const hue = PALETTE_HUES_OB[Math.abs(h) % PALETTE_HUES_OB.length]
+  return `hsl(${hue}, 72%, 58%)`
+}
+function hslToRgba(color: string, alpha: number): string {
+  if (color.startsWith('hsl(')) return color.replace('hsl(', 'hsla(').replace(')', `, ${alpha})`)
+  return color
+}
+
+/* ─── Screen: Întrebare ──────────────────────────────────────────────────── */
+
+function CollabReadyScreen({ onReady }: { onReady: () => void }) {
+  const [phase, setPhase] = useState<'question' | 'push' | 'bye'>('question')
+  const [countdown, setCountdown] = useState(6)
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    const t = setTimeout(() => setVisible(true), 40)
+    return () => clearTimeout(t)
+  }, [])
+
+  // (push phase kept for extensibility but no longer used in the flow)
+
+  // Countdown in bye → back to question
+  useEffect(() => {
+    if (phase !== 'bye') return
+    if (countdown <= 0) { setPhase('question'); setCountdown(6); return }
+    const t = setTimeout(() => setCountdown((c) => c - 1), 1000)
+    return () => clearTimeout(t)
+  }, [phase, countdown])
+
+  if (phase === 'push') {
+    return (
+      <div className="h-full flex flex-col items-center justify-center px-8 text-center relative overflow-hidden" style={{ background: '#0a0a0a' }}>
+        <div className="absolute inset-0 pointer-events-none" style={{
+          background: 'radial-gradient(ellipse 60% 40% at 50% 50%, rgba(239,68,68,.06) 0%, transparent 70%)',
+        }} />
+        <div className="relative z-10 flex flex-col items-center max-w-xs">
+          <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-6"
+            style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)' }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.55)" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            </svg>
+          </div>
+          <h2 className="text-[26px] font-bold tracking-tight mb-4">Further together</h2>
+          <p className="text-[14px] leading-[1.7]" style={{ color: 'rgba(255,255,255,.38)' }}>
+            People who collaborate go twice as far. You're closer to this decision than you think.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  if (phase === 'bye') {
+    const DURATION = 6
+    const pct = (DURATION - countdown) / DURATION
+    const r = 26
+    const circ = 2 * Math.PI * r
+    return (
+      <div className="h-full flex flex-col items-center justify-center px-8 text-center" style={{ background: '#0a0a0a' }}>
+        <div className="relative mb-8">
+          <svg width="64" height="64" style={{ transform: 'rotate(-90deg)' }}>
+            <circle cx="32" cy="32" r={r} fill="none" stroke="rgba(255,255,255,.08)" strokeWidth="3" />
+            <circle cx="32" cy="32" r={r} fill="none" stroke="rgba(255,255,255,.45)" strokeWidth="3"
+              strokeDasharray={circ}
+              strokeDashoffset={circ * (1 - pct)}
+              strokeLinecap="round"
+              style={{ transition: 'stroke-dashoffset 1s linear' }}
+            />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center text-[15px] font-bold" style={{ color: 'rgba(255,255,255,.55)' }}>
+            {countdown}
+          </div>
+        </div>
+        <h2 className="text-[24px] font-bold tracking-tight mb-3">All good</h2>
+        <p className="text-[14px] leading-[1.65]" style={{ color: 'rgba(255,255,255,.38)' }}>
+          Come back when you feel ready.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="h-full flex flex-col items-center justify-center relative overflow-hidden" style={{ background: '#0a0a0a' }}>
+      <div className="absolute inset-0 pointer-events-none" style={{
+        background: 'radial-gradient(ellipse 72% 52% at 50% 30%, rgba(99,102,241,.11) 0%, rgba(99,102,241,.03) 55%, transparent 75%)',
+        opacity: visible ? 1 : 0, transition: 'opacity 1.1s ease',
+      }} />
+      <div className="relative z-10 flex flex-col items-center px-8 text-center w-full max-w-xs" style={{
+        opacity: visible ? 1 : 0,
+        transform: visible ? 'translateY(0)' : 'translateY(16px)',
+        transition: 'all .55s cubic-bezier(.32,1,.54,1)',
+      }}>
+        <div className="text-[10px] font-bold tracking-[0.24em] uppercase mb-9" style={{ color: 'rgba(255,255,255,.25)' }}>
+          Collaboration
+        </div>
+        <h1 className="text-[38px] font-extrabold tracking-tight leading-[1.07] mb-5">
+          Are you ready<br />for this?
+        </h1>
+        <p className="text-[14px] leading-[1.65] mb-11" style={{ color: 'rgba(255,255,255,.36)' }}>
+          The right person transforms your goal into a mission. Built on trust and mutual respect.
+        </p>
+        <div className="flex gap-3 w-full">
+          <button onClick={() => setPhase('bye')}
+            className="flex-1 py-[16px] rounded-[18px] text-[15px] font-semibold active:opacity-70 transition-opacity"
+            style={{ background: 'rgba(255,255,255,.06)', color: 'rgba(255,255,255,.5)', border: '1px solid rgba(255,255,255,.09)' }}>
+            Not yet
+          </button>
+          <button onClick={onReady}
+            className="flex-1 py-[16px] rounded-[18px] text-[16px] font-bold tracking-tight active:opacity-80 transition-opacity"
+            style={{ background: '#fff', color: '#000' }}>
+            I'm ready
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ─── Card: Partener găsit ───────────────────────────────────────────────── */
+
+function CollabMatchCard({
+  conn, userId, cardIn, busy,
+  onConfirm, onNotNow,
+}: {
+  conn: OBConnection; userId: string; cardIn: boolean; busy: boolean
+  onConfirm: () => void; onNotNow: () => void
+}) {
+  const [profileOpen, setProfileOpen] = useState(false)
+  const color = colorFromStringOB(conn.other_id || conn.other_name)
+
+  return (
+    <div className="h-full flex flex-col" style={{ background: '#0a0a0a' }}>
+      {/* Header */}
+      <div className="px-5 pt-[52px] pb-5 flex-shrink-0">
+        <div className="text-[10px] font-bold tracking-[0.24em] uppercase mb-1.5" style={{ color: 'rgba(255,255,255,.25)' }}>
+          Found!
+        </div>
+        <h2 className="text-[26px] font-extrabold tracking-tight">Your partner</h2>
+      </div>
+
+      {/* Card */}
+      <div className="flex-1 overflow-y-auto no-scrollbar px-5" style={{
+        opacity: cardIn ? 1 : 0,
+        transform: cardIn ? 'translateY(0)' : 'translateY(20px)',
+        transition: 'all .45s cubic-bezier(.32,1,.54,1)',
+      }}>
+        <div className="rounded-3xl overflow-hidden" style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.09)' }}>
+          {/* Gradient top */}
+          <div className="relative h-24 overflow-hidden">
+            <div className="absolute inset-0" style={{
+              background: `radial-gradient(ellipse at 30% 60%, ${hslToRgba(color, 0.4)} 0%, transparent 65%)`,
+            }} />
+            <div className="absolute inset-x-0 top-0 h-px" style={{
+              background: `linear-gradient(90deg, transparent, ${hslToRgba(color, 0.8)}, transparent)`,
+            }} />
+          </div>
+
+          {/* Content */}
+          <div className="px-5 pb-6">
+            {/* Avatar + name */}
+            <div className="flex items-end gap-3 -mt-8 mb-5">
+              <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-[#0a0a0a] text-[22px] font-bold flex-shrink-0 overflow-hidden"
+                style={{ background: color, boxShadow: '0 0 0 3px #0a0a0a' }}>
+                <img
+                  src={CENTRAL_ENDPOINTS.userAvatar(conn.other_id)}
+                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                  className="h-full w-full object-cover"
+                  alt=""
+                />
+                <span className="-mt-full">{conn.other_name.charAt(0).toUpperCase()}</span>
+              </div>
+              <button
+                onClick={() => setProfileOpen(true)}
+                className="mb-1 flex items-center gap-1.5 active:opacity-60 transition-opacity">
+                <span className="text-[18px] font-bold">{conn.other_name}</span>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ marginTop: 1, opacity: 0.35 }}>
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                  <polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Description */}
+            <div className="text-[10px] font-bold tracking-[0.2em] uppercase mb-2" style={{ color: 'rgba(255,255,255,.28)' }}>
+              Why we matched you
+            </div>
+            <div className="text-[14px] leading-[1.65]" style={{ color: 'rgba(255,255,255,.5)' }}>
+              {conn.reason}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex-shrink-0 px-5 pb-10 pt-4 flex flex-col gap-3"
+        style={{ borderTop: '1px solid rgba(255,255,255,.06)' }}>
+        <button onClick={onConfirm} disabled={busy}
+          className="w-full py-[18px] rounded-[18px] text-[16px] font-bold tracking-tight active:opacity-80 transition-opacity disabled:opacity-50"
+          style={{ background: '#fff', color: '#000' }}>
+          Confirm
+        </button>
+        <button onClick={onNotNow} disabled={busy}
+          className="w-full py-[15px] rounded-[18px] text-[15px] font-semibold active:opacity-70 transition-opacity disabled:opacity-50"
+          style={{ background: 'rgba(255,255,255,.06)', color: 'rgba(255,255,255,.5)', border: '1px solid rgba(255,255,255,.09)' }}>
+          Not now
+        </button>
+      </div>
+
+      {/* Mini-profile sheet */}
+      {profileOpen && (
+        <div className="fixed inset-0 z-[300] flex flex-col anim-pg-in" style={{ background: '#0a0a0a' }}>
+          <div className="px-5 pt-[52px] pb-4 flex items-center gap-3 flex-shrink-0"
+            style={{ borderBottom: '1px solid rgba(255,255,255,.07)' }}>
+            <button onClick={() => setProfileOpen(false)}
+              className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 active:opacity-70"
+              style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.1)' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </button>
+            <div className="text-[17px] font-bold tracking-tight">{conn.other_name}</div>
+          </div>
+          <div className="flex-1 overflow-y-auto no-scrollbar px-5 py-6">
+            <div className="flex items-center gap-4 mb-8">
+              <div className="w-20 h-20 rounded-2xl flex items-center justify-center text-[#0a0a0a] text-[28px] font-bold flex-shrink-0 overflow-hidden"
+                style={{ background: color }}>
+                <img src={CENTRAL_ENDPOINTS.userAvatar(conn.other_id)}
+                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                  className="h-full w-full object-cover" alt="" />
+                <span>{conn.other_name.charAt(0).toUpperCase()}</span>
+              </div>
+              <div>
+                <div className="text-[22px] font-extrabold tracking-tight">{conn.other_name}</div>
+                <div className="text-[12px] mt-1" style={{ color: 'rgba(255,255,255,.35)' }}>Potential partner</div>
+              </div>
+            </div>
+            <div className="text-[10px] font-bold tracking-[0.2em] uppercase mb-2" style={{ color: 'rgba(255,255,255,.28)' }}>
+              Why we matched you
+            </div>
+            <div className="text-[15px] leading-[1.7]" style={{ color: 'rgba(255,255,255,.65)' }}>
+              {conn.reason}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ─── Screen: Căutare ────────────────────────────────────────────────────── */
+
+function CollabFindingScreen({
+  userId, onConfirm, onNotNow, onBack,
+}: {
+  userId: string
+  onConfirm: () => void
+  onNotNow: () => void
+  onBack: () => void
+}) {
+  const [started, setStarted] = useState(false)
+  const [phase, setPhase] = useState<'searching' | 'found' | 'notfound'>('searching')
+  const [foundConn, setFoundConn] = useState<OBConnection | null>(null)
+  const [cardIn, setCardIn] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (!started) return
+    let cancelled = false
+    async function search() {
+      try {
+        await fetch(CENTRAL_ENDPOINTS.connectionsDiscoverable, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: userId, discoverable: true }),
+        })
+      } catch { /* best-effort */ }
+
+      await new Promise((r) => setTimeout(r, 3500))
+      if (cancelled) return
+
+      try {
+        const r = await fetch(CENTRAL_ENDPOINTS.connections(userId), { cache: 'no-store' })
+        if (r.ok) {
+          const data = (await r.json()) as { ok: boolean; connections: OBConnection[] }
+          if (data.ok && data.connections) {
+            const proposals = data.connections.filter((c) => c.state === 0)
+            if (proposals.length > 0 && !cancelled) {
+              setFoundConn(proposals[0])
+              setPhase('found')
+              setTimeout(() => setCardIn(true), 80)
+              return
+            }
+          }
+        }
+      } catch { /* ignore */ }
+
+      if (!cancelled) setPhase('notfound')
+    }
+    void search()
+    return () => { cancelled = true }
+  }, [started, userId])
+
+  async function handleConfirm() {
+    if (!foundConn || busy) return
+    setBusy(true)
+    try {
+      await fetch(CENTRAL_ENDPOINTS.connectionsApprove, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection_id: foundConn.id, user_id: userId }),
+      })
+    } catch { /* advance anyway */ }
+    onConfirm()
+  }
+
+  async function handleNotNow() {
+    if (!foundConn || busy) return
+    setBusy(true)
+    try {
+      await fetch(CENTRAL_ENDPOINTS.connectionsDecline, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection_id: foundConn.id, user_id: userId }),
+      })
+    } catch { /* ignore */ }
+    onNotNow()
+  }
+
+  if (phase === 'found' && foundConn) {
+    return (
+      <CollabMatchCard
+        conn={foundConn} userId={userId} cardIn={cardIn} busy={busy}
+        onConfirm={() => void handleConfirm()}
+        onNotNow={() => void handleNotNow()}
+      />
+    )
+  }
+
+  if (phase === 'notfound') {
+    return (
+      <div className="h-full flex flex-col items-center justify-center relative px-8 text-center" style={{ background: '#0a0a0a' }}>
+        <div className="absolute inset-0 pointer-events-none" style={{
+          background: 'radial-gradient(ellipse 60% 40% at 50% 50%, rgba(99,102,241,.07) 0%, transparent 70%)',
+        }} />
+        <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-6 relative z-10"
+          style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)' }}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.5)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+        </div>
+        <h2 className="text-[22px] font-bold mb-3 relative z-10">Still searching</h2>
+        <p className="text-[14px] leading-[1.65] mb-10 relative z-10" style={{ color: 'rgba(255,255,255,.35)' }}>
+          No match found yet. We'll notify you as soon as someone comes up.
+        </p>
+        <button onClick={onConfirm}
+          className="w-full py-[18px] rounded-[18px] text-[16px] font-bold mb-3 active:opacity-80 transition-opacity relative z-10"
+          style={{ background: '#fff', color: '#000' }}>
+          Enter anyway
+        </button>
+        <button onClick={onBack}
+          className="text-[13px] active:opacity-40 transition-opacity relative z-10"
+          style={{ color: 'rgba(255,255,255,.25)' }}>
+          ← Back
+        </button>
+      </div>
+    )
+  }
+
+  if (!started) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center relative overflow-hidden" style={{ background: '#0a0a0a' }}>
+        <div className="absolute inset-0 pointer-events-none" style={{
+          background: 'radial-gradient(ellipse 60% 44% at 50% 44%, rgba(99,102,241,.10) 0%, transparent 70%)',
+        }} />
+        <button onClick={onBack} className="absolute cursor-pointer active:opacity-70 transition-opacity flex items-center justify-center"
+          style={{ top: 52, left: 20, width: 36, height: 36, borderRadius: 12, background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.1)' }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+        </button>
+        <div className="relative z-10 flex flex-col items-center px-8 text-center max-w-xs">
+          <div className="relative flex items-center justify-center mb-9">
+            <div className="absolute rounded-full" style={{ width: 120, height: 120, border: '1px solid rgba(99,102,241,.2)' }} />
+            <div className="absolute rounded-full" style={{ width: 84, height: 84, border: '1.5px solid rgba(99,102,241,.32)' }} />
+            <div className="w-[52px] h-[52px] rounded-full flex items-center justify-center"
+              style={{ background: 'rgba(99,102,241,.12)', border: '2px solid rgba(99,102,241,.55)' }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(165,149,255,.85)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+            </div>
+          </div>
+          <h2 className="text-[26px] font-extrabold tracking-tight mb-3">Find a partner</h2>
+          <p className="text-[14px] leading-[1.65] mb-10" style={{ color: 'rgba(255,255,255,.36)' }}>
+            We match on drive, ambitions and passions — people you'll find yourself truly resonating with.
+          </p>
+          <button onClick={() => setStarted(true)}
+            className="w-full py-[18px] rounded-[18px] text-[16px] font-bold tracking-tight active:opacity-80 transition-opacity"
+            style={{ background: '#fff', color: '#000' }}>
+            Find partner
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Searching state
+  return (
+    <div className="h-full flex flex-col items-center justify-center relative" style={{ background: '#0a0a0a' }}>
+      <div className="absolute inset-0 pointer-events-none" style={{
+        background: 'radial-gradient(ellipse 60% 40% at 50% 50%, rgba(99,102,241,.09) 0%, transparent 70%)',
+      }} />
+      <button onClick={onBack} className="absolute cursor-pointer active:opacity-70 transition-opacity flex items-center justify-center"
+        style={{ top: 52, left: 20, width: 36, height: 36, borderRadius: 12, background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.1)' }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
+      </button>
+      <div className="relative flex items-center justify-center mb-10">
+        <div className="absolute rounded-full anim-find-3" style={{ width: 164, height: 164, border: '1px solid rgba(99,102,241,.28)' }} />
+        <div className="absolute rounded-full anim-find-2" style={{ width: 120, height: 120, border: '1.5px solid rgba(99,102,241,.45)' }} />
+        <div className="w-[76px] h-[76px] rounded-full flex items-center justify-center anim-find-1"
+          style={{ background: 'rgba(99,102,241,.12)', border: '2px solid rgba(99,102,241,.6)' }}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="rgba(165,149,255,.85)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+        </div>
+      </div>
+      <div className="text-[16px] font-semibold tracking-tight mb-2 text-center px-8 leading-[1.5]" style={{ color: 'rgba(255,255,255,.85)' }}>We're doing our best to find the perfect match for you</div>
+    </div>
+  )
+}
+
+/* ─── Overlay: Inactiv ───────────────────────────────────────────────────── */
+
+function CollabDeclinedOverlay({ onReactivate }: { onReactivate: () => void }) {
+  return (
+    <div className="absolute inset-0 z-[60] flex flex-col items-center justify-center"
+      style={{ background: 'rgba(10,10,10,.9)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)' }}>
+      <div className="w-12 h-12 rounded-2xl flex items-center justify-center mb-6"
+        style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.11)' }}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.55)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+        </svg>
+      </div>
+      <h2 className="text-[22px] font-bold mb-3 tracking-tight">Collab inactive</h2>
+      <p className="text-[14px] text-center leading-[1.65] mb-9 px-10" style={{ color: 'rgba(255,255,255,.35)' }}>
+        Activate collaboration when you're ready to be part of a team.
+      </p>
+      <button onClick={onReactivate}
+        className="px-8 py-[15px] rounded-[16px] text-[15px] font-bold active:opacity-80 transition-opacity"
+        style={{ background: '#fff', color: '#000' }}>
+        I'm ready now
+      </button>
+    </div>
+  )
+}
+
+/* ─── Chat sheet (direct message with collab partner) ────────────────────── */
+
+interface CollabMessage { sender: string; at: number; text: string }
+
+function CollabChatSheet({
+  conn, userId, onClose,
+}: {
+  conn: OBConnection
+  userId: string
+  onClose: () => void
+}) {
+  const [messages, setMessages] = useState<CollabMessage[]>([])
+  const [text, setText] = useState('')
+  const [sending, setSending] = useState(false)
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  const loadMessages = useCallback(async () => {
+    try {
+      const r = await fetch(CENTRAL_ENDPOINTS.messages(conn.id), { cache: 'no-store' })
+      if (r.ok) {
+        const data = (await r.json()) as { ok: boolean; messages: CollabMessage[] }
+        if (data.ok) setMessages(data.messages ?? [])
+      }
+    } catch { /* ignore */ }
+  }, [conn.id])
+
+  useEffect(() => {
+    void loadMessages()
+    const id = setInterval(loadMessages, 3000)
+    return () => clearInterval(id)
+  }, [loadMessages])
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+
+  async function send() {
+    const t = text.trim()
+    if (!t || sending) return
+    setSending(true)
+    setText('')
+    try {
+      await fetch(CENTRAL_ENDPOINTS.messagesSend, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection_id: conn.id, sender_id: userId, content: t }),
+      })
+      await loadMessages()
+    } catch { /* ignore */ }
+    finally { setSending(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[500] flex flex-col anim-pg-in" style={{ background: 'var(--bg)' }}>
+      <div className="px-5 pt-12 pb-4 flex items-center gap-3.5 flex-shrink-0"
+        style={{ borderBottom: '1px solid rgba(255,255,255,.07)' }}>
+        <button onClick={onClose}
+          className="w-[34px] h-[34px] rounded-[11px] flex items-center justify-center flex-shrink-0 active:opacity-70"
+          style={{ background: 'var(--surface2)', border: '1px solid var(--border)' }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+        </button>
+        <div className="text-base font-bold tracking-tight">{conn.other_name}</div>
+      </div>
+      <div className="flex-1 overflow-y-auto no-scrollbar px-4 py-4 flex flex-col gap-2">
+        {messages.length === 0 && (
+          <div className="flex items-center justify-center h-full text-sm" style={{ color: 'rgba(255,255,255,.3)' }}>No messages yet</div>
+        )}
+        {messages.map((msg, i) => {
+          const isMe = msg.sender === userId
+          return (
+            <div key={i} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+              <div className="max-w-[78%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed"
+                style={isMe
+                  ? { background: '#fff', color: '#000', borderBottomRightRadius: 6 }
+                  : { background: 'rgba(255,255,255,.09)', color: '#fff', borderBottomLeftRadius: 6 }}>
+                {msg.text}
+              </div>
+            </div>
+          )
+        })}
+        <div ref={bottomRef} />
+      </div>
+      <div className="flex-shrink-0 px-4 pb-10 pt-3 flex gap-2 items-end"
+        style={{ borderTop: '1px solid rgba(255,255,255,.07)' }}>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send() } }}
+          rows={1}
+          placeholder="Message…"
+          className="flex-1 resize-none rounded-2xl px-4 py-3 text-sm outline-none no-scrollbar"
+          style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.1)', color: '#fff', maxHeight: 100 }}
+        />
+        <button onClick={() => void send()} disabled={!text.trim() || sending}
+          className="w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center disabled:opacity-40 active:opacity-70 transition-opacity"
+          style={{ background: '#fff', color: '#000' }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  )
+}
 
 const UNASSIGNED = 255
 
@@ -303,6 +886,9 @@ function CollabJourneyView({
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
   const [leafBusy, setLeafBusy] = useState(false)
   const [proposalBusy, setProposalBusy] = useState(false)
+  const [chatConn, setChatConn] = useState<OBConnection | null>(null)
+  const [chatOpen, setChatOpen] = useState(false)
+  const [chatLoading, setChatLoading] = useState(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const [dim, setDim] = useState({ w: 0, h: 0 })
 
@@ -467,6 +1053,24 @@ function CollabJourneyView({
     } finally { setProposalBusy(false) }
   }
 
+  async function openChat() {
+    setChatOpen(true)
+    if (chatConn) return
+    setChatLoading(true)
+    try {
+      const r = await fetch(CENTRAL_ENDPOINTS.connections(userId), { cache: 'no-store' })
+      if (r.ok) {
+        const data = (await r.json()) as { ok: boolean; connections: OBConnection[] }
+        if (data.ok && data.connections) {
+          const partner = summary.participants.find((p) => p.id !== userId)
+          const conn = data.connections.find((c) => c.other_id === partner?.id)
+          if (conn) setChatConn(conn)
+        }
+      }
+    } catch { /* ignore */ }
+    finally { setChatLoading(false) }
+  }
+
   // Fire a shared-journey action and return the parsed JSON (no side effects);
   // used by the journal editor to start (get the draft attach_id) and end.
   async function sharedAction(goalId: string, action: 'start' | 'end'): Promise<{ ok?: boolean; attach_id?: string }> {
@@ -562,7 +1166,8 @@ function CollabJourneyView({
   const selectedLeaf = selectedIdx !== null ? orderedLeaves[selectedIdx] : null
 
   return (
-    <div className="flex flex-col h-full">
+    <>
+    <div className="flex flex-col h-full relative">
       {/* header */}
       <div
         className="px-5 pt-12 pb-4 flex items-center gap-3.5 flex-shrink-0"
@@ -579,7 +1184,6 @@ function CollabJourneyView({
           </svg>
         </button>
         <div className="flex-1 min-w-0">
-          <div className="text-base font-bold tracking-tight leading-tight line-clamp-2 break-words">{summary.title}</div>
           <div className="text-[11px] text-white/40">{doneCount}/{collabNodes.length} done</div>
         </div>
 
@@ -681,6 +1285,18 @@ function CollabJourneyView({
         )}
       </div>
 
+      {/* Chat FAB — bottom right, above nav */}
+      <button
+        type="button"
+        onClick={() => void openChat()}
+        className="absolute flex items-center justify-center active:scale-95 transition-transform"
+        style={{ bottom: 'calc(var(--nav-h) + 16px)', right: 20, width: 50, height: 50, borderRadius: '50%', background: '#fff', color: '#000', boxShadow: '0 4px 20px rgba(0,0,0,.6)', zIndex: 30 }}
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+      </button>
+
       {selectedLeaf && detail && selectedIdx !== null && (
         <CollabNodeDetail
           leaf={selectedLeaf}
@@ -693,7 +1309,35 @@ function CollabJourneyView({
           onClose={() => setSelectedIdx(null)}
         />
       )}
+
     </div>
+    {chatOpen && createPortal(
+      chatConn
+        ? <CollabChatSheet conn={chatConn} userId={userId} onClose={() => setChatOpen(false)} />
+        : (
+          <div className="fixed z-[500] flex flex-col items-center justify-center gap-3"
+            style={{
+              bottom: 100, right: 16,
+              width: 'min(360px, calc(100vw - 32px))',
+              height: 120,
+              background: '#111',
+              border: '1px solid rgba(255,255,255,.12)',
+              borderRadius: 24,
+              boxShadow: '0 8px 40px rgba(0,0,0,.7)',
+            }}>
+            <div className="text-sm" style={{ color: 'rgba(255,255,255,.35)' }}>
+              {chatLoading ? 'Connecting…' : 'Chat unavailable'}
+            </div>
+            <button onClick={() => setChatOpen(false)}
+              className="text-xs active:opacity-70"
+              style={{ color: 'rgba(255,255,255,.25)' }}>
+              Close
+            </button>
+          </div>
+        ),
+      document.body
+    )}
+    </>
   )
 }
 
@@ -720,6 +1364,153 @@ function journeyGradient(id: string): string {
   return JOURNEY_GRADIENTS[hashString(id) % JOURNEY_GRADIENTS.length]
 }
 
+interface PortalNode {
+  title: string; state: 'done' | 'active' | 'idle'; isCurrent: boolean
+  absIdx: number; tintColor?: string
+}
+
+/* Mini canvas that mirrors the exact PathCanvas visual — dashed bezier edges,
+ * filled/outlined/pulsing circles, star glyphs for done nodes, labels below. */
+function MiniPathPreview({ nodes, cardW }: { nodes: PortalNode[]; cardW: number }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const rafRef    = useRef<number | null>(null)
+  const H = 168
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas || !cardW || nodes.length === 0) return
+    const dpr = window.devicePixelRatio || 1
+    canvas.width  = Math.round(cardW * dpr)
+    canvas.height = Math.round(H * dpr)
+
+    const n = nodes.length
+    // Match PathCanvas proportions exactly: PATH_NR=32, PATH_SY=150
+    // Scale so node + spacing ratio is identical to the full view.
+    const R      = 17
+    const SY     = R * (150 / 32)   // ≈ 80 — same R:step ratio as PathCanvas
+    const spread = Math.min(cardW * 0.27, 96)   // exact PathCanvas formula
+    // Anchor the focus node at vertical center; neighbours fall above/below,
+    // naturally clipped by the card's overflow-hidden — same as scrolling the
+    // full path to focus position.
+    const anchor = nodes.findIndex((nd) => nd.isCurrent)
+    const fIdx   = anchor >= 0 ? anchor : Math.floor(n / 2)
+
+    // Mirrored vertically: earlier nodes sit at the bottom, later at the top —
+    // identical to PathCanvas where you scroll upward as you progress.
+    const posOf = (i: number) => ({
+      x: cardW / 2 + spread * Math.sin(nodes[i].absIdx * Math.PI / 2),
+      y: H / 2 - (i - fIdx) * SY,
+    })
+
+    function starPath(ctx: CanvasRenderingContext2D, cx: number, cy: number, or_: number) {
+      const ir = or_ * 0.42
+      ctx.beginPath()
+      for (let k = 0; k < 10; k++) {
+        const a = k * Math.PI / 5 - Math.PI / 2
+        ctx.lineTo(cx + Math.cos(a) * (k % 2 === 0 ? or_ : ir), cy + Math.sin(a) * (k % 2 === 0 ? or_ : ir))
+      }
+      ctx.closePath()
+    }
+
+    function ha(hex: string, a: number): string {
+      const v = Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16).padStart(2, '0')
+      return /^#[0-9a-fA-F]{6}$/.test(hex) ? hex + v : hex
+    }
+
+    function draw() {
+      const ctx = canvas!.getContext('2d')
+      if (!ctx) return
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.clearRect(0, 0, cardW, H)
+      const now = performance.now()
+
+      /* ── edges ── */
+      ctx.lineCap = 'round'
+      const gs = R / 32
+      ctx.setLineDash([6 * gs, 9 * gs])
+      for (let i = 0; i < n - 1; i++) {
+        const a = posOf(i), b = posOf(i + 1)
+        const dy = b.y - a.y
+        const bright = nodes[i].state === 'done' && (nodes[i + 1].state === 'done' || nodes[i + 1].state === 'active')
+        const tA = nodes[i].tintColor, tB = nodes[i + 1].tintColor
+        ctx.lineWidth = 4 * gs
+        if (tA || tB) {
+          const ca = tA ?? tB ?? '#fff', cb = tB ?? tA ?? '#fff'
+          const al = bright ? 0.80 : 0.28
+          const g = ctx.createLinearGradient(a.x, a.y, b.x, b.y)
+          g.addColorStop(0, ha(ca, al)); g.addColorStop(1, ha(cb, al))
+          ctx.strokeStyle = g
+        } else {
+          ctx.strokeStyle = bright ? 'rgba(255,255,255,0.78)' : 'rgba(255,255,255,0.13)'
+        }
+        // a is below b (earlier node at bottom) — mirror of PathCanvas direction
+        ctx.beginPath()
+        ctx.moveTo(a.x, a.y - R)
+        ctx.bezierCurveTo(a.x, a.y + dy * 0.42, b.x, b.y - dy * 0.42, b.x, b.y + R)
+        ctx.stroke()
+      }
+      ctx.setLineDash([])
+
+      /* ── nodes ── */
+      for (let i = 0; i < n; i++) {
+        const nd = nodes[i]
+        const { x, y } = posOf(i)
+        const t = nd.tintColor
+
+        if (nd.state === 'active') {
+          const p = 0.5 + 0.5 * Math.sin(now / 700)
+          ctx.beginPath(); ctx.arc(x, y, R + 5 + p * 3, 0, Math.PI * 2)
+          ctx.strokeStyle = t ? ha(t, 0.18 + p * 0.14) : `rgba(255,255,255,${0.18 + p * 0.14})`
+          ctx.lineWidth = 2; ctx.stroke()
+          ctx.beginPath(); ctx.arc(x, y, R + 14 + p * 5, 0, Math.PI * 2)
+          ctx.strokeStyle = t ? ha(t, 0.07 + p * 0.05) : `rgba(255,255,255,${0.07 + p * 0.05})`
+          ctx.lineWidth = 1.5; ctx.stroke()
+        }
+
+        ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2)
+        if (nd.state === 'done') {
+          ctx.fillStyle = t ?? '#fff'; ctx.fill()
+          ctx.beginPath(); ctx.arc(x, y, R + 2.5, 0, Math.PI * 2)
+          ctx.strokeStyle = t ? ha(t, 0.20) : 'rgba(255,255,255,0.10)'
+          ctx.lineWidth = 2.5; ctx.stroke()
+        } else if (nd.state === 'active') {
+          ctx.fillStyle = t ?? '#fff'; ctx.fill()
+        } else {
+          ctx.fillStyle = '#1a1a1a'; ctx.fill()
+          ctx.strokeStyle = t ? ha(t, 0.40) : 'rgba(255,255,255,0.22)'
+          ctx.lineWidth = 2; ctx.stroke()
+        }
+
+        const gs = R / 32   // same gscale as PathCanvas
+        if (nd.state === 'done') {
+          const sc = t && t !== '#ffffff' ? '#fff' : '#000'
+          starPath(ctx, x, y, 12 * gs)
+          ctx.fillStyle = sc; ctx.fill()
+          ctx.lineJoin = 'round'; ctx.lineCap = 'round'
+          ctx.lineWidth = 3 * gs; ctx.strokeStyle = sc; ctx.stroke()
+          ctx.lineJoin = 'miter'; ctx.lineCap = 'butt'
+        } else {
+          ctx.font = `bold ${Math.round(22 * gs)}px ui-sans-serif,system-ui,-apple-system,sans-serif`
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+          ctx.fillStyle = nd.state === 'active'
+            ? (t && t !== '#ffffff' ? '#fff' : '#000')
+            : t ? ha(t, 0.73) : 'rgba(255,255,255,0.38)'
+          ctx.fillText(String(nd.absIdx + 1), x, y + 1)
+        }
+
+        // no labels in the mini preview — nodes only
+      }
+
+      if (nodes.some((nd) => nd.state === 'active')) rafRef.current = requestAnimationFrame(draw)
+    }
+
+    draw()
+    return () => { if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null } }
+  }, [nodes, cardW])
+
+  return <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }} />
+}
+
 function JourneyPortalCard({
   journey, index, onSelect,
 }: {
@@ -727,24 +1518,85 @@ function JourneyPortalCard({
   index: number
   onSelect: (idx: number) => void
 }) {
+  const cardRef = useRef<HTMLButtonElement>(null)
+  const [cardW, setCardW] = useState(0)
+  const [nodes, setNodes] = useState<PortalNode[]>([])
+  const [fetched, setFetched] = useState(false)
+
+  useEffect(() => {
+    const el = cardRef.current
+    if (!el) return
+    function measure() { if (el) setCardW(Math.floor(el.getBoundingClientRect().width)) }
+    measure()
+    const obs = new ResizeObserver(measure)
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      try {
+        const r = await fetch(CENTRAL_ENDPOINTS.journey(journey.id), { cache: 'no-store' })
+        if (!r.ok || cancelled) return
+        const data = (await r.json()) as JourneyDetail
+        const gm = new Map<number, JourneyGoal>(data.goals.map((g) => [g.localIndex, g]))
+        const leaves: JourneyGoal[] = []
+        for (const g of data.goals) {
+          if (g.parent !== 0) continue
+          leaves.push(...collectLeavesInOrder(g, gm))
+        }
+        if (cancelled || leaves.length === 0) return
+        let fi = leaves.findIndex((l) => l.start_date && !l.end_date)
+        if (fi < 0) { for (let i = leaves.length - 1; i >= 0; i--) { if (leaves[i].end_date) { fi = i; break } } }
+        if (fi < 0) fi = leaves.findIndex((l) => !l.start_date)
+        if (fi < 0) fi = 0
+        const start = Math.max(0, fi - 1)
+        const slice = leaves.slice(start, start + 3)
+        setNodes(slice.map((l, i) => ({
+          title: l.title,
+          state: (l.start_date && l.end_date ? 'done' : l.start_date ? 'active' : 'idle') as PortalNode['state'],
+          isCurrent: start + i === fi,
+          absIdx: start + i,
+          tintColor: l.assigned_to !== UNASSIGNED && l.assigned_to >= 0 && l.assigned_to < data.users.length
+            ? (data.users[l.assigned_to]?.color || PARTICIPANT_COLORS[l.assigned_to % PARTICIPANT_COLORS.length])
+            : undefined,
+        })))
+      } catch { /* ignore */ }
+      finally { if (!cancelled) setFetched(true) }
+    }
+    void load()
+    return () => { cancelled = true }
+  }, [journey.id])
+
   return (
     <button
+      ref={cardRef}
       type="button"
       onClick={() => onSelect(index)}
       className="anim-entry-in group relative w-full overflow-hidden rounded-[26px] border border-white/10 text-left active:scale-[0.985] transition-transform"
-      style={{ height: 168, animationDelay: `${index * 60}ms` }}
+      style={{ height: 168, animationDelay: `${index * 60}ms`, background: '#111' }}
     >
-      <div className="absolute inset-0" style={{ background: journeyGradient(journey.id) }} />
-      {/* soft glow blobs for depth */}
-      <div
-        className="absolute -top-12 -right-10 h-52 w-52 rounded-full opacity-70 blur-2xl"
-        style={{ background: PARTICIPANT_COLORS[index % PARTICIPANT_COLORS.length] }}
-      />
-      <div
-        className="absolute -bottom-16 -left-10 h-48 w-48 rounded-full opacity-45 blur-2xl"
-        style={{ background: PARTICIPANT_COLORS[(index + 1) % PARTICIPANT_COLORS.length] }}
-      />
-      <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(0,0,0,.78) 0%, rgba(0,0,0,.15) 55%, rgba(0,0,0,.05) 100%)' }} />
+      {/* live path preview */}
+      {fetched && nodes.length > 0 && cardW > 0
+        ? <>
+            <div className="absolute inset-0" style={{ background: journeyGradient(journey.id), opacity: 0.28 }} />
+            <MiniPathPreview nodes={nodes} cardW={cardW} />
+          </>
+        : !fetched
+          ? (
+            <div className="absolute inset-0 flex flex-col justify-center gap-2.5 px-5" style={{ paddingTop: 44, paddingBottom: 52 }}>
+              {[75, 55, 65].map((w, i) => (
+                <div key={i} className="h-[18px] rounded-full" style={{ width: `${w}%`, background: 'rgba(255,255,255,.06)' }} />
+              ))}
+            </div>
+          ) : (
+            <>
+              <div className="absolute inset-0" style={{ background: journeyGradient(journey.id) }} />
+              <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(0,0,0,.78) 0%, rgba(0,0,0,.15) 55%, transparent 100%)' }} />
+            </>
+          )
+      }
 
       {/* top: chevron affordance */}
       <div className="absolute top-4 right-5">
@@ -758,10 +1610,9 @@ function JourneyPortalCard({
         </span>
       </div>
 
-      {/* bottom: title + meta + avatars */}
+      {/* bottom: avatars + goal count */}
       <div className="absolute bottom-0 left-0 right-0 px-5 pb-4">
-        <div className="text-[22px] font-extrabold tracking-tight leading-[1.12] line-clamp-2">{journey.title}</div>
-        <div className="mt-2 flex items-center gap-3">
+        <div className="flex items-center gap-3">
           <div className="flex -space-x-2">
             {journey.participants.slice(0, 4).map((p, i) => (
               <ParticipantAvatar
@@ -843,9 +1694,6 @@ function JourneysContent({
       <header className="mb-6 flex items-start justify-between gap-3 px-1">
         <div>
           <h1 className="text-[28px] font-bold tracking-tight text-white">Collab</h1>
-          <p className="mt-1 text-sm" style={{ color: 'var(--white-dim)' }}>
-            {journeys.length} shared journey{journeys.length === 1 ? '' : 's'}
-          </p>
         </div>
         <div className="pt-1.5"><ReviewsButton onClick={onOpenReviews} /></div>
       </header>
@@ -862,6 +1710,7 @@ function JourneysContent({
 /* ─── main together view ─────────────────────────────────────────────────── */
 
 export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { userId: string; onOpenFocus: (target: FocusTarget) => void; onOpenJournal: (props: JournalFocusActions) => void }) {
+  const [ob, setOb] = useState<OBPhase | null>(null)
   const [peopleOpen, setPeopleOpen] = useState(false)
   const [reviewsOpen, setReviewsOpen] = useState(false)
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
@@ -899,8 +1748,30 @@ export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { u
 
   const journeyOpen = selectedIdx !== null && journeys[selectedIdx] !== undefined
 
+  useEffect(() => {
+    const stored = localStorage.getItem(OB_KEY)
+    setOb(stored === 'active' ? 'active' : stored === 'declined' ? 'declined' : 'question')
+  }, [])
+
+  const advance = (to: OBPhase) => {
+    setOb(to)
+    if (to !== 'finding') localStorage.setItem(OB_KEY, to)
+  }
+
+  if (ob === null) return <div className="h-full" style={{ background: '#0a0a0a' }} />
+  if (ob === 'question') return <CollabReadyScreen onReady={() => advance('finding')} />
+  if (ob === 'finding') return (
+    <CollabFindingScreen
+      userId={userId}
+      onConfirm={() => advance('active')}
+      onNotNow={() => advance('active')}
+      onBack={() => advance('question')}
+    />
+  )
+
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden relative">
+      {ob === 'declined' && <CollabDeclinedOverlay onReactivate={() => advance('question')} />}
       {journeyOpen ? (
         <SwipeDeck
           count={journeys.length}
