@@ -714,10 +714,11 @@ String *GenerateMatchDescription(User *user)
 "What is already known about the user: [%s]. " \
 "Produce 3 essential clarifying questions; use 4 or 5 only if truly necessary. " \
 "Questions must be short, engaging, and high-signal: ideally under 10 words each. " \
+"Prefer choice-shaped questions with simple, short answers. " \
 "Focus only on: starting point, desired outcome, and scope/ambition. " \
 "Never assume the user is past zero — always ask about their starting point. Do NOT ask about scheduling, daily hours, or step-by-step plans; the app handles those automatically. " \
 "Do NOT ask about deadlines, target dates, or time limits — the app does not handle deadlines well, so never raise the topic. " \
-"Avoid long, boring, generic questions. Write one question per line, no preamble. " \
+"Avoid long, boring, generic, or essay-style questions. Write one question per line, no preamble. " \
 "Reply in the user's language. " \
 "Return one strict JSON object only: {\"message\": \"...\"}."
 
@@ -743,8 +744,8 @@ String *GenerateMatchDescription(User *user)
 "You convert a short message of clarifying questions into a structured form. " \
 "The message: [%s]. " \
 "Extract each distinct question, in order. For each, choose an answer type: " \
-"\"choice\" when there is a small fixed set of natural answers — then provide 2 to 5 short options; " \
-"\"free\" when the answer is open or personal — then options must be an empty array. " \
+"Prefer \"choice\" when the answer can be captured by 2 to 4 simple options; keep options short, usually 1 to 4 words. " \
+"Use \"free\" only when options would miss essential personal context — then options must be an empty array. " \
 "Even for choice questions the user can still type their own answer, so only use choice when concrete options genuinely help. " \
 "Keep each prompt concise and in the same language as the message. " \
 "Return one strict JSON object only matching the schema."

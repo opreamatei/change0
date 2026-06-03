@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { SERVER_ENDPOINTS } from '../config/server'
+import { SERVER_ENDPOINTS, getClientBaseUrl, subscribeClientBaseUrl } from '../config/server'
 import GraphUpdateBubble from '../components/graph-update-bubble'
 import GoalCard from '../components/goal-card'
 
@@ -67,6 +67,14 @@ interface SSEEnvelope {
   id: string
   type: string
   data: string
+}
+
+function freshOptimisticId(): string {
+  return `optimistic-${Date.now()}-${Math.random()}`
+}
+
+function nowSeconds(): number {
+  return Math.floor(Date.now() / 1000)
 }
 
 function parseEntry(id: string, type: string, content: string, timestamp: number): ChatEntry {
@@ -1136,7 +1144,18 @@ export default function ChatView({ mode = 'page', sessionId }: { mode?: 'page' |
   const [reloading, setReloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  // The per-user client server URL resolves asynchronously after sign-in. The
+  // SSE/session effects must rebuild when it lands (or changes), otherwise an
+  // EventSource opened against an empty/stale base never recovers.
+  const [clientBase, setClientBase] = useState<string | null>(() => getClientBaseUrl())
   const pendingSuggestionHighlightsRef = useRef<Array<{ text: string; color: string }>>([])
+  // Texts rendered optimistically that should suppress their own SSE echo so the
+  // user's bubble never appears twice during a turn.
+  const pendingEchoRef = useRef<string[]>([])
+  // Whether the live SSE stream delivered the assistant reply for the in-flight
+  // turn. If it did, we skip the end-of-turn reconcile so live action
+  // animations (graph forming, searching, goal creation…) are preserved.
+  const sawLiveAssistantRef = useRef(false)
   const suggestionHideTimeoutRef = useRef<number | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -1160,9 +1179,42 @@ export default function ChatView({ mode = 'page', sessionId }: { mode?: 'page' |
       const data = (await res.json()) as { ok: boolean; events?: ServerSessionEvent[] }
       if (!data.ok || !data.events) return
 
-      let loaded = data.events
-        .filter((e) => !HIDDEN_EVENT_TYPES.has(e.type))
-        .map((e, i) => parseEntry(`hist-${i}`, e.type, e.content, e.timestamp))
+      // Build entries in stream order so each suggested_replies event can be
+      // attached to the assistant message from its OWN turn. Attaching to the
+      // global last assistant (the old behavior) stamped an earlier turn's
+      // chips onto an unrelated later message, which looked random.
+      let loaded: ChatEntry[] = []
+      let histIndex = 0
+      let lastAssistantIdx = -1
+      for (const e of data.events) {
+        if (e.type === 'suggested_replies') {
+          if (lastAssistantIdx >= 0) {
+            try {
+              const suggestions = JSON.parse(e.content) as string[]
+              loaded[lastAssistantIdx] = {
+                ...loaded[lastAssistantIdx],
+                suggestions,
+                suggestionsHidden: false,
+                suggestionsExiting: false,
+                selectedSuggestion: undefined,
+              }
+            } catch { /* ignore malformed */ }
+          }
+          continue
+        }
+        if (HIDDEN_EVENT_TYPES.has(e.type)) continue
+        const entry = parseEntry(`hist-${histIndex++}`, e.type, e.content, e.timestamp)
+        loaded.push(entry)
+        if (entry.kind === 'assistant') lastAssistantIdx = loaded.length - 1
+      }
+
+      // Only the most recent assistant turn keeps active chips; earlier turns
+      // were already answered, so hide their (now stale) suggestions.
+      loaded = loaded.map((entry, idx) =>
+        entry.kind === 'assistant' && idx !== lastAssistantIdx && entry.suggestions?.length
+          ? { ...entry, suggestionsHidden: true }
+          : entry,
+      )
 
       // apply any permission resolutions that are already in history
       const resolutions = data.events.filter((e) => e.type === 'permission_resolved')
@@ -1175,11 +1227,9 @@ export default function ChatView({ mode = 'page', sessionId }: { mode?: 'page' |
         loaded = applyGraphUpdateResolved(loaded)
       }
 
-      const suggestedReplies = data.events.filter((e) => e.type === 'suggested_replies')
-      for (const reply of suggestedReplies) {
-        loaded = applySuggestedReplies(loaded, reply.content)
-      }
-
+      // History is now authoritative; drop any optimistic echo/highlight state
+      // so it can't suppress or decorate a future message by accident.
+      pendingEchoRef.current = []
       setEntries(loaded)
       setThinking(false)
       setError(null)
@@ -1192,12 +1242,19 @@ export default function ChatView({ mode = 'page', sessionId }: { mode?: 'page' |
   }
 
   useEffect(() => {
-    setEntries([])
-    setThinking(false)
-    void loadSession(sessionId)
-  }, [sessionId])
+    const unsubscribe = subscribeClientBaseUrl(setClientBase)
+    return () => { unsubscribe() }
+  }, [])
 
   useEffect(() => {
+    setEntries([])
+    setThinking(false)
+    if (!clientBase) return
+    void loadSession(sessionId)
+  }, [sessionId, clientBase])
+
+  useEffect(() => {
+    if (!clientBase) return
     const url = `${SERVER_ENDPOINTS.middlewareEvents}?sessionId=${encodeURIComponent(sessionId)}`
     const source = new EventSource(url)
 
@@ -1224,10 +1281,17 @@ export default function ChatView({ mode = 'page', sessionId }: { mode?: 'page' |
         if (HIDDEN_EVENT_TYPES.has(type)) return
 
         if (type === 'message_received') setThinking(true)
-        if (type === 'assistant_message') setThinking(false)
+        if (type === 'assistant_message') { setThinking(false); sawLiveAssistantRef.current = true }
 
         const entry = parseEntry(`live-${Date.now()}-${Math.random()}`, type, data, Math.floor(Date.now() / 1000))
         if (type === 'message_received') {
+          // We already rendered this message optimistically; consume its echo
+          // instead of appending a duplicate bubble.
+          const echoIndex = pendingEchoRef.current.indexOf(data)
+          if (echoIndex >= 0) {
+            pendingEchoRef.current.splice(echoIndex, 1)
+            return
+          }
           const pendingIndex = pendingSuggestionHighlightsRef.current.findIndex((item) => item.text === data)
           const highlightedEntry = pendingIndex >= 0
             ? {
@@ -1246,7 +1310,7 @@ export default function ChatView({ mode = 'page', sessionId }: { mode?: 'page' |
     }
 
     return () => source.close()
-  }, [sessionId])
+  }, [sessionId, clientBase])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -1286,6 +1350,31 @@ export default function ChatView({ mode = 'page', sessionId }: { mode?: 'page' |
     setSending(true)
     setInput('')
     setError(null)
+    // Show the working indicator immediately rather than waiting for the SSE
+    // `message_received` echo, so the turn never looks frozen while the model
+    // runs. The reconcile / `assistant_message` clears it.
+    setThinking(true)
+    sawLiveAssistantRef.current = false
+
+    // Render the user's own bubble optimistically so it appears the instant
+    // they hit send instead of only after the reply loads. Its SSE echo is
+    // suppressed via pendingEchoRef so it never doubles up. If this message
+    // came from a suggestion chip, carry its highlight flash here.
+    {
+      const highlightIndex = pendingSuggestionHighlightsRef.current.findIndex((item) => item.text === msg)
+      const highlight = highlightIndex >= 0 ? pendingSuggestionHighlightsRef.current[highlightIndex] : undefined
+      if (highlightIndex >= 0) pendingSuggestionHighlightsRef.current.splice(highlightIndex, 1)
+      const optimisticEntry: ChatEntry = {
+        id: freshOptimisticId(),
+        kind: 'user',
+        eventType: 'message_received',
+        content: msg,
+        timestamp: nowSeconds(),
+        ...(highlight ? { highlightOnMount: true, highlightColor: highlight.color } : {}),
+      }
+      pendingEchoRef.current.push(msg)
+      setEntries((prev) => [...prev, optimisticEntry])
+    }
 
     try {
       const res = await fetch(SERVER_ENDPOINTS.middlewareMessage, {
@@ -1294,6 +1383,12 @@ export default function ChatView({ mode = 'page', sessionId }: { mode?: 'page' |
         body: JSON.stringify({ sessionId, message: msg }),
       })
       if (!res.ok) throw new Error(`Server error ${res.status}`)
+      // The POST only resolves once the middleware has finished and recorded
+      // every event to the session. If the live SSE stream already delivered
+      // the reply, keep it (its action animations are richer than a reload).
+      // Otherwise reconcile from the authoritative history so the reply still
+      // lands — no manual refresh required.
+      if (!sawLiveAssistantRef.current) await loadSession(sessionId)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -1315,7 +1410,14 @@ export default function ChatView({ mode = 'page', sessionId }: { mode?: 'page' |
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ permissionId, approved }),
-    }).catch((err) => setError(err instanceof Error ? err.message : String(err)))
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Server error ${res.status}`)
+        // Resolving a permission can continue the middleware turn; reconcile
+        // from recorded history so any follow-up reply lands without a refresh.
+        return loadSession(sessionId)
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
   }
 
   const handleSuggestion = (entry: ChatEntry, suggestion: string) => {

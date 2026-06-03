@@ -829,9 +829,9 @@ GOAL_AGENT_SYSTEM_CONTEXT \
 "All child goals together must fully cover the parent goal intent without introducing unrelated work. " \
 "Each title must be concise and action-oriented. " \
 "Each extrainfo must include: scope, success condition, boundary relative to siblings, and handoff to next child. " \
-"Each child must also include a short 'tips' string: a one or two sentence, coaching-toned UI summary of what to actually do and what 'done' looks like — pragmatic, direct, and encouraging, like a coach in your corner. A friendlier, much shorter distillation of extrainfo, not a copy. " \
+"Each child must include a 'tips' object for compact UI rendering, not prose. tips.task is one concrete sentence saying what the assigned user does now. tips.success is a 10-15 word proof that the step is done, specific enough to justify completion. tips.stages is 2 to 4 relevant stage labels, each short but meaningful (usually 2-6 words), showing the flow of the work without becoming a full plan. Keep all three essential, simple, and user-facing. Do not copy extrainfo. Do not write long coaching paragraphs. " \
 "Return JSON only with exactly this structure and no extra text: " \
-"{\"subgoals\":[{\"title\":\"string\",\"extrainfo\":\"string\",\"tips\":\"string\",\"estimated_time\":1,\"min_pause_to_next\":0,\"pause_to_next\":0,\"assigned_to\":255}]}"
+"{\"subgoals\":[{\"title\":\"string\",\"extrainfo\":\"string\",\"tips\":{\"task\":\"string\",\"success\":\"10-15 word completion proof\",\"stages\":[\"stage label\",\"stage label\"]},\"estimated_time\":1,\"min_pause_to_next\":0,\"pause_to_next\":0,\"assigned_to\":255}]}"
 
 // This model is responsible for extracting what the above model produces, I don't think it need to be modified.
 #define GOAL_JSON_EXTRACT_PROMPT \
@@ -980,10 +980,10 @@ GOAL_AGENT_SYSTEM_CONTEXT \
 "The final child goal should handle validation, integration, review, or usability preparation. "\
 "Each title must be concise and action-oriented. "\
 "Each extrainfo must include: scope of the child goal, success condition, boundary relative to sibling/uncle goals, and handoff to next child goal if applicable. "\
-"Each child must also include a 'tips' string: a short (2-4 sentence) coaching-toned resume of the parts of extrainfo that matter to the user as they sit down to DO this step. It must concretely cover three things in a warm, direct voice: (1) what to actually do in this session, (2) what 'done'/success looks like for this step, and (3) one practical pointer for making it doable right now (how to start, what to focus on, or a pitfall to avoid). Speak to the user as a good coach in their corner — encouraging and plain, never a manual or jargon. It is a friendlier distillation of extrainfo, never a verbatim copy of it, and never meta-process. "\
+"Each child must include a 'tips' object for compact UI rendering, not prose. tips.task is one concrete sentence saying what the user does now. tips.success is a 10-15 word proof that the step is done, specific enough to justify completion. tips.stages is 2 to 4 relevant stage labels, each short but meaningful (usually 2-6 words), showing the flow of the work without becoming a full plan. Keep all three essential, simple, and user-facing. Do not copy extrainfo. Do not write long coaching paragraphs. "\
 "Each child must also include a 'goal_type' string, either \"timer\" or \"journal\". Use \"timer\" for the vast majority of steps: anything the user actively works on against the clock (practice, building, executing). Use \"journal\" ONLY for steps whose real deliverable is written reflection, planning, strategy, or self-assessment — e.g. 'sketch your practice strategy', 'reflect on what worked this week', 'write your plan before starting'. A journal step completes by the user writing an entry, not by spending time. Default to \"timer\" whenever in doubt; most decompositions will have zero or one journal step. "\
 "Return JSON only with exactly this structure and no extra text: "\
-"{\"subgoals\":[{\"title\":\"string\",\"extrainfo\":\"string\",\"tips\":\"string\",\"estimated_time\":1,\"min_pause_to_next\":0,\"pause_to_next\":0,\"goal_type\":\"timer\"}]}"\
+"{\"subgoals\":[{\"title\":\"string\",\"extrainfo\":\"string\",\"tips\":{\"task\":\"string\",\"success\":\"10-15 word completion proof\",\"stages\":[\"stage label\",\"stage label\"]},\"estimated_time\":1,\"min_pause_to_next\":0,\"pause_to_next\":0,\"goal_type\":\"timer\"}]}"\
 
 /*
  *

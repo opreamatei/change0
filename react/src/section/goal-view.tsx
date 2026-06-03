@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { ROOT_GOAL_ID } from '../config/utils'
+import GoalTipsCard from '../components/goal-tips-card'
 import {
   findGoalByGlobalIndex,
   formatGoalDate,
@@ -200,7 +201,11 @@ function GoalCard({
         <StateBadge goal={goal} />
       </div>
 
-      {goal.extraInfo && (
+      {goal.tips ? (
+        <div className="mb-3">
+          <GoalTipsCard tips={goal.tips} compact />
+        </div>
+      ) : goal.extraInfo && (
         <p className="mb-3 text-sm leading-relaxed text-white/55">{goal.extraInfo}</p>
       )}
 

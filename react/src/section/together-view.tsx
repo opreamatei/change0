@@ -5,6 +5,7 @@ import { openUserProfile } from '../profile-nav'
 import { PathCanvas } from '../components/path-canvas'
 import type { PathNodeData, NodeState } from '../components/path-canvas'
 import { SwipeDeck } from '../components/swipe-deck'
+import GoalTipsCard from '../components/goal-tips-card'
 import ConnectionsView from './connections-view'
 import ReviewsPanel from './reviews-panel'
 import type { FocusTarget } from './focus-session'
@@ -816,7 +817,11 @@ function CollabNodeDetail({
           )}
         </div>
         <p className="mb-1 text-base font-semibold text-white">{leaf.title}</p>
-        {leaf.extra_info && <p className="mb-3 text-sm leading-relaxed text-white/55">{leaf.extra_info}</p>}
+        {leaf.tips ? (
+          <div className="mb-3">
+            <GoalTipsCard tips={leaf.tips} compact />
+          </div>
+        ) : leaf.extra_info && <p className="mb-3 text-sm leading-relaxed text-white/55">{leaf.extra_info}</p>}
         <p className="mb-4 text-xs text-white/40">{formatDuration(leaf.required_time)} estimated</p>
         <div className="flex flex-wrap gap-2">
           {state !== 'finished' && mine && canStart && (

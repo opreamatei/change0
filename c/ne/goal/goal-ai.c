@@ -4,11 +4,67 @@
 #include "node.h"
 #include "openai.h"
 #include <string.h>
+#include <stdlib.h>
 #include "deep-search-session.h"
 #include "goal-info.h"
 #include "srv/user/journey.h"
 
 static journey_str_func journey_get_title = NULL;
+
+static char *escape_json_string_value(json_value *v)
+{
+	change_assert(v && v->type == json_string, "Expected JSON string value.\n");
+	char *tmp = malloc(v->u.string.length + 1);
+	change_assert(tmp, "Could not allocate JSON string copy.\n");
+	memcpy(tmp, v->u.string.ptr, v->u.string.length);
+	tmp[v->u.string.length] = '\0';
+	char *esc = json_escape_dup(tmp);
+	free(tmp);
+	change_assert(esc, "Could not escape JSON string value.\n");
+	return esc;
+}
+
+static void copy_decomposition_tips(json_value *tips_json, String *tips)
+{
+	if (!tips) return;
+
+	if (tips_json && tips_json->type == json_string) {
+		InitString(tips, tips_json->u.string.length + 1);
+		CatString(tips, tips_json->u.string.ptr, tips_json->u.string.length);
+		return;
+	}
+
+	if (!tips_json || tips_json->type != json_object) {
+		InitString(tips, 1);
+		return;
+	}
+
+	json_value *task = json_object_get(tips_json, "task");
+	json_value *success = json_object_get(tips_json, "success");
+	json_value *stages = json_object_get(tips_json, "stages");
+
+	change_assert(task && task->type == json_string, "tips.task missing or invalid.\n");
+	change_assert(success && success->type == json_string, "tips.success missing or invalid.\n");
+	change_assert(stages && stages->type == json_array, "tips.stages missing or invalid.\n");
+	change_assert(stages->u.array.length >= 2 && stages->u.array.length <= 4, "tips.stages must have 2 to 4 entries.\n");
+
+	char *task_esc = escape_json_string_value(task);
+	char *success_esc = escape_json_string_value(success);
+	InitString(tips, strlen(task_esc) + strlen(success_esc) + 256);
+	CatTemplateString(tips, "{\"task\":\"%s\",\"success\":\"%s\",\"stages\":[", task_esc, success_esc);
+	free(task_esc);
+	free(success_esc);
+
+	for (size_t i = 0; i < stages->u.array.length; i++) {
+		json_value *stage = stages->u.array.values[i];
+		change_assert(stage && stage->type == json_string, "tips.stages item missing or invalid.\n");
+		char *stage_esc = escape_json_string_value(stage);
+		if (i > 0) CatFixed(tips, ",");
+		CatTemplateString(tips, "\"%s\"", stage_esc);
+		free(stage_esc);
+	}
+	CatFixed(tips, "]}");
+}
 
 static void AICallExtractionGoalSchema(String *input, String *out, String* feedback)
 {
@@ -285,11 +341,7 @@ void ParseDecompositionSubgoal(
 	InitString(extrainfo, extrainfo_json->u.string.length + 256);
 	CatString(extrainfo, extrainfo_json->u.string.ptr, extrainfo_json->u.string.length);
 
-	if (tips) {
-		size_t tlen = (tips_json && tips_json->type == json_string) ? tips_json->u.string.length : 0;
-		InitString(tips, tlen + 1);
-		if (tlen) CatString(tips, tips_json->u.string.ptr, tlen);
-	}
+	copy_decomposition_tips(tips_json, tips);
 
 	*estimated_time = (size_t)estimated_time_json->u.integer;
 	*min_pause_to_next = (time_t)MIN(min_pause_to_next_json->u.integer, pause_to_next_json->u.integer);

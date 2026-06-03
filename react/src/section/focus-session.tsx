@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import GoalTipsCard from '../components/goal-tips-card'
 
 /**
  * A self-contained, full-screen focus session. Both the solo journey view and
@@ -307,8 +308,8 @@ export default function FocusSession({
             </div>
           )}
           {tips && !isCelebrating && (
-            <div className="mb-7 max-w-[290px] text-center text-[13px] leading-[1.55]" style={{ color: 'rgba(255,255,255,.5)' }}>
-              {tips}
+            <div className="mb-7 w-full max-w-[320px]">
+              <GoalTipsCard tips={tips} />
             </div>
           )}
 

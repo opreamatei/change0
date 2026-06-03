@@ -54,8 +54,14 @@
             "\"minLength\":10" \
           "}," \
           "\"tips\":{" \
-            "\"type\":\"string\"," \
-            "\"minLength\":3" \
+            "\"type\":\"object\"," \
+            "\"additionalProperties\":false," \
+            "\"required\":[\"task\",\"success\",\"stages\"]," \
+            "\"properties\":{" \
+              "\"task\":{\"type\":\"string\",\"minLength\":3}," \
+              "\"success\":{\"type\":\"string\",\"minLength\":3}," \
+              "\"stages\":{\"type\":\"array\",\"minItems\":2,\"maxItems\":4,\"items\":{\"type\":\"string\",\"minLength\":2}}" \
+            "}" \
           "}," \
           "\"estimated_time\":{" \
             "\"type\":\"integer\"," \
@@ -108,8 +114,14 @@
             "\"minLength\":10" \
           "}," \
           "\"tips\":{" \
-            "\"type\":\"string\"," \
-            "\"minLength\":3" \
+            "\"type\":\"object\"," \
+            "\"additionalProperties\":false," \
+            "\"required\":[\"task\",\"success\",\"stages\"]," \
+            "\"properties\":{" \
+              "\"task\":{\"type\":\"string\",\"minLength\":3}," \
+              "\"success\":{\"type\":\"string\",\"minLength\":3}," \
+              "\"stages\":{\"type\":\"array\",\"minItems\":2,\"maxItems\":4,\"items\":{\"type\":\"string\",\"minLength\":2}}" \
+            "}" \
           "}," \
           "\"estimated_time\":{" \
             "\"type\":\"integer\"," \
