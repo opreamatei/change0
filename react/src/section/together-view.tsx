@@ -41,7 +41,8 @@ function hslToRgba(color: string, alpha: number): string {
 
 /* ─── Screen: Întrebare ──────────────────────────────────────────────────── */
 
-function CollabReadyScreen({ onReady }: { onReady: () => void }) {
+// Kept for an upcoming flow; exported so it isn't flagged as an unused local.
+export function CollabReadyScreen({ onReady }: { onReady: () => void }) {
   const [phase, setPhase] = useState<'question' | 'push' | 'bye'>('question')
   const [countdown, setCountdown] = useState(6)
   const [visible, setVisible] = useState(false)
@@ -142,9 +143,114 @@ function CollabReadyScreen({ onReady }: { onReady: () => void }) {
           <button onClick={onReady}
             className="flex-1 py-[16px] rounded-[18px] text-[16px] font-bold tracking-tight active:opacity-80 transition-opacity"
             style={{ background: '#fff', color: '#000' }}>
-            I'm ready
+            I'm ready!
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+/* ─── Profile sheet: partener potențial ─────────────────────────────────── */
+
+function PartnerProfileSheet({
+  conn, color, onClose,
+}: {
+  conn: OBConnection
+  color: string
+  onClose: () => void
+}) {
+  const [journeyCount, setJourneyCount] = useState<number | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      try {
+        const r = await fetch(CENTRAL_ENDPOINTS.journeyList(conn.other_id), { cache: 'no-store' })
+        if (r.ok) {
+          const data = (await r.json()) as { ok: boolean; journeys: { id: string }[] }
+          if (!cancelled && data.ok) setJourneyCount(data.journeys?.length ?? 0)
+        }
+      } catch { /* ignore */ }
+    }
+    void load()
+    return () => { cancelled = true }
+  }, [conn.other_id])
+
+  const initial = conn.other_name.charAt(0).toUpperCase()
+
+  return (
+    <div className="fixed inset-0 z-[400] flex flex-col anim-pg-in" style={{ background: '#0a0a0a' }}>
+      {/* back button — absolute, over the banner */}
+      <button
+        type="button"
+        onClick={onClose}
+        className="absolute top-[52px] left-5 z-10 w-9 h-9 rounded-xl flex items-center justify-center active:opacity-70"
+        style={{ background: 'rgba(10,10,10,.55)', border: '1px solid rgba(255,255,255,.14)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
+      </button>
+
+      {/* colour banner */}
+      <div className="relative flex-shrink-0" style={{ height: 200 }}>
+        <div className="absolute inset-0" style={{
+          background: `radial-gradient(ellipse at 50% 80%, ${hslToRgba(color, 0.55)} 0%, ${hslToRgba(color, 0.18)} 55%, transparent 80%)`,
+        }} />
+        <div className="absolute inset-x-0 bottom-0 h-24" style={{
+          background: 'linear-gradient(to bottom, transparent, #0a0a0a)',
+        }} />
+      </div>
+
+      {/* avatar — centered, overlapping banner bottom */}
+      <div className="flex flex-col items-center -mt-[56px] flex-shrink-0 px-5 z-10">
+        <div
+          className="w-28 h-28 rounded-[28px] flex items-center justify-center text-[#0a0a0a] text-[38px] font-bold overflow-hidden flex-shrink-0"
+          style={{ background: color, boxShadow: `0 0 0 4px #0a0a0a, 0 8px 32px ${hslToRgba(color, 0.35)}` }}
+        >
+          <img
+            src={CENTRAL_ENDPOINTS.userAvatar(conn.other_id)}
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+            className="w-full h-full object-cover"
+            alt=""
+          />
+          <span>{initial}</span>
+        </div>
+        <h2 className="mt-4 text-[24px] font-extrabold tracking-tight">{conn.other_name}</h2>
+        <p className="mt-1 text-[13px]" style={{ color: 'rgba(255,255,255,.35)' }}>Potential partner</p>
+
+        {/* stats chips */}
+        <div className="mt-5 flex items-center gap-3">
+          <div
+            className="flex items-center gap-2 px-4 py-2.5 rounded-[14px]"
+            style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.09)' }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            </svg>
+            <span className="text-[13px] font-semibold">
+              {journeyCount === null
+                ? <span style={{ color: 'rgba(255,255,255,.3)' }}>—</span>
+                : <><span className="text-white">{journeyCount}</span><span style={{ color: 'rgba(255,255,255,.4)' }}> {journeyCount === 1 ? 'journey' : 'journeys'}</span></>
+              }
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* reason */}
+      <div className="flex-1 overflow-y-auto no-scrollbar px-5 pt-8 pb-10">
+        <div
+          className="text-[10px] font-bold tracking-[0.2em] uppercase mb-3"
+          style={{ color: 'rgba(255,255,255,.28)' }}
+        >
+          Why we matched you
+        </div>
+        <p className="text-[15px] leading-[1.75]" style={{ color: 'rgba(255,255,255,.62)' }}>
+          {conn.reason}
+        </p>
       </div>
     </div>
   )
@@ -163,120 +269,109 @@ function CollabMatchCard({
   const color = colorFromStringOB(conn.other_id || conn.other_name)
 
   return (
-    <div className="h-full flex flex-col" style={{ background: '#0a0a0a' }}>
-      {/* Header */}
-      <div className="px-5 pt-[52px] pb-5 flex-shrink-0">
-        <div className="text-[10px] font-bold tracking-[0.24em] uppercase mb-1.5" style={{ color: 'rgba(255,255,255,.25)' }}>
-          Found!
-        </div>
-        <h2 className="text-[26px] font-extrabold tracking-tight">Your partner</h2>
-      </div>
+    <div className="h-full flex flex-col items-center justify-center px-5" style={{ background: '#0a0a0a' }}>
 
       {/* Card */}
-      <div className="flex-1 overflow-y-auto no-scrollbar px-5" style={{
-        opacity: cardIn ? 1 : 0,
-        transform: cardIn ? 'translateY(0)' : 'translateY(20px)',
-        transition: 'all .45s cubic-bezier(.32,1,.54,1)',
-      }}>
-        <div className="rounded-3xl overflow-hidden" style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.09)' }}>
-          {/* Gradient top */}
-          <div className="relative h-24 overflow-hidden">
-            <div className="absolute inset-0" style={{
-              background: `radial-gradient(ellipse at 30% 60%, ${hslToRgba(color, 0.4)} 0%, transparent 65%)`,
-            }} />
-            <div className="absolute inset-x-0 top-0 h-px" style={{
-              background: `linear-gradient(90deg, transparent, ${hslToRgba(color, 0.8)}, transparent)`,
-            }} />
-          </div>
-
-          {/* Content */}
-          <div className="px-5 pb-6">
-            {/* Avatar + name */}
-            <div className="flex items-end gap-3 -mt-8 mb-5">
-              <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-[#0a0a0a] text-[22px] font-bold flex-shrink-0 overflow-hidden"
-                style={{ background: color, boxShadow: '0 0 0 3px #0a0a0a' }}>
-                <img
-                  src={CENTRAL_ENDPOINTS.userAvatar(conn.other_id)}
-                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
-                  className="h-full w-full object-cover"
-                  alt=""
-                />
-                <span className="-mt-full">{conn.other_name.charAt(0).toUpperCase()}</span>
-              </div>
-              <button
-                onClick={() => setProfileOpen(true)}
-                className="mb-1 flex items-center gap-1.5 active:opacity-60 transition-opacity">
-                <span className="text-[18px] font-bold">{conn.other_name}</span>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                  style={{ marginTop: 1, opacity: 0.35 }}>
-                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                  <polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Description */}
-            <div className="text-[10px] font-bold tracking-[0.2em] uppercase mb-2" style={{ color: 'rgba(255,255,255,.28)' }}>
-              Why we matched you
-            </div>
-            <div className="text-[14px] leading-[1.65]" style={{ color: 'rgba(255,255,255,.5)' }}>
-              {conn.reason}
-            </div>
-          </div>
+      <div
+        className="w-full max-w-sm rounded-[28px] overflow-hidden"
+        style={{
+          background: 'rgba(255,255,255,.04)',
+          border: '1px solid rgba(255,255,255,.09)',
+          opacity: cardIn ? 1 : 0,
+          transform: cardIn ? 'translateY(0) scale(1)' : 'translateY(24px) scale(.97)',
+          transition: 'opacity .45s cubic-bezier(.32,1,.54,1), transform .45s cubic-bezier(.32,1,.54,1)',
+        }}
+      >
+        {/* Colour band */}
+        <div className="relative h-28 overflow-hidden">
+          <div className="absolute inset-0" style={{
+            background: `radial-gradient(ellipse at 40% 70%, ${hslToRgba(color, 0.5)} 0%, transparent 68%)`,
+          }} />
+          <div className="absolute inset-x-0 top-0 h-px" style={{
+            background: `linear-gradient(90deg, transparent, ${hslToRgba(color, 0.9)}, transparent)`,
+          }} />
         </div>
-      </div>
 
-      {/* Actions */}
-      <div className="flex-shrink-0 px-5 pb-10 pt-4 flex flex-col gap-3"
-        style={{ borderTop: '1px solid rgba(255,255,255,.06)' }}>
-        <button onClick={onConfirm} disabled={busy}
-          className="w-full py-[18px] rounded-[18px] text-[16px] font-bold tracking-tight active:opacity-80 transition-opacity disabled:opacity-50"
-          style={{ background: '#fff', color: '#000' }}>
-          Confirm
-        </button>
-        <button onClick={onNotNow} disabled={busy}
-          className="w-full py-[15px] rounded-[18px] text-[15px] font-semibold active:opacity-70 transition-opacity disabled:opacity-50"
-          style={{ background: 'rgba(255,255,255,.06)', color: 'rgba(255,255,255,.5)', border: '1px solid rgba(255,255,255,.09)' }}>
-          Not now
-        </button>
-      </div>
-
-      {/* Mini-profile sheet */}
-      {profileOpen && (
-        <div className="fixed inset-0 z-[300] flex flex-col anim-pg-in" style={{ background: '#0a0a0a' }}>
-          <div className="px-5 pt-[52px] pb-4 flex items-center gap-3 flex-shrink-0"
-            style={{ borderBottom: '1px solid rgba(255,255,255,.07)' }}>
-            <button onClick={() => setProfileOpen(false)}
-              className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 active:opacity-70"
-              style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.1)' }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                <polyline points="15 18 9 12 15 6" />
+        {/* Avatar — sits on the colour band edge, tappable */}
+        <div className="px-5 -mt-10 mb-4 flex items-end gap-3">
+          <button
+            type="button"
+            onClick={() => setProfileOpen(true)}
+            className="relative flex-shrink-0 active:scale-95 transition-transform"
+          >
+            <div
+              className="w-20 h-20 rounded-[20px] flex items-center justify-center text-[#0a0a0a] text-[26px] font-bold overflow-hidden"
+              style={{ background: color, boxShadow: '0 0 0 3px #111' }}
+            >
+              <img
+                src={CENTRAL_ENDPOINTS.userAvatar(conn.other_id)}
+                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                className="h-full w-full object-cover" alt=""
+              />
+              <span>{conn.other_name.charAt(0).toUpperCase()}</span>
+            </div>
+            {/* small "view" badge */}
+            <div
+              className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center"
+              style={{ background: '#1a1a1a', border: '1.5px solid rgba(255,255,255,.12)' }}
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.6)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
               </svg>
-            </button>
-            <div className="text-[17px] font-bold tracking-tight">{conn.other_name}</div>
-          </div>
-          <div className="flex-1 overflow-y-auto no-scrollbar px-5 py-6">
-            <div className="flex items-center gap-4 mb-8">
-              <div className="w-20 h-20 rounded-2xl flex items-center justify-center text-[#0a0a0a] text-[28px] font-bold flex-shrink-0 overflow-hidden"
-                style={{ background: color }}>
-                <img src={CENTRAL_ENDPOINTS.userAvatar(conn.other_id)}
-                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
-                  className="h-full w-full object-cover" alt="" />
-                <span>{conn.other_name.charAt(0).toUpperCase()}</span>
-              </div>
-              <div>
-                <div className="text-[22px] font-extrabold tracking-tight">{conn.other_name}</div>
-                <div className="text-[12px] mt-1" style={{ color: 'rgba(255,255,255,.35)' }}>Potential partner</div>
-              </div>
             </div>
-            <div className="text-[10px] font-bold tracking-[0.2em] uppercase mb-2" style={{ color: 'rgba(255,255,255,.28)' }}>
-              Why we matched you
-            </div>
-            <div className="text-[15px] leading-[1.7]" style={{ color: 'rgba(255,255,255,.65)' }}>
-              {conn.reason}
-            </div>
+          </button>
+          <div className="mb-1 min-w-0">
+            <div className="text-[19px] font-bold tracking-tight truncate">{conn.other_name}</div>
+            <div className="text-[11px] mt-0.5" style={{ color: 'rgba(255,255,255,.3)' }}>Potential partner</div>
           </div>
         </div>
+
+        {/* Short reason */}
+        <div className="px-5 pb-5">
+          <p
+            className="text-[13px] leading-[1.6]"
+            style={{
+              color: 'rgba(255,255,255,.45)',
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+            }}
+          >
+            {conn.reason}
+          </p>
+        </div>
+
+        {/* Actions — horizontal, inside card */}
+        <div
+          className="flex gap-2.5 px-5 pb-5"
+          style={{ borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 16 }}
+        >
+          <button
+            type="button"
+            onClick={onNotNow}
+            disabled={busy}
+            className="flex-1 py-[13px] rounded-[16px] text-[14px] font-semibold active:opacity-70 transition-opacity disabled:opacity-40"
+            style={{ background: 'rgba(255,255,255,.07)', color: 'rgba(255,255,255,.55)', border: '1px solid rgba(255,255,255,.08)' }}
+          >
+            Not now
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={busy}
+            className="flex-[1.6] py-[13px] rounded-[16px] text-[15px] font-bold active:opacity-80 transition-opacity disabled:opacity-40"
+            style={{ background: '#fff', color: '#000' }}
+          >
+            Connect
+          </button>
+        </div>
+      </div>
+
+      {/* Full-screen profile sheet */}
+      {profileOpen && createPortal(
+        <PartnerProfileSheet conn={conn} color={color} onClose={() => setProfileOpen(false)} />,
+        document.body,
       )}
     </div>
   )
@@ -285,14 +380,15 @@ function CollabMatchCard({
 /* ─── Screen: Căutare ────────────────────────────────────────────────────── */
 
 function CollabFindingScreen({
-  userId, onConfirm, onNotNow, onBack,
+  userId, onConfirm, onNotNow, onBack, autoStart,
 }: {
   userId: string
-  onConfirm: () => void
+  onConfirm: (conn?: OBConnection) => void
   onNotNow: () => void
   onBack: () => void
+  autoStart?: boolean
 }) {
-  const [started, setStarted] = useState(false)
+  const [started, setStarted] = useState(autoStart ?? false)
   const [phase, setPhase] = useState<'searching' | 'found' | 'notfound'>('searching')
   const [foundConn, setFoundConn] = useState<OBConnection | null>(null)
   const [cardIn, setCardIn] = useState(false)
@@ -343,7 +439,7 @@ function CollabFindingScreen({
         body: JSON.stringify({ connection_id: foundConn.id, user_id: userId }),
       })
     } catch { /* advance anyway */ }
-    onConfirm()
+    onConfirm(foundConn)
   }
 
   async function handleNotNow() {
@@ -384,7 +480,7 @@ function CollabFindingScreen({
         <p className="text-[14px] leading-[1.65] mb-10 relative z-10" style={{ color: 'rgba(255,255,255,.35)' }}>
           No match found yet. We'll notify you as soon as someone comes up.
         </p>
-        <button onClick={onConfirm}
+        <button onClick={() => onConfirm()}
           className="w-full py-[18px] rounded-[18px] text-[16px] font-bold mb-3 active:opacity-80 transition-opacity relative z-10"
           style={{ background: '#fff', color: '#000' }}>
           Enter anyway
@@ -466,32 +562,73 @@ function CollabFindingScreen({
 
 /* ─── Overlay: Inactiv ───────────────────────────────────────────────────── */
 
-function CollabDeclinedOverlay({ onReactivate }: { onReactivate: () => void }) {
+function CollabLobbyScreen({
+  onFindMatch, onOpenReviews, onResetCollab,
+}: {
+  onFindMatch: () => void
+  onOpenReviews?: () => void
+  onResetCollab?: () => void
+}) {
+  const [visible, setVisible] = useState(false)
+  useEffect(() => { const t = setTimeout(() => setVisible(true), 40); return () => clearTimeout(t) }, [])
   return (
-    <div className="absolute inset-0 z-[60] flex flex-col items-center justify-center"
-      style={{ background: 'rgba(10,10,10,.9)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)' }}>
-      <div className="w-12 h-12 rounded-2xl flex items-center justify-center mb-6"
-        style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.11)' }}>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.55)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
-        </svg>
+    <div
+      className="h-full flex flex-col relative overflow-hidden"
+      style={{ background: '#0a0a0a', opacity: visible ? 1 : 0, transition: 'opacity .3s ease' }}
+    >
+      {/* top bar */}
+      <div className="absolute top-0 left-0 right-0 pt-12 pb-4 px-5 flex items-center justify-between z-10">
+        <h1 className="text-[28px] font-bold tracking-tight text-white">Collab</h1>
+        {(onOpenReviews || onResetCollab) && (
+          <div className="flex items-center gap-2">
+            {onResetCollab && <ResetCollabButton onClick={onResetCollab} />}
+            {onOpenReviews && <ReviewsButton onClick={onOpenReviews} />}
+          </div>
+        )}
       </div>
-      <h2 className="text-[22px] font-bold mb-3 tracking-tight">Collab inactive</h2>
-      <p className="text-[14px] text-center leading-[1.65] mb-9 px-10" style={{ color: 'rgba(255,255,255,.35)' }}>
-        Activate collaboration when you're ready to be part of a team.
-      </p>
-      <button onClick={onReactivate}
-        className="px-8 py-[15px] rounded-[16px] text-[15px] font-bold active:opacity-80 transition-opacity"
-        style={{ background: '#fff', color: '#000' }}>
-        I'm ready now
-      </button>
+
+      {/* centered content */}
+      <div className="flex-1 flex flex-col items-center justify-center">
+        {/* pulse rings + button in the middle */}
+        <div className="relative flex items-center justify-center">
+          {/* outer rings */}
+          <div className="absolute rounded-full anim-find-3" style={{ width: 220, height: 220, border: '1px solid rgba(99,102,241,.2)' }} />
+          <div className="absolute rounded-full anim-find-2" style={{ width: 160, height: 160, border: '1.5px solid rgba(99,102,241,.32)' }} />
+          <div className="absolute rounded-full anim-find-1" style={{ width: 112, height: 112, background: 'rgba(99,102,241,.07)', border: '1.5px solid rgba(99,102,241,.45)' }} />
+          {/* button sits on top of the innermost ring */}
+          <button
+            type="button"
+            onClick={onFindMatch}
+            className="lobby-find-btn relative z-10 flex flex-col items-center justify-center active:scale-95 transition-transform"
+            style={{
+              width: 88,
+              height: 88,
+              borderRadius: '50%',
+              color: '#fff',
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+              border: 'none',
+              boxShadow: '0 4px 24px rgba(99,102,241,.55)',
+              lineHeight: 1.3,
+            }}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mb-1.5">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            </svg>
+            Find
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
 
 /* ─── Chat sheet (direct message with collab partner) ────────────────────── */
 
-interface CollabMessage { sender: string; at: number; text: string }
+interface CollabMessage { sender: string; at: number; text?: string; content?: string }
 
 function CollabChatSheet({
   conn, userId, onClose,
@@ -526,8 +663,10 @@ function CollabChatSheet({
   async function send() {
     const t = text.trim()
     if (!t || sending) return
-    setSending(true)
     setText('')
+    const optimistic: CollabMessage = { sender: userId, at: Date.now() / 1000, content: t, text: t }
+    setMessages((prev) => [...prev, optimistic])
+    setSending(true)
     try {
       await fetch(CENTRAL_ENDPOINTS.messagesSend, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -563,7 +702,7 @@ function CollabChatSheet({
                 style={isMe
                   ? { background: '#fff', color: '#000', borderBottomRightRadius: 6 }
                   : { background: 'rgba(255,255,255,.09)', color: '#fff', borderBottomLeftRadius: 6 }}>
-                {msg.text}
+                {msg.content ?? msg.text}
               </div>
             </div>
           )
@@ -1324,7 +1463,7 @@ function CollabJourneyView({
         : (
           <div className="fixed z-[500] flex flex-col items-center justify-center gap-3"
             style={{
-              bottom: 100, right: 16,
+              bottom: 124, right: 16,
               width: 'min(360px, calc(100vw - 32px))',
               height: 120,
               background: '#111',
@@ -1581,13 +1720,13 @@ function JourneyPortalCard({
       ref={cardRef}
       type="button"
       onClick={() => onSelect(index)}
-      className="anim-entry-in group relative w-full overflow-hidden rounded-[26px] border border-white/10 text-left active:scale-[0.985] transition-transform"
-      style={{ height: 168, animationDelay: `${index * 60}ms`, background: '#111' }}
+      className="anim-entry-in group relative w-full overflow-hidden text-left active:scale-[0.985] transition-transform"
+      style={{ height: 168, animationDelay: `${index * 60}ms`, background: '#000' }}
     >
       {/* live path preview */}
       {fetched && nodes.length > 0 && cardW > 0
         ? <>
-            <div className="absolute inset-0" style={{ background: journeyGradient(journey.id), opacity: 0.28 }} />
+            <div className="absolute inset-0" style={{ background: journeyGradient(journey.id), opacity: 0.32 }} />
             <MiniPathPreview nodes={nodes} cardW={cardW} />
           </>
         : !fetched
@@ -1605,8 +1744,14 @@ function JourneyPortalCard({
           )
       }
 
+      {/* edge fades on all sides — blend card into page black */}
+      {/* vignette lateral stânga/dreapta */}
+      <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(ellipse 80% 200% at 50% 50%, transparent 55%, #000 100%)' }} />
+      {/* vignette sus/jos */}
+      <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(ellipse 200% 65% at 50% 50%, transparent 50%, #000 100%)' }} />
+
       {/* top: chevron affordance */}
-      <div className="absolute top-4 right-5">
+      <div className="absolute top-4 right-5 z-10">
         <span
           className="flex h-8 w-8 items-center justify-center rounded-full transition-transform group-hover:translate-x-0.5"
           style={{ background: 'rgba(255,255,255,.92)', color: '#000' }}
@@ -1618,7 +1763,7 @@ function JourneyPortalCard({
       </div>
 
       {/* bottom: avatars + goal count */}
-      <div className="absolute bottom-0 left-0 right-0 px-5 pb-4">
+      <div className="absolute bottom-0 left-0 right-0 px-5 pb-4 z-10">
         <div className="flex items-center gap-3">
           <div className="flex -space-x-2">
             {journey.participants.slice(0, 4).map((p, i) => (
@@ -1641,29 +1786,45 @@ function JourneyPortalCard({
   )
 }
 
+function ResetCollabButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title="Restart collab onboarding"
+      className="w-[34px] h-[34px] rounded-[11px] flex items-center justify-center transition-transform active:scale-95"
+      style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.1)', color: 'rgba(255,255,255,.45)' }}
+    >
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+        <path d="M3 3v5h5" />
+      </svg>
+    </button>
+  )
+}
+
 function ReviewsButton({ onClick }: { onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1.5 rounded-xl bg-white px-3.5 py-2 text-[13px] font-semibold text-black shadow-sm transition-transform active:scale-95"
+      className="inline-flex items-center rounded-xl bg-white px-3.5 py-2 text-[13px] font-semibold text-black shadow-sm transition-transform active:scale-95"
     >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 2l2.9 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l7.1-1.01L12 2z" />
-      </svg>
       Reviews
     </button>
   )
 }
 
 function JourneysContent({
-  journeys, loading, error, onSelect, onOpenReviews,
+  journeys, loading, error, onSelect, onOpenReviews, onFindMatch, onResetCollab,
 }: {
   journeys: JourneyListItem[]
   loading: boolean
   error: string | null
   onSelect: (idx: number) => void
   onOpenReviews: () => void
+  onFindMatch: () => void
+  onResetCollab: () => void
 }) {
   if (loading && journeys.length === 0) {
     return (
@@ -1674,42 +1835,26 @@ function JourneysContent({
   }
 
   if (journeys.length === 0) {
-    return (
-      <section className="mx-auto w-full max-w-2xl px-4 pt-[52px] pb-10">
-        <header className="mb-6 flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-white">Collab</h1>
-            <p className="mt-1 text-sm text-white/55">Journeys you're working on with someone else.</p>
-          </div>
-          <div className="pt-1"><ReviewsButton onClick={onOpenReviews} /></div>
-        </header>
-        <div className="rounded-3xl border border-dashed border-[#2a2a2a] bg-[#1a1a1a] px-6 py-10 text-center">
-          <p className="text-3xl">🤝</p>
-          <p className="mt-3 text-sm font-semibold text-white">No shared journeys yet</p>
-          <p className="mt-2 text-xs text-white/55">
-            Connect with someone, then open the chat and tap{' '}
-            <span className="font-semibold">+ Propose goal</span> to start a shared journey.
-          </p>
-          {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
-        </div>
-      </section>
-    )
+    return <CollabLobbyScreen onFindMatch={onFindMatch} onOpenReviews={onOpenReviews} onResetCollab={onResetCollab} />
   }
 
   return (
-    <section className="mx-auto w-full max-w-2xl px-4 pt-[52px] pb-8">
-      <header className="mb-6 flex items-start justify-between gap-3 px-1">
+    <section className="w-full pt-[62px] pb-8">
+      <header className="mb-6 flex items-start justify-between gap-3 px-5">
         <div>
           <h1 className="text-[28px] font-bold tracking-tight text-white">Collab</h1>
         </div>
-        <div className="pt-1.5"><ReviewsButton onClick={onOpenReviews} /></div>
+        <div className="pt-1.5 flex items-center gap-2">
+          <ResetCollabButton onClick={onResetCollab} />
+          <ReviewsButton onClick={onOpenReviews} />
+        </div>
       </header>
-      <div className="flex flex-col gap-3.5">
+      <div className="flex flex-col">
         {journeys.map((j, i) => (
           <JourneyPortalCard key={j.id} journey={j} index={i} onSelect={onSelect} />
         ))}
       </div>
-      {error && <p className="mt-4 text-xs text-red-400">{error}</p>}
+      {error && <p className="mt-4 text-xs text-red-400 px-5">{error}</p>}
     </section>
   )
 }
@@ -1718,6 +1863,8 @@ function JourneysContent({
 
 export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { userId: string; onOpenFocus: (target: FocusTarget) => void; onOpenJournal: (props: JournalFocusActions) => void }) {
   const [ob, setOb] = useState<OBPhase | null>(null)
+  const [autoStartFinding, setAutoStartFinding] = useState(false)
+  const [postMatchConn, setPostMatchConn] = useState<OBConnection | null>(null)
   const [peopleOpen, setPeopleOpen] = useState(false)
   const [reviewsOpen, setReviewsOpen] = useState(false)
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
@@ -1731,7 +1878,16 @@ export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { u
       const r = await fetch(CENTRAL_ENDPOINTS.journeyList(userId), { cache: 'no-store' })
       if (!r.ok) throw new Error(`journey list failed (${r.status})`)
       const data = (await r.json()) as JourneyListResponse
-      if (data.ok) { setJourneys(data.journeys); setError(null) }
+      if (data.ok) {
+        const list = data.journeys
+        // TEMP visual test — remove before shipping
+        const mock: JourneyListItem[] = list.length > 0 ? [
+          { ...list[0], id: list[0].id + '_mock2', title: 'Launch side project', goal_count: 5, root_count: 5 },
+          { ...list[0], id: list[0].id + '_mock3', title: 'Read 12 books', goal_count: 3, root_count: 3 },
+        ] : []
+        setJourneys([...list, ...mock])
+        setError(null)
+      }
       else throw new Error('server returned ok=false')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -1755,30 +1911,32 @@ export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { u
 
   const journeyOpen = selectedIdx !== null && journeys[selectedIdx] !== undefined
 
+  const obKey = `${OB_KEY}_${userId}`
+
   useEffect(() => {
-    const stored = localStorage.getItem(OB_KEY)
-    setOb(stored === 'active' ? 'active' : stored === 'declined' ? 'declined' : 'question')
-  }, [])
+    if (!userId) return
+    setOb('active')   // show journeys immediately; find-match available via button
+  }, [userId])
 
   const advance = (to: OBPhase) => {
     setOb(to)
-    if (to !== 'finding') localStorage.setItem(OB_KEY, to)
+    if (to !== 'finding') localStorage.setItem(obKey, to)
   }
 
   if (ob === null) return <div className="h-full" style={{ background: '#0a0a0a' }} />
-  if (ob === 'question') return <CollabReadyScreen onReady={() => advance('finding')} />
   if (ob === 'finding') return (
     <CollabFindingScreen
       userId={userId}
-      onConfirm={() => advance('active')}
-      onNotNow={() => advance('active')}
+      autoStart={autoStartFinding}
+      onConfirm={() => { advance('active') }}
+      onNotNow={() => advance('declined')}
       onBack={() => advance('question')}
     />
   )
 
   return (
+    <>
     <div className="flex flex-col h-full overflow-hidden relative">
-      {ob === 'declined' && <CollabDeclinedOverlay onReactivate={() => advance('question')} />}
       {journeyOpen ? (
         <SwipeDeck
           count={journeys.length}
@@ -1811,18 +1969,20 @@ export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { u
             error={error}
             onSelect={setSelectedIdx}
             onOpenReviews={() => setReviewsOpen(true)}
+            onFindMatch={() => { setAutoStartFinding(true); advance('finding') }}
+            onResetCollab={() => { localStorage.removeItem(obKey); advance('question') }}
           />
         </div>
       )}
 
-      {/* People FAB — hidden when journey detail is open */}
-      {!journeyOpen && (
+      {/* People FAB — hidden when journey detail is open or no journeys yet */}
+      {!journeyOpen && journeys.length > 0 && (
         <button
           type="button"
           onClick={() => setPeopleOpen(true)}
           className="fixed z-[99] flex items-center justify-center"
           style={{
-            bottom: 96, right: 20,
+            bottom: 124, right: 20,
             width: 52, height: 52,
             borderRadius: '50%',
             border: '1px solid rgba(255,255,255,.18)',
@@ -1842,18 +2002,16 @@ export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { u
         </button>
       )}
 
-      <ReviewsPanel open={reviewsOpen} onClose={() => setReviewsOpen(false)} userId={userId} />
-
       {/* People overlay — slides in from right */}
       <div
         className="fixed inset-0 z-[200] flex flex-col transition-transform duration-300"
         style={{
-          background: 'var(--bg)',
+          background: '#000',
           transform: peopleOpen ? 'translateX(0)' : 'translateX(100%)',
         }}
       >
         <div
-          className="px-5 pt-12 pb-4 flex items-center gap-3.5 flex-shrink-0"
+          className="px-5 pt-[62px] pb-4 flex items-center gap-3.5 flex-shrink-0"
           style={{ borderBottom: '1px solid rgba(255,255,255,.07)' }}
         >
           <button
@@ -1868,10 +2026,23 @@ export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { u
           </button>
           <div className="text-lg font-bold tracking-tight">People</div>
         </div>
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 overflow-hidden relative">
           {peopleOpen && <ConnectionsView userId={userId} />}
         </div>
       </div>
     </div>
+
+    <ReviewsPanel open={reviewsOpen} onClose={() => setReviewsOpen(false)} userId={userId} />
+
+    {/* Post-match direct chat — rendered via portal to escape any stacking context */}
+    {postMatchConn && createPortal(
+      <CollabChatSheet
+        conn={postMatchConn}
+        userId={userId}
+        onClose={() => setPostMatchConn(null)}
+      />,
+      document.body,
+    )}
+    </>
   )
 }
