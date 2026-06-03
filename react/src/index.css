@@ -99,6 +99,16 @@ body,
   0%, 100% { box-shadow: 0 0 0 5px rgba(255,255,255,.18), 0 0 0 10px rgba(255,255,255,.07); }
   50%      { box-shadow: 0 0 0 8px rgba(255,255,255,.22), 0 0 0 18px rgba(255,255,255,.04); }
 }
+@keyframes goalProposePulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(167,139,250,.36), 0 0 18px rgba(167,139,250,.22);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(167,139,250,.08), 0 0 28px rgba(167,139,250,.42);
+    transform: scale(1.04);
+  }
+}
 @keyframes badgePop {
   from { transform: scale(.7); opacity: 0 }
   to   { transform: scale(1);  opacity: 1 }
@@ -129,6 +139,7 @@ body,
 .loading-bob    { animation: loader-bob 1.6s ease-in-out infinite; }
 .anim-pg-in     { animation: pgIn .22s ease; }
 .anim-pulse     { animation: pulse 2.2s ease-in-out infinite; }
+.anim-goal-propose-pulse { animation: goalProposePulse 2s ease-in-out infinite; }
 .anim-badge-pop { animation: badgePop .4s cubic-bezier(.34,1.56,.64,1); }
 .anim-entry-in      { animation: entryIn .28s ease both; }
 .server-status-in   { animation: serverStatusIn .4s ease both; }

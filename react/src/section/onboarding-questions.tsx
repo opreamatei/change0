@@ -25,6 +25,27 @@ interface OnboardingQuestionsProps {
   onSkip: () => void
 }
 
+const QUESTION_LOADING_LINES = [
+  'Getting to know you better...',
+  'Looking for the part that makes this actually stick...',
+  'What am I even saying here?',
+  'Checkign where your abilities can shine!',
+  'Pushing this as far as possible...',
+  'Tuning the question machine. Very scientific. Kind of.',
+  'Finding the door that does not look like a door...',
+]
+
+function shuffledLoadingLines(): string[] {
+  const lines = [...QUESTION_LOADING_LINES]
+  for (let i = lines.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    const tmp = lines[i]
+    lines[i] = lines[j]
+    lines[j] = tmp
+  }
+  return lines
+}
+
 export default function OnboardingQuestions({ goalTitle, scope, onDone, onSkip }: OnboardingQuestionsProps) {
   const [questions, setQuestions] = useState<Question[]>([])
   const [answers, setAnswers] = useState<string[]>([])
@@ -32,6 +53,8 @@ export default function OnboardingQuestions({ goalTitle, scope, onDone, onSkip }
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+  const [loadingLines] = useState(shuffledLoadingLines)
+  const [loadingLineIdx, setLoadingLineIdx] = useState(0)
 
   const fetchedRef = useRef(false)
 
@@ -62,6 +85,14 @@ export default function OnboardingQuestions({ goalTitle, scope, onDone, onSkip }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  useEffect(() => {
+    if (!loading) return
+    const id = setInterval(() => {
+      setLoadingLineIdx((i) => (i + 1) % loadingLines.length)
+    }, 1650)
+    return () => clearInterval(id)
+  }, [loading, loadingLines.length])
+
   const current = questions[idx]
   const isLast = idx === questions.length - 1
   const hasAnswer = input.trim().length > 0
@@ -90,9 +121,7 @@ export default function OnboardingQuestions({ goalTitle, scope, onDone, onSkip }
   if (loading) {
     return (
       <Shell goalTitle={goalTitle}>
-        <div className="flex flex-1 items-center justify-center text-[14px]" style={{ color: 'rgba(255,255,255,.45)' }}>
-          Preparing a few questions…
-        </div>
+        <LoadingQuestionsScreen line={loadingLines[loadingLineIdx] ?? QUESTION_LOADING_LINES[0]} />
       </Shell>
     )
   }
@@ -182,6 +211,50 @@ export default function OnboardingQuestions({ goalTitle, scope, onDone, onSkip }
         </button>
       </div>
     </Shell>
+  )
+}
+
+function LoadingQuestionsScreen({ line }: { line: string }) {
+  return (
+    <>
+      <style>{`
+        @keyframes obq-load-core {
+          0%, 100% { transform: scale(.92); opacity: .62; }
+          50% { transform: scale(1.04); opacity: 1; }
+        }
+        @keyframes obq-load-ring {
+          0% { transform: scale(.72); opacity: .36; }
+          100% { transform: scale(1.75); opacity: 0; }
+        }
+        @keyframes obq-load-dot {
+          0%, 100% { transform: translateY(0); opacity: .28; }
+          50% { transform: translateY(-7px); opacity: .95; }
+        }
+        @keyframes obq-load-copy {
+          from { opacity: 0; transform: translateY(8px); filter: blur(5px); }
+          to { opacity: 1; transform: translateY(0); filter: blur(0); }
+        }
+      `}</style>
+      <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
+        <div className="relative mb-9 flex h-24 w-24 items-center justify-center">
+          <span className="absolute h-16 w-16 rounded-full" style={{ border: '1px solid rgba(255,255,255,.16)', animation: 'obq-load-ring 2s ease-out infinite' }} />
+          <span className="absolute h-16 w-16 rounded-full" style={{ border: '1px solid rgba(255,255,255,.12)', animation: 'obq-load-ring 2s ease-out .7s infinite' }} />
+          <div className="relative flex h-14 w-14 items-center justify-center rounded-full"
+            style={{ background: 'rgba(255,255,255,.08)', border: '1px solid rgba(255,255,255,.13)', animation: 'obq-load-core 2.2s ease-in-out infinite' }}>
+            <div className="flex items-end gap-1.5">
+              {[0, 1, 2].map((i) => (
+                <span key={i} className="h-2 w-2 rounded-full bg-white"
+                  style={{ animation: `obq-load-dot .95s ease-in-out ${i * 0.16}s infinite` }} />
+              ))}
+            </div>
+          </div>
+        </div>
+        <div key={line} className="max-w-[310px] text-[22px] font-extrabold leading-snug tracking-tight text-white"
+          style={{ animation: 'obq-load-copy .42s cubic-bezier(.22,1,.36,1)' }}>
+          {line}
+        </div>
+      </div>
+    </>
   )
 }
 

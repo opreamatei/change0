@@ -895,15 +895,21 @@ function ChatProposalBubble({
 }
 
 function CollabChatSheet({
-  conn, userId, onClose,
+  conn, userId, onClose, shouldPulseProposeGoal = false,
 }: {
   conn: OBConnection
   userId: string
   onClose: () => void
+  shouldPulseProposeGoal?: boolean
 }) {
   const [messages, setMessages] = useState<CollabMessage[]>([])
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
+  const [proposeOpen, setProposeOpen] = useState(false)
+  const [proposeTitle, setProposeTitle] = useState('')
+  const [proposeExtraInfo, setProposeExtraInfo] = useState('')
+  const [proposeBusy, setProposeBusy] = useState(false)
+  const [proposeError, setProposeError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const loadMessages = useCallback(async () => {
@@ -934,11 +940,51 @@ function CollabChatSheet({
     try {
       await fetch(CENTRAL_ENDPOINTS.messagesSend, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ connection_id: conn.id, sender_id: userId, content: t }),
+        body: JSON.stringify({ connection_id: conn.id, sender_id: userId, text: t }),
       })
       await loadMessages()
     } catch { /* ignore */ }
     finally { setSending(false) }
+  }
+
+  function dismissProposalPopout() {
+    setProposeOpen(false)
+    setProposeTitle('')
+    setProposeExtraInfo('')
+    setProposeError(null)
+  }
+
+  async function proposeRootGoal() {
+    const title = proposeTitle.trim()
+    const extraInfo = proposeExtraInfo.trim()
+    if (!title) { setProposeError('Enter a goal title.'); return }
+    if (!conn.other_id) { setProposeError('Partner id is missing.'); return }
+
+    setProposeBusy(true)
+    setProposeError(null)
+    try {
+      const listRes = await fetch(CENTRAL_ENDPOINTS.journeyList(userId), { cache: 'no-store' })
+      const listData = (await listRes.json()) as JourneyListResponse
+      if (!listRes.ok || !listData.ok) throw new Error('Could not load shared journeys.')
+
+      const journey = listData.journeys?.find((j) => j.participants.some((p) => p.id === conn.other_id))
+      if (!journey) { setProposeError('Shared journey not found yet.'); return }
+
+      const res = await fetch(CENTRAL_ENDPOINTS.journeyProposeRoot(journey.id), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, title, extra_info: extraInfo }),
+      })
+      const data = (await res.json()) as { ok: boolean; id?: string; error?: string }
+      if (!res.ok || !data.ok) throw new Error(data.error ?? `propose failed (${res.status})`)
+
+      dismissProposalPopout()
+      await loadMessages()
+    } catch (err) {
+      setProposeError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setProposeBusy(false)
+    }
   }
 
   return (
@@ -978,8 +1024,74 @@ function CollabChatSheet({
         })}
         <div ref={bottomRef} />
       </div>
+      {proposeOpen && (
+        <div className="absolute left-4 right-4 bottom-[104px] z-10 rounded-2xl p-4"
+          style={{
+            background: 'rgba(18,18,22,.97)',
+            border: '1px solid rgba(255,255,255,.12)',
+            boxShadow: '0 16px 50px rgba(0,0,0,.45)',
+          }}>
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/35">Propose goal</p>
+          <input
+            value={proposeTitle}
+            onChange={(e) => setProposeTitle(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !proposeBusy) { e.preventDefault(); void proposeRootGoal() } }}
+            disabled={proposeBusy}
+            autoFocus
+            placeholder="Goal title"
+            className="mt-3 w-full rounded-xl px-3 py-2.5 text-sm outline-none"
+            style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.1)', color: '#fff' }}
+          />
+          <textarea
+            value={proposeExtraInfo}
+            onChange={(e) => setProposeExtraInfo(e.target.value)}
+            disabled={proposeBusy}
+            rows={3}
+            placeholder="Extra info"
+            className="mt-2 w-full resize-none rounded-xl px-3 py-2.5 text-sm outline-none no-scrollbar"
+            style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.1)', color: '#fff' }}
+          />
+          {proposeError && <p className="mt-2 text-xs text-red-400">{proposeError}</p>}
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              onClick={dismissProposalPopout}
+              disabled={proposeBusy}
+              className="rounded-xl px-4 py-2 text-sm font-medium text-white/55 active:opacity-70 disabled:opacity-40"
+              style={{ border: '1px solid rgba(255,255,255,.1)' }}>
+              Dismiss
+            </button>
+            <button
+              onClick={() => void proposeRootGoal()}
+              disabled={proposeBusy || !proposeTitle.trim()}
+              className="rounded-xl px-4 py-2 text-sm font-semibold active:opacity-70 disabled:opacity-40"
+              style={{ background: '#fff', color: '#000' }}>
+              {proposeBusy ? 'Proposing...' : 'Propose'}
+            </button>
+          </div>
+        </div>
+      )}
       <div className="flex-shrink-0 px-4 pb-10 pt-3 flex gap-2 items-end"
         style={{ borderTop: '1px solid rgba(255,255,255,.07)' }}>
+        <button
+          onClick={() => { setProposeOpen((v) => !v); setProposeError(null) }}
+          disabled={proposeBusy}
+          aria-label="Propose goal"
+          title="Propose goal"
+          className={`w-10 h-10 rounded-full flex-shrink-0 flex items-center justify-center disabled:opacity-40 active:opacity-70 transition-opacity ${shouldPulseProposeGoal ? 'anim-goal-propose-pulse' : ''}`}
+          style={{
+            background: proposeOpen
+              ? 'rgba(167,139,250,.22)'
+              : shouldPulseProposeGoal ? 'rgba(167,139,250,.16)' : 'rgba(255,255,255,.08)',
+            color: proposeOpen || shouldPulseProposeGoal ? 'rgb(216,201,255)' : '#fff',
+            border: proposeOpen || shouldPulseProposeGoal ? '1px solid rgba(167,139,250,.45)' : '1px solid rgba(255,255,255,.1)',
+          }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="7.2" />
+            <circle cx="12" cy="12" r="2.2" />
+            <path d="M14 10l4.2-4.2" />
+            <path d="M18.2 5.8h2.4v2.4" />
+          </svg>
+        </button>
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -1579,6 +1691,7 @@ function CollabJourneyView({
 
   const doneCount = collabNodes.filter((n) => n.nodeState === 'done').length
   const selectedLeaf = selectedIdx !== null ? orderedLeaves[selectedIdx] : null
+  const hasNoGoals = detail ? detail.goals.length === 0 : (summary.root_count ?? summary.goal_count) === 0
 
   return (
     <>
@@ -1728,7 +1841,7 @@ function CollabJourneyView({
     </div>
     {chatOpen && createPortal(
       chatConn
-        ? <CollabChatSheet conn={chatConn} userId={userId} onClose={() => setChatOpen(false)} />
+        ? <CollabChatSheet conn={chatConn} userId={userId} onClose={() => setChatOpen(false)} shouldPulseProposeGoal={hasNoGoals} />
         : (
           <div className="fixed z-[500] flex flex-col items-center justify-center gap-3"
             style={{

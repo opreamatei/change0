@@ -354,7 +354,9 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
       H = canvas.offsetHeight
     }
 
-    const CYCLE = 3600       // slower, calmer build cycle
+    const CYCLE = 4200       // build + soft fade, then repeat if the server is still busy
+    const FADE_START = 0.82
+    const FADE_IN_END = 0.12
     const OSC_AMP = 11       // px of gentle left-right sway
     const OSC_PERIOD = 2200  // ms per sway cycle (slow, smooth)
     const stepT = 1 / N
@@ -369,16 +371,24 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
       if (cancelled) return
       let t = (now - cycleStart) / CYCLE
       if (t >= 1) {
-        // One build cycle finished. If the server is done, advance; else loop.
+        // One full build/fade cycle finished. If the server is done, advance;
+        // otherwise restart from an already-faded state so the loop never snaps.
         if (creationDoneRef.current) { navTo('journey'); return }
         cycleStart = now
         t = 0
       }
 
+      const buildT = Math.min(1, t / FADE_START)
+      const fadeIn = ease(Math.min(1, t / FADE_IN_END))
+      const fadeOut = t < FADE_START ? 1 : 1 - ease(Math.min(1, (t - FADE_START) / (1 - FADE_START)))
+      const cycleAlpha = fadeIn * fadeOut
+
+      if (blur) blur.style.opacity = (0.45 * cycleAlpha).toFixed(3)
+
       // nodes pop in one after another
       for (let i = 0; i < N; i++) {
         // wider reveal window so nodes ease in gently and overlap, no abrupt pop
-        const local = Math.max(0, Math.min(1, (t - i * stepT) / (stepT * 1.35)))
+        const local = Math.max(0, Math.min(1, (buildT - i * stepT) / (stepT * 1.35)))
         const el = nodeEls[i]
         if (!el) continue
         const e = ease(local)
@@ -386,17 +396,19 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
         const scale = 0.72 + 0.28 * e            // settle from 72% → 100%, no overshoot
         const rise = (1 - e) * 14                // drift up a touch as it settles
         el.style.transform = `translate(-50%, -50%) translate(${dx.toFixed(1)}px, ${rise.toFixed(1)}px) scale(${scale.toFixed(3)})`
-        el.style.opacity = String((0.78 * e).toFixed(3))
+        el.style.opacity = String((0.78 * e * cycleAlpha).toFixed(3))
       }
 
       // dotted connectors grow between nodes
       if (ctx) {
         ctx.clearRect(0, 0, W, H)
+        ctx.save()
+        ctx.globalAlpha = cycleAlpha
         for (let i = 0; i < positions.length - 1; i++) {
           const ls = (i + 0.6) * stepT
           const le = ls + stepT * 0.5
-          if (t < ls) continue
-          const lt = ease(Math.min((t - ls) / (le - ls), 1))
+          if (buildT < ls) continue
+          const lt = ease(Math.min((buildT - ls) / (le - ls), 1))
           const p1 = positions[i]
           const p2 = positions[i + 1]
           const x1 = p1.baseX + OSC_AMP * Math.sin(now / OSC_PERIOD + p1.phase)
@@ -420,11 +432,13 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
           ctx.stroke()
           ctx.restore()
         }
+        ctx.restore()
       }
 
       if (msgEl) {
-        const want = msgs[Math.min(msgs.length - 1, Math.floor(t * msgs.length))]
+        const want = msgs[Math.min(msgs.length - 1, Math.floor(buildT * msgs.length))]
         if (msgEl.textContent !== want) msgEl.textContent = want
+        msgEl.style.opacity = cycleAlpha.toFixed(3)
       }
 
       raf = requestAnimationFrame(frame)
@@ -627,7 +641,6 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
               <div className="ob-loading-msg" id="ob-loading-msg">
                 Preparing…
               </div>
-              <div className="ob-loading-sub">personalized journey</div>
             </div>
           </div>
         )}
@@ -908,8 +921,6 @@ const OB_CSS = `
 .ob-loading-node svg { width: 26px; height: 26px; display: block; stroke: #000; color: #000; }
 .ob-loading-text { position: absolute; top: 50%; left: 0; right: 0; transform: translateY(-50%); display: flex; flex-direction: column; align-items: center; z-index: 20; gap: 6px; pointer-events: none; }
 .ob-loading-msg { font-size: 18px; font-weight: 800; letter-spacing: -0.4px; transition: opacity .35s ease; }
-.ob-loading-sub { font-size: 11px; color: var(--ob-dim); letter-spacing: 2px; text-transform: uppercase; font-weight: 600; }
-
 /* PROPOSALS */
 .ob-screen-proposal { padding: 0; justify-content: flex-start; }
 .ob-prop-header { width: 100%; padding: 52px 24px 0; display: flex; flex-direction: column; align-items: center; }
