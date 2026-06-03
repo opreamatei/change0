@@ -55,9 +55,9 @@ function Icon({ type }: { type: 'task' | 'success' | 'stage' }) {
   )
 }
 
-// Minimalist tips block. Collapsed it shows only the task (one line) to keep the
-// surrounding UI calm; tapping it reveals the ordered stages and the done-when
-// criterion. Order is meaningful and each row keeps its matching icon.
+// Minimalist tips block. Collapsed it shows only the task; tapping it smoothly
+// expands the ordered stages (one per line) and the done-when criterion, each
+// row easing in with a small stagger.
 export default function GoalTipsCard({
   tips,
   compact = false,
@@ -73,6 +73,8 @@ export default function GoalTipsCard({
 
   return (
     <div className="w-full text-left">
+      <style>{`@keyframes tips-row-in { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }`}</style>
+
       <button
         type="button"
         onClick={() => hasMore && setOpen((o) => !o)}
@@ -85,39 +87,43 @@ export default function GoalTipsCard({
         {hasMore && (
           <svg
             width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"
-            className="mt-1 shrink-0 transition-transform"
-            style={{ transform: open ? 'rotate(180deg)' : 'none', color: 'rgba(255,255,255,.35)' }}
+            className="mt-1 shrink-0"
+            style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .3s cubic-bezier(.22,1,.36,1)', color: 'rgba(255,255,255,.35)' }}
           >
             <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         )}
       </button>
 
-      {open && hasMore && (
-        <div className="mt-3 space-y-2.5 pl-[26px]">
-          {parsed.stages.length > 0 && (
-            <div className="flex items-start gap-2.5">
-              <span className="mt-[3px] shrink-0 text-amber-300/60"><Icon type="stage" /></span>
-              <p className="text-[12px] leading-relaxed text-white/55">
-                {parsed.stages.map((stage, i) => (
-                  <span key={`${stage}-${i}`}>
-                    {i > 0 && <span className="text-white/25"> · </span>}
-                    {stage}
-                  </span>
-                ))}
-              </p>
-            </div>
-          )}
+      {hasMore && (
+        <div style={{ display: 'grid', gridTemplateRows: open ? '1fr' : '0fr', transition: 'grid-template-rows .32s cubic-bezier(.22,1,.36,1)' }}>
+          <div className="overflow-hidden">
+            <div className="space-y-2 pl-[26px] pt-3">
+              {parsed.stages.map((stage, i) => (
+                <div
+                  key={`stage-${i}`}
+                  className="flex items-start gap-2.5"
+                  style={{ animation: open ? `tips-row-in .34s cubic-bezier(.22,1,.36,1) ${i * 70}ms both` : 'none' }}
+                >
+                  <span className="mt-[3px] shrink-0 text-amber-300/60"><Icon type="stage" /></span>
+                  <p className="text-[12px] leading-snug text-white/55">{stage}</p>
+                </div>
+              ))}
 
-          {parsed.success && (
-            <div className="flex items-start gap-2.5">
-              <span className="mt-[3px] shrink-0 text-emerald-300/70"><Icon type="success" /></span>
-              <p className="text-[12px] leading-relaxed text-white/55">
-                <span className="text-white/35">Done when </span>
-                {parsed.success}
-              </p>
+              {parsed.success && (
+                <div
+                  className="flex items-start gap-2.5"
+                  style={{ animation: open ? `tips-row-in .34s cubic-bezier(.22,1,.36,1) ${parsed.stages.length * 70}ms both` : 'none' }}
+                >
+                  <span className="mt-[3px] shrink-0 text-emerald-300/70"><Icon type="success" /></span>
+                  <p className="text-[12px] leading-snug text-white/55">
+                    <span className="text-white/35">Done when </span>
+                    {parsed.success}
+                  </p>
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
       )}
     </div>

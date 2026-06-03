@@ -146,9 +146,9 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
   const [journeyMeta, setJourneyMeta] = useState<{ name: string; cat: string }>({ name: '', cat: 'JOURNEY' })
   const [clarifyCtx, setClarifyCtx] = useState<ClarifyCtx | null>(null)
   const [openStep, setOpenStep] = useState<number | null>(null)
-  const [error, setError] = useState<string | null>(null)
 
   const creationDoneRef = useRef(false)
+  const creationRunRef = useRef(0)
   const dragRef = useRef<{ startX: number; dx: number; dragging: boolean }>({ startX: 0, dx: 0, dragging: false })
 
   /* Mark the account as mid-onboarding so a refresh resumes the flow rather
@@ -246,26 +246,35 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
   }
 
   /* Create the selected goal directly: title = the chosen goal, extraInfo = its
-     scope blended with the user's clarifying answers (or the bare scope on skip). */
+     scope blended with the user's clarifying answers (or the bare scope on skip).
+
+     There is no failure state: if the server isn't reachable yet, we simply keep
+     retrying while the loading animation loops. Once creation succeeds the
+     loading screen auto-advances to the journey view (via creationDoneRef). */
   async function runCreation(goalTitle: string, scope: string, meta: { name: string; cat: string }) {
-    setError(null)
+    const runId = ++creationRunRef.current
     creationDoneRef.current = false
     setScreen('loading')
 
-    try {
-      await persistOnboardingAnswers()
+    while (creationRunRef.current === runId) {
+      try {
+        await persistOnboardingAnswers()
 
-      const res = await fetch(SERVER_ENDPOINTS.goalCreate, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: goalTitle, extraInfo: buildExtraInfo(scope) }),
-      })
-      if (!res.ok) throw new Error(`Goal create failed: ${res.status}`)
-      const data = (await res.json()) as { ok: boolean; 'goal-id'?: string }
+        const res = await fetch(SERVER_ENDPOINTS.goalCreate, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: goalTitle, extraInfo: buildExtraInfo(scope) }),
+        })
+        if (!res.ok) throw new Error(`Goal create failed: ${res.status}`)
+        const data = (await res.json()) as { ok: boolean; 'goal-id'?: string }
 
-      await finalizeCreatedGoal(data['goal-id'], meta)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+        await finalizeCreatedGoal(data['goal-id'], meta)
+        return
+      } catch {
+        // Server not available yet — wait a moment and try again. The loading
+        // animation keeps running in the meantime.
+        await new Promise((r) => setTimeout(r, 2500))
+      }
     }
   }
 
@@ -273,7 +282,6 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
      chat that asks a few clarifying questions, then lets the middleware fire
      create_goal itself. */
   function beginClarify(goalTitle: string, scope: string, meta: { name: string; cat: string }) {
-    setError(null)
     // Persist answers now so the chat's middleware context already has them.
     void persistOnboardingAnswers()
     setClarifyCtx({ goalTitle, scope, meta })
@@ -415,7 +423,7 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
       }
 
       if (msgEl) {
-        const want = error ? 'Something went wrong' : msgs[Math.min(msgs.length - 1, Math.floor(t * msgs.length))]
+        const want = msgs[Math.min(msgs.length - 1, Math.floor(t * msgs.length))]
         if (msgEl.textContent !== want) msgEl.textContent = want
       }
 
@@ -429,7 +437,7 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
       if (nodesLayer) nodesLayer.innerHTML = ''
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [screen, error])
+  }, [screen])
 
   /* ─── navigation helper with a soft fade ─── */
   const [leaving, setLeaving] = useState(false)
@@ -619,17 +627,8 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
               <div className="ob-loading-msg" id="ob-loading-msg">
                 Preparing…
               </div>
-              <div className="ob-loading-sub">{error ? 'tap below to go back' : 'personalized journey'}</div>
+              <div className="ob-loading-sub">personalized journey</div>
             </div>
-            {error && (
-              <button
-                className="ob-cta"
-                style={{ position: 'absolute', bottom: 48 }}
-                onClick={() => navTo('proposal')}
-              >
-                Something went wrong — go back
-              </button>
-            )}
           </div>
         )}
 

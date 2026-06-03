@@ -26,6 +26,7 @@ interface OBConnection {
   reason: string
   proposed_at: number
   my_approved: boolean
+  their_approved: boolean
 }
 
 const PALETTE_HUES_OB = [252, 338, 198, 152, 28, 286, 175, 55]
@@ -372,7 +373,7 @@ function CollabFindingScreen({
   autoStart?: boolean
 }) {
   const [started, setStarted] = useState(autoStart ?? false)
-  const [phase, setPhase] = useState<'searching' | 'found' | 'notfound'>('searching')
+  const [phase, setPhase] = useState<'searching' | 'found' | 'notfound' | 'sent'>('searching')
   const [foundConn, setFoundConn] = useState<OBConnection | null>(null)
   const [cardIn, setCardIn] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -422,7 +423,8 @@ function CollabFindingScreen({
         body: JSON.stringify({ connection_id: foundConn.id, user_id: userId }),
       })
     } catch { /* advance anyway */ }
-    onConfirm(foundConn)
+    setPhase('sent')
+    setTimeout(() => onConfirm(foundConn), 1800)
   }
 
   async function handleNotNow() {
@@ -435,6 +437,26 @@ function CollabFindingScreen({
       })
     } catch { /* ignore */ }
     onNotNow()
+  }
+
+  if (phase === 'sent') {
+    return (
+      <div className="h-full flex flex-col items-center justify-center relative px-8 text-center" style={{ background: '#0a0a0a' }}>
+        <div className="absolute inset-0 pointer-events-none" style={{
+          background: 'radial-gradient(ellipse 60% 40% at 50% 45%, rgba(52,199,89,.12) 0%, transparent 70%)',
+        }} />
+        <div className="anim-find-1 w-16 h-16 rounded-full flex items-center justify-center mb-6 relative z-10"
+          style={{ background: 'rgba(52,199,89,.16)', border: '1.5px solid rgba(52,199,89,.5)' }}>
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="rgba(120,230,160,.95)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+        <h2 className="text-[22px] font-bold mb-2 relative z-10">Request sent</h2>
+        <p className="text-[14px] leading-[1.6] relative z-10" style={{ color: 'rgba(255,255,255,.42)' }}>
+          We let {foundConn?.other_name ?? 'them'} know — you'll team up as soon as they accept.
+        </p>
+      </div>
+    )
   }
 
   if (phase === 'found' && foundConn) {
@@ -543,14 +565,177 @@ function CollabFindingScreen({
   )
 }
 
+/* ─── Incoming collab requests — centred swipe card ──────────────────────── */
+
+function RequestSwipeCard({
+  req, userId, onResolved,
+}: {
+  req: OBConnection
+  userId: string
+  onResolved: (id: string) => void
+}) {
+  const [dx, setDx] = useState(0)
+  const [dragging, setDragging] = useState(false)
+  const [leaving, setLeaving] = useState<null | 'accept' | 'decline'>(null)
+  const drag = useRef<{ startX: number; pointerId: number; moved: boolean } | null>(null)
+  const busy = useRef(false)
+  const color = colorFromStringOB(req.other_id || req.other_name)
+  const THRESH = 120
+
+  async function commit(kind: 'accept' | 'decline') {
+    if (busy.current) return
+    busy.current = true
+    setLeaving(kind)
+    const url = kind === 'accept' ? CENTRAL_ENDPOINTS.connectionsApprove : CENTRAL_ENDPOINTS.connectionsDecline
+    try {
+      await fetch(url, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connection_id: req.id, user_id: userId }),
+      })
+    } catch { /* ignore */ }
+    setTimeout(() => onResolved(req.id), 240)
+  }
+
+  function down(e: React.PointerEvent) {
+    if (busy.current) return
+    drag.current = { startX: e.clientX, pointerId: e.pointerId, moved: false }
+  }
+  function move(e: React.PointerEvent) {
+    const d = drag.current
+    if (!d) return
+    const raw = e.clientX - d.startX
+    if (!d.moved) {
+      if (Math.abs(raw) < 6) return   // small move = let taps (buttons) through
+      d.moved = true
+      setDragging(true)
+      e.currentTarget.setPointerCapture(d.pointerId)
+    }
+    // magnetic pull toward the edge once past 60% of the threshold
+    const over = Math.abs(raw) - THRESH * 0.6
+    const mag = over > 0 ? Math.sign(raw) * over * 0.45 : 0
+    setDx(raw + mag)
+  }
+  function up() {
+    const d = drag.current
+    drag.current = null
+    setDragging(false)
+    if (!d || !d.moved) { setDx(0); return }
+    if (dx > THRESH) void commit('accept')
+    else if (dx < -THRESH) void commit('decline')
+    else setDx(0)
+  }
+
+  const p = Math.max(-1, Math.min(1, dx / THRESH))
+  const tx = leaving === 'accept' ? 560 : leaving === 'decline' ? -560 : dx
+  const accentRight = `rgba(52,199,89,${Math.max(0, p) * 0.45})`
+  const accentLeft = `rgba(244,63,94,${Math.max(0, -p) * 0.45})`
+
+  return (
+    <div
+      onPointerDown={down}
+      onPointerMove={move}
+      onPointerUp={up}
+      onPointerCancel={up}
+      className="relative flex w-full max-w-[330px] select-none flex-col items-center overflow-hidden rounded-[28px] px-6 pt-7 pb-6 text-center"
+      style={{
+        background: 'rgba(18,18,20,.98)',
+        border: '1px solid rgba(255,255,255,.1)',
+        boxShadow: '0 18px 50px rgba(0,0,0,.55)',
+        transform: `translateX(${tx}px) rotate(${tx * 0.015}deg)`,
+        transition: dragging ? 'none' : 'transform .28s cubic-bezier(.22,1,.36,1), opacity .26s ease',
+        opacity: leaving ? 0 : 1,
+        touchAction: 'pan-y',
+        cursor: 'grab',
+      }}
+    >
+      <div className="pointer-events-none absolute inset-0" style={{ background: `linear-gradient(90deg, ${accentLeft}, transparent 38%, transparent 62%, ${accentRight})` }} />
+
+      <div className="relative flex h-[72px] w-[72px] items-center justify-center overflow-hidden rounded-full text-[24px] font-bold text-[#0a0a0a]" style={{ background: color }}>
+        <img src={CENTRAL_ENDPOINTS.userAvatar(req.other_id)} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} className="h-full w-full object-cover" alt="" />
+        <span>{req.other_name.charAt(0).toUpperCase()}</span>
+      </div>
+
+      <div className="relative mt-4 text-[18px] font-bold tracking-tight">{req.other_name}</div>
+      <div className="relative mt-0.5 text-[11px]" style={{ color: 'rgba(255,255,255,.3)' }}>wants to team up</div>
+
+      {req.reason && (
+        <p className="relative mt-4 text-[13px] leading-[1.6]" style={{ color: 'rgba(255,255,255,.45)', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+          {req.reason}
+        </p>
+      )}
+
+      <div className="relative mt-3 h-4 text-[12px] font-semibold">
+        {Math.abs(p) > 0.3 && (
+          <span style={{ color: p > 0 ? 'rgba(120,230,160,.95)' : 'rgba(255,140,150,.95)' }}>
+            {p > 0 ? 'Release to accept' : 'Release to pass'}
+          </span>
+        )}
+      </div>
+
+      <div className="relative mt-3 flex w-full gap-2.5">
+        <button
+          type="button"
+          onClick={() => void commit('decline')}
+          className="flex-1 rounded-[16px] py-[13px] text-[14px] font-semibold active:opacity-70 transition-opacity"
+          style={{ background: 'rgba(255,255,255,.06)', color: 'rgba(255,255,255,.55)', border: '1px solid rgba(255,255,255,.08)' }}
+        >
+          Pass
+        </button>
+        <button
+          type="button"
+          onClick={() => void commit('accept')}
+          className="flex-[1.5] rounded-[16px] py-[13px] text-[15px] font-bold active:opacity-80 transition-opacity"
+          style={{ background: '#fff', color: '#000' }}
+        >
+          Accept
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function RequestSwipeDeck({
+  reqs, userId, onResolved,
+}: {
+  reqs: OBConnection[]
+  userId: string
+  onResolved: (id: string) => void
+}) {
+  const top = reqs[0]
+  if (!top) return null
+  return (
+    <div className="pointer-events-none fixed inset-0 z-[95] flex items-center justify-center px-6">
+      <div className="pointer-events-auto flex w-full max-w-[330px] flex-col items-center">
+        <div className="relative w-full">
+          {reqs.length > 1 && (
+            <>
+              <div className="absolute -top-3 left-4 right-4 h-12 rounded-[24px]" style={{ background: 'rgba(18,18,20,.6)', border: '1px solid rgba(255,255,255,.06)' }} />
+              <div className="absolute -top-1.5 left-2 right-2 h-12 rounded-[26px]" style={{ background: 'rgba(18,18,20,.8)', border: '1px solid rgba(255,255,255,.08)' }} />
+            </>
+          )}
+          <div className="relative">
+            <RequestSwipeCard key={top.id} req={top} userId={userId} onResolved={onResolved} />
+          </div>
+        </div>
+        {reqs.length > 1 && (
+          <div className="mt-3 text-[10px] font-semibold uppercase tracking-widest text-white/30">
+            {reqs.length - 1} more
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /* ─── Overlay: Inactiv ───────────────────────────────────────────────────── */
 
 function CollabLobbyScreen({
-  onFindMatch, onOpenReviews, onResetCollab,
+  onFindMatch, onOpenReviews, onResetCollab, hideFind = false,
 }: {
   onFindMatch: () => void
   onOpenReviews?: () => void
   onResetCollab?: () => void
+  hideFind?: boolean
 }) {
   const [visible, setVisible] = useState(false)
   useEffect(() => { const t = setTimeout(() => setVisible(true), 40); return () => clearTimeout(t) }, [])
@@ -572,7 +757,8 @@ function CollabLobbyScreen({
 
       {/* centered content */}
       <div className="flex-1 flex flex-col items-center justify-center">
-        {/* pulse rings + button in the middle */}
+        {hideFind ? null : (
+        /* pulse rings + button in the middle */
         <div className="relative flex items-center justify-center">
           {/* outer rings */}
           <div className="absolute rounded-full anim-find-3" style={{ width: 220, height: 220, border: '1px solid rgba(99,102,241,.2)' }} />
@@ -604,6 +790,7 @@ function CollabLobbyScreen({
             Find
           </button>
         </div>
+        )}
       </div>
     </div>
   )
@@ -1898,7 +2085,7 @@ function ReviewsButton({ onClick }: { onClick: () => void }) {
 }
 
 function JourneysContent({
-  journeys, loading, error, onSelect, onOpenReviews, onFindMatch, onResetCollab,
+  journeys, loading, error, onSelect, onOpenReviews, onFindMatch, onResetCollab, hasRequests,
 }: {
   journeys: JourneyListItem[]
   loading: boolean
@@ -1907,6 +2094,7 @@ function JourneysContent({
   onOpenReviews: () => void
   onFindMatch: () => void
   onResetCollab: () => void
+  hasRequests: boolean
 }) {
   if (loading && journeys.length === 0) {
     return (
@@ -1917,7 +2105,7 @@ function JourneysContent({
   }
 
   if (journeys.length === 0) {
-    return <CollabLobbyScreen onFindMatch={onFindMatch} onOpenReviews={onOpenReviews} onResetCollab={onResetCollab} />
+    return <CollabLobbyScreen onFindMatch={onFindMatch} onOpenReviews={onOpenReviews} onResetCollab={onResetCollab} hideFind={hasRequests} />
   }
 
   return (
@@ -1943,6 +2131,58 @@ function JourneysContent({
 
 /* ─── main together view ─────────────────────────────────────────────────── */
 
+/* ─── Locked gate — shown until the user opts into being discoverable ────── */
+
+function CollabLockedGate({ userId, onReady }: { userId: string; onReady: () => void }) {
+  const [busy, setBusy] = useState(false)
+  async function enable() {
+    if (busy) return
+    setBusy(true)
+    try {
+      await fetch(CENTRAL_ENDPOINTS.connectionsDiscoverable, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId }),
+      })
+    } catch { /* ignore */ }
+    onReady()
+  }
+  return (
+    <div className="flex h-full flex-col px-6" style={{ background: '#0a0a0a' }}>
+      <div className="pt-[62px] pb-2">
+        <h1 className="text-[28px] font-bold tracking-tight text-white">Collab</h1>
+      </div>
+
+      <div className="flex flex-1 flex-col items-center justify-center text-center">
+        <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl" style={{ background: 'rgba(99,102,241,.12)', border: '1px solid rgba(99,102,241,.3)' }}>
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="rgba(165,170,255,.95)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2.5" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+        </div>
+        <h2 className="mb-3 text-[20px] font-bold text-white">Team up on your goals</h2>
+        <div className="max-w-[300px] space-y-3 text-[13px] leading-[1.6]" style={{ color: 'rgba(255,255,255,.45)' }}>
+          <p>Collab matches you with people chasing similar goals — so you can share a journey, keep each other accountable, and review each other's progress.</p>
+          <p>To find matches we build a short, private profile from your goals and make you discoverable to potential partners.</p>
+        </div>
+      </div>
+
+      <div className="pb-10">
+        <button
+          type="button"
+          onClick={() => void enable()}
+          disabled={busy}
+          className="lobby-find-btn w-full rounded-2xl py-4 text-[15px] font-bold text-white transition-transform active:scale-[.98] disabled:opacity-50"
+          style={{ border: 'none' }}
+        >
+          {busy ? 'Setting up…' : "I'm ready"}
+        </button>
+        <p className="mt-3 text-center text-[11px]" style={{ color: 'rgba(255,255,255,.3)' }}>
+          You can turn this off anytime in settings.
+        </p>
+      </div>
+    </div>
+  )
+}
+
 export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { userId: string; onOpenFocus: (target: FocusTarget) => void; onOpenJournal: (props: JournalFocusActions) => void }) {
   const [ob, setOb] = useState<OBPhase | null>(null)
   const [autoStartFinding, setAutoStartFinding] = useState(false)
@@ -1953,6 +2193,20 @@ export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { u
   const [journeys, setJourneys] = useState<JourneyListItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Incoming collab requests that need MY action: the other person proposed and
+  // approved (their_approved), I haven't accepted yet.
+  const [pendingReqs, setPendingReqs] = useState<OBConnection[]>([])
+  // null = still loading; false = collab locked until the user opts in.
+  const [discoverable, setDiscoverable] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(SERVER_ENDPOINTS.profile, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d: { ok?: boolean; discoverable?: boolean }) => { if (!cancelled) setDiscoverable(!!d.discoverable) })
+      .catch(() => { if (!cancelled) setDiscoverable(true) })  // fail open
+    return () => { cancelled = true }
+  }, [userId])
 
   const load = useCallback(async () => {
     if (!userId) return
@@ -1978,6 +2232,24 @@ export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { u
     return () => clearInterval(id)
   }, [load])
 
+  useEffect(() => {
+    if (!userId) return
+    let cancelled = false
+    const loadReqs = async () => {
+      try {
+        const r = await fetch(CENTRAL_ENDPOINTS.connections(userId), { cache: 'no-store' })
+        if (!r.ok) return
+        const data = (await r.json()) as { ok: boolean; connections: OBConnection[] }
+        if (!cancelled && data.ok) {
+          setPendingReqs((data.connections ?? []).filter((c) => c.state === 0 && !c.my_approved && c.their_approved))
+        }
+      } catch { /* ignore */ }
+    }
+    void loadReqs()
+    const id = setInterval(loadReqs, 6000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [userId])
+
   // Keep the open journey index valid if the list shrinks underneath us.
   useEffect(() => {
     if (selectedIdx !== null && selectedIdx > journeys.length - 1) {
@@ -2000,6 +2272,9 @@ export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { u
   }
 
   if (ob === null) return <div className="h-full" style={{ background: '#0a0a0a' }} />
+  if (discoverable === false) {
+    return <CollabLockedGate userId={userId} onReady={() => setDiscoverable(true)} />
+  }
   if (ob === 'finding') return (
     <CollabFindingScreen
       userId={userId}
@@ -2047,6 +2322,7 @@ export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { u
             onOpenReviews={() => setReviewsOpen(true)}
             onFindMatch={() => { setAutoStartFinding(true); advance('finding') }}
             onResetCollab={() => { localStorage.removeItem(obKey); advance('question') }}
+            hasRequests={pendingReqs.length > 0}
           />
         </div>
       )}
@@ -2075,7 +2351,33 @@ export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { u
             <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
             <path d="M16 3.13a4 4 0 0 1 0 7.75" />
           </svg>
+          {pendingReqs.length > 0 && (
+            <span
+              className="absolute flex items-center justify-center text-[10px] font-bold text-white"
+              style={{
+                top: -3, right: -3, minWidth: 19, height: 19, padding: '0 5px',
+                borderRadius: 999, background: '#6366f1', border: '2px solid #0a0a0a',
+              }}
+            >
+              {pendingReqs.length}
+            </span>
+          )}
         </button>
+      )}
+
+      {/* Incoming collab requests — swipe to accept (right) / pass (left) */}
+      {!journeyOpen && (
+        <RequestSwipeDeck
+          reqs={pendingReqs}
+          userId={userId}
+          onResolved={(id) => {
+            setPendingReqs((prev) => prev.filter((c) => c.id !== id))
+            // Accepting confirms the connection and spins up the shared journey
+            // server-side — refresh the list so it appears without re-entering.
+            void load()
+            setTimeout(() => void load(), 900)
+          }}
+        />
       )}
 
       {/* People overlay — slides in from right */}

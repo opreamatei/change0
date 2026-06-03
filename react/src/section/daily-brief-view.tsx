@@ -40,11 +40,47 @@ interface ScheduleResponse {
 }
 
 interface Block {
-  start: number   // minutes from CAL_START
+  start: number
   end: number
-  entry: ScheduleEntry
+  kind: 'event' | 'rem'
+  entry?: ScheduleEntry
+  title?: string
   col?: number
   numCols?: number
+}
+
+/* ── reminders (shown as point-in-time markers on the timeline) ─────────── */
+
+interface RawReminder {
+  id?: string
+  title?: string
+  time?: string
+  hour?: number
+  minute?: number
+  days?: number[] | number
+  enabled?: boolean | number
+}
+
+function reminderMinute(r: RawReminder): number {
+  let h = 9, m = 0
+  if (typeof r.hour === 'number' && Number.isFinite(r.hour)) h = r.hour
+  if (typeof r.minute === 'number' && Number.isFinite(r.minute)) m = r.minute
+  if (r.time) {
+    const [hh, mm] = r.time.split(':').map((v) => Number.parseInt(v, 10))
+    if (Number.isFinite(hh)) h = hh
+    if (Number.isFinite(mm)) m = mm
+  }
+  return h * 60 + m
+}
+function reminderDays(r: RawReminder): number[] {
+  if (Array.isArray(r.days)) return r.days
+  const mask = typeof r.days === 'number' ? r.days : 0
+  const out: number[] = []
+  for (let d = 0; d < 7; d++) if (mask & (1 << d)) out.push(d)
+  return out
+}
+function reminderEnabled(r: RawReminder): boolean {
+  return typeof r.enabled === 'number' ? r.enabled !== 0 : r.enabled ?? true
 }
 
 /* ── layout ─────────────────────────────────────────────────────────── */
@@ -98,6 +134,7 @@ function getWeek(now: Date): Date[] {
 /* ── component ──────────────────────────────────────────────────────── */
 
 export default function DailyBriefView({ embedded = false }: { embedded?: boolean } = {}) {
+  const [selected, setSelected] = useState<number | null>(null)
   const bodyRef      = useRef<HTMLDivElement>(null)
   const scrollTargetRef = useRef(0)
   const [bodyW, setBodyW] = useState(360)
@@ -106,6 +143,7 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
   const weekDays     = getWeek(now)
 
   const [entries, setEntries] = useState<ScheduleEntry[]>([])
+  const [reminders, setReminders] = useState<RawReminder[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState<string | null>(null)
 
@@ -144,10 +182,28 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
 
   useEffect(() => { void load() }, [load])
 
+  /* reminders — recurring time-of-day markers, drawn on the same timeline */
+  useEffect(() => {
+    let cancelled = false
+    fetch(SERVER_ENDPOINTS.reminders, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((data: { ok?: boolean; reminders?: RawReminder[] }) => {
+        if (!cancelled && data.ok) setReminders(data.reminders ?? [])
+      })
+      .catch(() => { /* ignore */ })
+    return () => { cancelled = true }
+  }, [])
+
   /* selected day's tasks, sorted in time order */
   const dayEntries = entries
     .filter((e) => isSameDay(new Date(e.time * 1000), selDate))
     .sort((a, b) => a.time - b.time)
+
+  /* reminders that fire on the selected weekday */
+  const dayReminders = reminders
+    .filter((r) => reminderEnabled(r) && reminderDays(r).includes(selDate.getDay()))
+    .map((r) => ({ title: r.title?.trim() || 'Reminder', minute: reminderMinute(r) }))
+    .sort((a, b) => a.minute - b.minute)
 
   const absStart = (e: ScheduleEntry) => {
     const d = new Date(e.time * 1000)
@@ -190,7 +246,13 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
     /* the scheduler lays tasks out sequentially, so never spill into the next */
     const next = dayEntries[i + 1]
     if (next) end = Math.min(end, absStart(next) - viewStartMin)
-    return { start, end, entry }
+    return { start, end, kind: 'event' as const, entry }
+  })
+  // reminders share the timeline columns (ui-2 parity): a 45-min footprint for
+  // collision/layout only; the rendered chip is a fixed short height.
+  dayReminders.forEach((rem) => {
+    const start = rem.minute - viewStartMin
+    blocks.push({ start, end: start + 45, kind: 'rem', title: rem.title })
   })
   layoutBlocks(blocks)
 
@@ -288,17 +350,37 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
             const colW  = (avail - (b.numCols! - 1) * COL_GAP) / b.numCols!
             const left  = BL + b.col! * (colW + COL_GAP)
             const top   = (b.start * hourH) / 60
+
+            if (b.kind === 'rem') {
+              return (
+                <div
+                  key={i}
+                  className="absolute flex items-center gap-1.5 overflow-hidden rounded-lg px-2.5"
+                  style={{ top, left, width: colW, height: 28, background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', borderLeft: '3px solid rgba(255,255,255,.35)' }}
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.5)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                  </svg>
+                  <span className="truncate text-xs font-medium" style={{ color: 'rgba(255,255,255,.65)' }}>{b.title}</span>
+                </div>
+              )
+            }
+
+            const entry = b.entry!
             /* Height comes from the (clamped) real duration, but a readable floor
                keeps even 5-minute tasks tall enough to show their title. */
             const h     = Math.max(((b.end - b.start) * hourH) / 60, 30)
-            const color = EVENT_COLORS[b.entry.goal_index % EVENT_COLORS.length]
-            const d     = new Date(b.entry.time * 1000)
+            const color = EVENT_COLORS[entry.goal_index % EVENT_COLORS.length]
+            const d     = new Date(entry.time * 1000)
             const tStr  = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 
+            const isSel = selected === i
             return (
               <div
                 key={i}
-                className="absolute overflow-hidden"
+                onClick={() => setSelected((s) => (s === i ? null : i))}
+                className="absolute cursor-pointer overflow-hidden transition-all"
                 style={{
                   top,
                   height: h,
@@ -306,15 +388,19 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
                   width: colW,
                   background: color,
                   borderRadius: 10,
-                  border: '1px solid rgba(255,255,255,.12)',
+                  border: isSel ? '1px solid rgba(255,255,255,.5)' : '1px solid rgba(255,255,255,.12)',
                   padding: '6px 10px',
+                  opacity: selected === null || isSel ? 1 : 0.5,
+                  transform: isSel ? 'scale(1.015)' : 'none',
+                  boxShadow: isSel ? '0 6px 22px rgba(0,0,0,.55)' : 'none',
+                  zIndex: isSel ? 6 : 1,
                 }}
               >
                 <div
                   className="font-semibold truncate"
                   style={{ fontSize: 13, color: '#fff', lineHeight: '1.3' }}
                 >
-                  {b.entry.title}
+                  {entry.title}
                 </div>
                 {h > 40 && (
                   <div style={{ fontSize: 11, marginTop: 2, color: 'rgba(255,255,255,.6)' }}>
