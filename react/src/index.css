@@ -115,6 +115,14 @@ body,
   from { opacity: 0 }
   to   { opacity: 1 }
 }
+@keyframes pyramidApex {
+  0%, 100% { opacity: .55; transform: scale(1); }
+  50%       { opacity: .80; transform: scale(1.06); }
+}
+@keyframes pyramidShimmer {
+  0%        { transform: translateX(-120%); }
+  60%, 100% { transform: translateX(220%); }
+}
 
 /* Animation classes */
 .loading-orbit  { animation: loader-orbit 4s linear infinite; transform-origin: center; }
@@ -186,3 +194,14 @@ body,
 .focus-check { stroke-dasharray: 40; stroke-dashoffset: 40; animation: focusCheck .5s cubic-bezier(.65,0,.35,1) .14s forwards; }
 @keyframes focusPop { from { transform: scale(.55); opacity: 0 } to { transform: scale(1); opacity: 1 } }
 .focus-pop { animation: focusPop .5s cubic-bezier(.34,1.56,.64,1) both; }
+
+@keyframes lobbyGradientShift {
+  0%   { background-position: 0% 50% }
+  50%  { background-position: 100% 50% }
+  100% { background-position: 0% 50% }
+}
+.lobby-find-btn {
+  background: linear-gradient(135deg, #4f52c8, #6366f1, #818cf8, #6366f1, #4f52c8);
+  background-size: 300% 300%;
+  animation: lobbyGradientShift 8s ease infinite;
+}

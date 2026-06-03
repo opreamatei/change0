@@ -110,7 +110,7 @@ export default function ReviewsPanel({ open, onClose, userId, userLabel = '' }: 
     const done = submitted[reviewingItem.id] ?? false
     return (
       <div className="fixed inset-0 z-[230] flex flex-col" style={{ background: '#000000' }}>
-        <div className="flex flex-shrink-0 items-center gap-3 px-5 pt-[52px] pb-4" style={{ borderBottom: '1px solid rgba(255,255,255,.07)' }}>
+        <div className="flex flex-shrink-0 items-center gap-3 px-5 pt-[62px] pb-4" style={{ borderBottom: '1px solid rgba(255,255,255,.07)' }}>
           <button type="button" onClick={() => setReviewingId(null)}
             className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl"
             style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.1)' }}>
@@ -179,9 +179,10 @@ export default function ReviewsPanel({ open, onClose, userId, userLabel = '' }: 
               <div className="flex gap-3">
                 {[1, 2, 3, 4, 5].map((n) => (
                   <span key={n} onClick={() => setLocalStars(n)}
-                    className="cursor-pointer select-none text-[36px] transition-all active:scale-90"
-                    style={{ filter: n <= localStars ? 'grayscale(0) brightness(1)' : 'grayscale(1) brightness(.38)' }}>
-                    ⭐
+                    className="cursor-pointer select-none transition-all active:scale-90">
+                    <svg width="36" height="36" viewBox="0 0 24 24" fill={n <= localStars ? '#facc15' : 'none'} stroke={n <= localStars ? '#facc15' : 'rgba(255,255,255,.25)'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 2l2.9 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l7.1-1.01L12 2z"/>
+                    </svg>
                   </span>
                 ))}
               </div>
@@ -230,7 +231,7 @@ export default function ReviewsPanel({ open, onClose, userId, userLabel = '' }: 
   // ── preview ──
   return (
     <div className="fixed inset-0 z-[230] flex flex-col" style={{ background: '#000000' }}>
-      <div className="flex flex-shrink-0 items-center justify-between px-5 pt-[52px] pb-4">
+      <div className="flex flex-shrink-0 items-center justify-between px-5 pt-[62px] pb-4">
         <button type="button" onClick={onClose}
           className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl"
           style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.1)' }}>
@@ -239,10 +240,12 @@ export default function ReviewsPanel({ open, onClose, userId, userLabel = '' }: 
           </svg>
         </button>
         <div className="text-center">
-          <div className="text-[17px] font-bold tracking-tight text-white">Reviews</div>
-          <div className="text-[11px]" style={{ color: 'rgba(255,255,255,.35)' }}>
-            {loading ? 'Loading…' : total === 0 ? 'No pending reviews' : `${idx + 1} of ${total}`}
-          </div>
+          <div className="text-[22px] font-bold tracking-tight text-white">Reviews</div>
+          {total > 0 && (
+            <div className="text-[11px]" style={{ color: 'rgba(255,255,255,.35)' }}>
+              {`${idx + 1} of ${total}`}
+            </div>
+          )}
         </div>
         <div className="flex min-w-[52px] items-center justify-end gap-1.5">
           {items.map((_, i) => (
@@ -259,8 +262,7 @@ export default function ReviewsPanel({ open, onClose, userId, userLabel = '' }: 
       )}
 
       {!loading && total === 0 && (
-        <div className="flex-1 flex flex-col items-center justify-center px-8 text-center gap-3">
-          <div className="text-[40px]">✨</div>
+        <div className="flex-1 flex flex-col items-center justify-center px-8 text-center gap-2 -mt-28">
           <div className="text-[16px] font-bold text-white">All caught up</div>
           <div className="text-[13px] leading-[1.6]" style={{ color: 'rgba(255,255,255,.4)' }}>
             No work awaiting your review right now. Check back later.

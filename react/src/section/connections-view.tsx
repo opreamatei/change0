@@ -221,7 +221,7 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
   }
 
   return (
-    <div className="flex flex-col h-full" style={{ background: '#0d0d0d' }}>
+    <div className="flex flex-col h-full" style={{ background: '#000' }}>
       {/* header */}
       <div className="flex items-center gap-3 px-4 py-3 shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,.08)' }}>
         <button onClick={onBack} className="flex items-center justify-center w-8 h-8 rounded-full text-white/50 hover:text-white hover:bg-white/8 transition-colors">
@@ -230,11 +230,11 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
         {/* fused avatar */}
         <div className="relative w-9 h-9 shrink-0">
           <div className="absolute left-0 top-0 w-7 h-7 rounded-full border-2 flex items-center justify-center text-[10px] font-bold text-white"
-            style={{ background: myColor, borderColor: '#0d0d0d' }}>
+            style={{ background: myColor, borderColor: '#000' }}>
             {userId.charAt(0).toUpperCase()}
           </div>
           <div className="absolute right-0 bottom-0 w-7 h-7 rounded-full border-2 flex items-center justify-center text-[10px] font-bold text-white"
-            style={{ background: theirColor, borderColor: '#0d0d0d' }}>
+            style={{ background: theirColor, borderColor: '#000' }}>
             {conn.other_name.charAt(0).toUpperCase()}
           </div>
         </div>
@@ -364,43 +364,61 @@ function ProfilePermissionModal({
   )
 }
 
-/* ─── Searching animation ──────────────────────────────────────── */
+/* ─── Find-match pulse widget ───────────────────────────────────── */
 
-function SearchingState({ onCancel }: { onCancel: () => void }) {
-  const [dots, setDots] = useState(0)
-  useEffect(() => {
-    const t = setInterval(() => setDots((d) => (d + 1) % 4), 500)
-    return () => clearInterval(t)
-  }, [])
+function FindMatchWidget({
+  matchState,
+  onFind,
+  onCancel,
+}: {
+  matchState: MatchState
+  onFind: () => void
+  onCancel: () => void
+}) {
+  if (matchState === 'searching' || matchState === 'checking') {
+    return (
+      <div className="flex flex-col items-center justify-center py-10 px-6 text-center">
+        <div className="relative flex items-center justify-center mb-6">
+          <div className="absolute rounded-full anim-find-3" style={{ width: 164, height: 164, border: '1px solid rgba(99,102,241,.28)' }} />
+          <div className="absolute rounded-full anim-find-2" style={{ width: 120, height: 120, border: '1.5px solid rgba(99,102,241,.45)' }} />
+          <div className="anim-find-1 rounded-full flex items-center justify-center" style={{ width: 76, height: 76, background: 'rgba(99,102,241,.12)', border: '2px solid rgba(99,102,241,.55)' }}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="rgba(165,149,255,.9)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </div>
+        </div>
+        <p className="text-[11px] text-white/30">Looking for people with aligned goals</p>
+        <button type="button" onClick={onCancel} className="mt-4 text-[11px] text-white/30 active:opacity-60 transition-opacity">
+          Cancel
+        </button>
+      </div>
+    )
+  }
 
   return (
-    <div className="flex flex-col items-center justify-center py-16 px-6 text-center space-y-5">
-      {/* pulsing rings */}
-      <div className="relative w-20 h-20 flex items-center justify-center">
-        {[0,1,2].map((i) => (
-          <div key={i} className="absolute rounded-full"
-            style={{
-              width: 20 + i * 24, height: 20 + i * 24,
-              border: '1.5px solid rgba(139,92,246,' + (0.5 - i * 0.15) + ')',
-              animation: `ping ${1 + i * 0.4}s ease-out infinite`,
-              animationDelay: `${i * 0.3}s`,
-            }} />
-        ))}
-        <div className="relative z-10 w-8 h-8 rounded-full flex items-center justify-center"
-          style={{ background: 'linear-gradient(135deg, #8b5cf6, #f43f5e)' }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-          </svg>
-        </div>
-      </div>
-      <div>
-        <p className="text-base font-semibold text-white">Finding matches{'.'.repeat(dots)}</p>
-        <p className="text-xs text-white/40 mt-1.5">Looking for people with aligned goals</p>
-      </div>
-      <button onClick={onCancel}
-        className="rounded-full px-5 py-2 text-xs font-medium text-white/40 hover:text-white/70 transition-colors"
-        style={{ border: '1px solid rgba(255,255,255,.1)' }}>
-        Cancel
+    <div className="px-5 pt-6 pb-4">
+      <button
+        type="button"
+        onClick={onFind}
+        disabled={matchState === 'checking'}
+        className="w-full rounded-2xl py-4 flex items-center justify-center gap-3 text-sm font-semibold text-white transition-all active:scale-[.98] disabled:opacity-60"
+        style={{
+          background: matchState === 'found' ? 'rgba(34,197,94,.18)' : 'linear-gradient(135deg, rgba(139,92,246,.22), rgba(244,63,94,.18))',
+          border: matchState === 'found' ? '1px solid rgba(34,197,94,.4)' : '1px solid rgba(139,92,246,.3)',
+        }}
+      >
+        {matchState === 'found' ? (
+          <><span className="text-base">✓</span><span className="text-green-400">Refreshed!</span></>
+        ) : (
+          <>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <span>Find a match</span>
+            <span className="text-white/35 text-xs font-normal">→</span>
+          </>
+        )}
       </button>
     </div>
   )
@@ -637,42 +655,31 @@ export default function ConnectionsView({ userId }: { userId: string }) {
           busy={permBusy} />
       )}
 
-      <div className="overflow-y-auto h-full" style={{ background: '#0d0d0d' }}>
-        {/* ── Find match header ── */}
-        <div className="px-5 pt-6 pb-4">
-          {matchState === 'searching' ? (
-            <SearchingState onCancel={() => {
+      {(matchState === 'searching' || matchState === 'checking') && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center" style={{ background: '#000' }}>
+          <FindMatchWidget
+            matchState={matchState}
+            onFind={() => { void triggerFindMatch() }}
+            onCancel={() => {
               if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
               setMatchState('idle')
-            }} />
-          ) : (
-            <button
-              onClick={() => { void triggerFindMatch() }}
-              disabled={matchState === 'checking'}
-              className="w-full rounded-2xl py-4 flex items-center justify-center gap-3 text-sm font-semibold text-white transition-all active:scale-[.98] disabled:opacity-60"
-              style={{ background: matchState === 'found' ? 'rgba(34,197,94,.18)' : 'linear-gradient(135deg, rgba(139,92,246,.22), rgba(244,63,94,.18))', border: matchState === 'found' ? '1px solid rgba(34,197,94,.4)' : '1px solid rgba(139,92,246,.3)' }}>
-              {matchState === 'checking' ? (
-                <>
-                  <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><circle cx="12" cy="12" r="10" opacity=".25"/><path d="M12 2a10 10 0 0 1 10 10" opacity=".75"/></svg>
-                  <span>Checking profile…</span>
-                </>
-              ) : matchState === 'found' ? (
-                <>
-                  <span className="text-base">✓</span>
-                  <span className="text-green-400">Refreshed!</span>
-                </>
-              ) : (
-                <>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                  </svg>
-                  <span>Find a match</span>
-                  <span className="text-white/35 text-xs font-normal">→</span>
-                </>
-              )}
-            </button>
-          )}
+            }}
+          />
         </div>
+      )}
+
+      <div className="overflow-y-auto h-full" style={{ background: '#000' }}>
+        {/* ── Find match widget (idle/found only) ── */}
+        {matchState !== 'searching' && matchState !== 'checking' && (
+          <FindMatchWidget
+            matchState={matchState}
+            onFind={() => { void triggerFindMatch() }}
+            onCancel={() => {
+              if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+              setMatchState('idle')
+            }}
+          />
+        )}
 
         {/* ── Empty state ── */}
         {empty && matchState !== 'searching' && (
