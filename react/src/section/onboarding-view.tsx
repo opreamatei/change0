@@ -298,12 +298,16 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
     const SW = window.innerWidth
     const SH = window.innerHeight
     const CX = SW / 2
-    // Vertically centred: the 5-node span is symmetric around the screen middle.
-    const topY = SH * 0.28
-    const botY = SH * 0.72
+    // Span 150% of the viewport so the path runs off-screen, top and bottom.
+    const topY = SH * -0.25
+    const botY = SH * 1.25
+    // Scatter the nodes a little off-centre; they build from the bottom upward
+    // and sway left-right per frame.
+    const DISPERSE = [-26, 30, -34, 22, -16]
     const positions = Array.from({ length: N }, (_, i) => ({
-      x: CX,
-      y: topY + ((botY - topY) * i) / (N - 1),
+      baseX: CX + (DISPERSE[i] ?? 0),
+      y: botY - ((botY - topY) * i) / (N - 1),
+      phase: i * 1.1,
       icon: STEP_ICON_CYCLE[i % STEP_ICON_CYCLE.length],
     }))
 
@@ -320,7 +324,7 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
       positions.forEach((pos) => {
         const el = document.createElement('div')
         el.className = 'ob-loading-node'
-        el.style.left = pos.x + 'px'
+        el.style.left = pos.baseX + 'px'
         el.style.top = pos.y + 'px'
         el.style.transition = 'none' // driven per-frame below
         el.innerHTML = ICONS[pos.icon] ?? ''
@@ -342,14 +346,13 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
       H = canvas.offsetHeight
     }
 
-    const CYCLE = 2200
+    const CYCLE = 3600       // slower, calmer build cycle
+    const OSC_AMP = 11       // px of gentle left-right sway
+    const OSC_PERIOD = 2200  // ms per sway cycle (slow, smooth)
     const stepT = 1 / N
-    const ease = (t: number) => 1 - Math.pow(1 - t, 3)
-    // easeOutBack — exaggerated overshoot as each node pops in
-    const C1 = 1.70158
-    const C3 = C1 + 1
-    const popEase = (x: number) =>
-      x <= 0 ? 0 : x >= 1 ? 1 : 1 + C3 * Math.pow(x - 1, 3) + C1 * Math.pow(x - 1, 2)
+    // smooth easeInOutCubic — no overshoot, so nodes settle in rather than pop
+    const ease = (t: number) =>
+      t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
 
     const msgs = ['Preparing…', 'Analyzing…', 'Personalizing…', 'Shaping your journey…', 'Almost there…']
     let cycleStart = performance.now()
@@ -366,11 +369,16 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
 
       // nodes pop in one after another
       for (let i = 0; i < N; i++) {
-        const local = Math.max(0, Math.min(1, (t - i * stepT) / (stepT * 0.9)))
+        // wider reveal window so nodes ease in gently and overlap, no abrupt pop
+        const local = Math.max(0, Math.min(1, (t - i * stepT) / (stepT * 1.35)))
         const el = nodeEls[i]
         if (!el) continue
-        el.style.transform = `translate(-50%, -50%) scale(${popEase(local).toFixed(3)})`
-        el.style.opacity = String(0.7 * Math.min(1, local * 2.2))
+        const e = ease(local)
+        const dx = OSC_AMP * Math.sin(now / OSC_PERIOD + positions[i].phase)
+        const scale = 0.72 + 0.28 * e            // settle from 72% → 100%, no overshoot
+        const rise = (1 - e) * 14                // drift up a touch as it settles
+        el.style.transform = `translate(-50%, -50%) translate(${dx.toFixed(1)}px, ${rise.toFixed(1)}px) scale(${scale.toFixed(3)})`
+        el.style.opacity = String((0.78 * e).toFixed(3))
       }
 
       // dotted connectors grow between nodes
@@ -383,13 +391,24 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
           const lt = ease(Math.min((t - ls) / (le - ls), 1))
           const p1 = positions[i]
           const p2 = positions[i + 1]
+          const x1 = p1.baseX + OSC_AMP * Math.sin(now / OSC_PERIOD + p1.phase)
+          const x2 = p2.baseX + OSC_AMP * Math.sin(now / OSC_PERIOD + p2.phase)
+          const y1 = p1.y, y2 = p2.y
+          const midY = (y1 + y2) / 2   // bezier control height → smooth S-curve
           ctx.save()
-          ctx.setLineDash([4, 7])
+          ctx.setLineDash([5, 9])
           ctx.beginPath()
-          ctx.moveTo(p1.x, p1.y)
-          ctx.lineTo(p1.x + (p2.x - p1.x) * lt, p1.y + (p2.y - p1.y) * lt)
-          ctx.strokeStyle = 'rgba(255,255,255,0.32)'
-          ctx.lineWidth = 2
+          ctx.moveTo(x1, y1)
+          const STEPS = 22
+          for (let s = 1; s <= STEPS; s++) {
+            const tt = (s / STEPS) * lt
+            const u = 1 - tt
+            const bx = u*u*u*x1 + 3*u*u*tt*x1 + 3*u*tt*tt*x2 + tt*tt*tt*x2
+            const by = u*u*u*y1 + 3*u*u*tt*midY + 3*u*tt*tt*midY + tt*tt*tt*y2
+            ctx.lineTo(bx, by)
+          }
+          ctx.strokeStyle = 'rgba(255,255,255,0.34)'
+          ctx.lineWidth = 3
           ctx.stroke()
           ctx.restore()
         }
@@ -728,7 +747,11 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
             </div>
             <div className="ob-journey-path">
               {journeySteps.map((step, i) => (
-                <div key={i} style={{ width: '100%' }}>
+                <div key={i} style={{
+                  width: '100%',
+                  animation: 'ob-jstep-in .5s cubic-bezier(.22,1,.36,1) both',
+                  animationDelay: `${(journeySteps.length - 1 - i) * 70}ms`,
+                }}>
                   {i > 0 && <div className={`ob-connector ${step.state === 'done' ? 'ob-done' : ''}`} />}
                   <div
                     className={`ob-jnode ob-${step.state}`}
@@ -820,6 +843,7 @@ const OB_CSS = `
   animation: ob-fade-in .3s ease;
 }
 @keyframes ob-fade-in { from { opacity: 0; transform: translateY(16px);} to {opacity:1; transform:none;} }
+@keyframes ob-jstep-in { from { opacity: 0; transform: translateY(22px); } to { opacity: 1; transform: none; } }
 
 .ob-step-label { font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--ob-dim); margin-bottom: 16px; text-align: center; }
 .ob-step-title { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; line-height: 1.25; text-align: center; margin-bottom: 36px; max-width: 300px; }

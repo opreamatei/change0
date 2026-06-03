@@ -4,8 +4,7 @@ import { SERVER_ENDPOINTS } from '../config/server'
 /* ── constants ──────────────────────────────────────────────────────── */
 
 const HOUR_H        = 60    // px per hour
-const CAL_START     = 6     // 06:00
-const CAL_END       = 23    // 23:00
+const CAL_START     = 6     // 06:00 — default scroll anchor for empty days
 const BL            = 68    // left gutter
 const BR            = 16    // right margin
 const COL_GAP       = 3     // gap between overlapping blocks
@@ -100,8 +99,8 @@ function getWeek(now: Date): Date[] {
 
 export default function DailyBriefView({ embedded = false }: { embedded?: boolean } = {}) {
   const bodyRef      = useRef<HTMLDivElement>(null)
+  const scrollTargetRef = useRef(0)
   const [bodyW, setBodyW] = useState(360)
-  const [bodyH, setBodyH] = useState(600)
   const now          = useRef(new Date()).current
   const [selDate, setSelDate] = useState<Date>(now)
   const weekDays     = getWeek(now)
@@ -114,17 +113,17 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
   useEffect(() => {
     const el = bodyRef.current
     if (!el) return
-    const update = () => { setBodyW(el.offsetWidth || 360); setBodyH(el.clientHeight || 600) }
+    const update = () => { setBodyW(el.offsetWidth || 360) }
     update()
     const obs = new ResizeObserver(update)
     obs.observe(el)
     return () => obs.disconnect()
   }, [])
 
-  /* the timeline zooms to the selected day's work period, so the content sits
-     near the top — reset the scroll when the day or data changes */
+  /* the timeline now spans the full day; jump the scroll to the first task (or a
+     sensible morning anchor on empty days) when the day or data changes */
   useEffect(() => {
-    if (bodyRef.current) bodyRef.current.scrollTop = 0
+    if (bodyRef.current) bodyRef.current.scrollTop = scrollTargetRef.current
   }, [selDate, entries])
 
   /* silent GET — used on mount to load whatever the server has cached */
@@ -167,27 +166,23 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
     contentMax = Math.max(contentMax, en)
   })
 
-  /* zoom the visible window to the work period; fall back to the full day when
-     the selected day has nothing scheduled */
+  /* full-day timeline (00:00–24:00) so the schedule scrolls/drags through every
+     hour rather than zooming to the work window */
   const hasContent = dayEntries.length > 0
-  let viewStartH = CAL_START
-  let viewEndH   = CAL_END
-  if (hasContent) {
-    viewStartH = Math.max(0,  Math.floor((contentMin - 30) / 60))
-    viewEndH   = Math.min(24, Math.ceil((contentMax + 30) / 60))
-    if (viewEndH - viewStartH < 3) {              // keep a little context for short days
-      viewEndH = Math.min(24, viewStartH + 3)
-      viewStartH = Math.max(0, viewEndH - 3)
-    }
-  }
-  const spanH = Math.max(1, viewEndH - viewStartH)
-  const viewStartMin = viewStartH * 60
+  const viewStartH = 0
+  const viewEndH   = 24
+  const spanH = viewEndH - viewStartH
+  const viewStartMin = 0
 
-  /* vertical scale: fit the span to the viewport, but stay readable (>= default,
-     capped so a single short task doesn't become absurdly tall) */
-  const hourH = hasContent
-    ? Math.min(260, Math.max(HOUR_H, (bodyH - 16) / spanH))
-    : HOUR_H
+  /* fixed hour height (2× zoom) keeps every hour the same size and the full day
+     comfortably scrollable */
+  const hourH = HOUR_H * 2
+
+  /* open scrolled to the first task (minus an hour of lead-in), or a morning
+     anchor on empty days */
+  scrollTargetRef.current = hasContent
+    ? Math.max(0, Math.floor(contentMin / 60) - 1) * hourH
+    : CAL_START * hourH
 
   const blocks: Block[] = dayEntries.map((entry, i) => {
     const start = absStart(entry) - viewStartMin
@@ -256,7 +251,7 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
       )}
 
       {/* ── timeline ── */}
-      <div ref={bodyRef} className="flex-1 overflow-y-auto relative no-scrollbar">
+      <div ref={bodyRef} className="flex-1 min-h-0 overflow-y-auto relative no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y', overscrollBehavior: 'contain' }}>
         <div
           className="relative pb-8"
           style={{ paddingLeft: BL, paddingRight: BR, minHeight: spanH * hourH + 32 }}
@@ -293,9 +288,9 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
             const colW  = (avail - (b.numCols! - 1) * COL_GAP) / b.numCols!
             const left  = BL + b.col! * (colW + COL_GAP)
             const top   = (b.start * hourH) / 60
-            /* Height comes from the (clamped) real duration; a small floor keeps
-               very short tasks visible without overlapping the next block. */
-            const h     = Math.max(((b.end - b.start) * hourH) / 60, 3)
+            /* Height comes from the (clamped) real duration, but a readable floor
+               keeps even 5-minute tasks tall enough to show their title. */
+            const h     = Math.max(((b.end - b.start) * hourH) / 60, 30)
             const color = EVENT_COLORS[b.entry.goal_index % EVENT_COLORS.length]
             const d     = new Date(b.entry.time * 1000)
             const tStr  = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`

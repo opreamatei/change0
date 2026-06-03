@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 export interface ParsedGoalTips {
   task: string
   success: string
@@ -53,6 +55,9 @@ function Icon({ type }: { type: 'task' | 'success' | 'stage' }) {
   )
 }
 
+// Minimalist tips block. Collapsed it shows only the task (one line) to keep the
+// surrounding UI calm; tapping it reveals the ordered stages and the done-when
+// criterion. Order is meaningful and each row keeps its matching icon.
 export default function GoalTipsCard({
   tips,
   compact = false,
@@ -60,60 +65,61 @@ export default function GoalTipsCard({
   tips?: string | null
   compact?: boolean
 }) {
+  const [open, setOpen] = useState(false)
   const parsed = parseGoalTips(tips)
   if (!parsed) return null
 
+  const hasMore = parsed.stages.length > 0 || parsed.success.length > 0
+
   return (
-    <section
-      className={`w-full rounded-2xl border ${compact ? 'p-3.5' : 'p-4'}`}
-      style={{
-        background: 'linear-gradient(145deg, rgba(12,18,17,.92), rgba(18,15,10,.88))',
-        borderColor: 'rgba(255,255,255,.10)',
-        boxShadow: compact ? 'none' : '0 18px 50px rgba(0,0,0,.28)',
-      }}
-    >
-      {parsed.task && (
-        <div className="flex gap-3">
-          <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-cyan-300/12 text-cyan-200">
-            <Icon type="task" />
-          </div>
-          <div className="min-w-0 text-left">
-            <div className="text-[10px] font-bold uppercase tracking-[.16em] text-cyan-100/45">Task</div>
-            <div className={`${compact ? 'text-[13px]' : 'text-[14px]'} mt-0.5 font-semibold leading-snug text-white/88`}>
-              {parsed.task}
-            </div>
-          </div>
-        </div>
-      )}
+    <div className="w-full text-left">
+      <button
+        type="button"
+        onClick={() => hasMore && setOpen((o) => !o)}
+        className={`flex w-full items-start gap-2.5 text-left ${hasMore ? '' : 'cursor-default'}`}
+      >
+        <span className="mt-[3px] shrink-0 text-cyan-300/70"><Icon type="task" /></span>
+        <p className={`flex-1 ${compact ? 'text-[13px]' : 'text-[14px]'} font-medium leading-snug text-white/85`}>
+          {parsed.task}
+        </p>
+        {hasMore && (
+          <svg
+            width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"
+            className="mt-1 shrink-0 transition-transform"
+            style={{ transform: open ? 'rotate(180deg)' : 'none', color: 'rgba(255,255,255,.35)' }}
+          >
+            <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </button>
 
-      {parsed.success && (
-        <div className={`${parsed.task ? 'mt-3' : ''} flex gap-3`}>
-          <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-300/12 text-emerald-200">
-            <Icon type="success" />
-          </div>
-          <div className="min-w-0 text-left">
-            <div className="text-[10px] font-bold uppercase tracking-[.16em] text-emerald-100/45">Done when</div>
-            <div className={`${compact ? 'text-[12.5px]' : 'text-[13.5px]'} mt-0.5 leading-snug text-white/68`}>
-              {parsed.success}
+      {open && hasMore && (
+        <div className="mt-3 space-y-2.5 pl-[26px]">
+          {parsed.stages.length > 0 && (
+            <div className="flex items-start gap-2.5">
+              <span className="mt-[3px] shrink-0 text-amber-300/60"><Icon type="stage" /></span>
+              <p className="text-[12px] leading-relaxed text-white/55">
+                {parsed.stages.map((stage, i) => (
+                  <span key={`${stage}-${i}`}>
+                    {i > 0 && <span className="text-white/25"> · </span>}
+                    {stage}
+                  </span>
+                ))}
+              </p>
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      {parsed.stages.length > 0 && (
-        <div className={`${parsed.task || parsed.success ? 'mt-3' : ''} flex flex-wrap gap-1.5`}>
-          {parsed.stages.map((stage, i) => (
-            <span
-              key={`${stage}-${i}`}
-              className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold text-amber-50/74"
-              style={{ background: 'rgba(251,191,36,.08)', borderColor: 'rgba(251,191,36,.16)' }}
-            >
-              {i === 0 && <Icon type="stage" />}
-              {stage}
-            </span>
-          ))}
+          {parsed.success && (
+            <div className="flex items-start gap-2.5">
+              <span className="mt-[3px] shrink-0 text-emerald-300/70"><Icon type="success" /></span>
+              <p className="text-[12px] leading-relaxed text-white/55">
+                <span className="text-white/35">Done when </span>
+                {parsed.success}
+              </p>
+            </div>
+          )}
         </div>
       )}
-    </section>
+    </div>
   )
 }

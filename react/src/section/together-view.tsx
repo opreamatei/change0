@@ -8,6 +8,7 @@ import { SwipeDeck } from '../components/swipe-deck'
 import GoalTipsCard from '../components/goal-tips-card'
 import ConnectionsView from './connections-view'
 import ReviewsPanel from './reviews-panel'
+import { ViewedProfilePanel } from './settings-view'
 import type { FocusTarget } from './focus-session'
 import type { JournalFocusActions } from './journal-focus-session'
 
@@ -153,7 +154,8 @@ export function CollabReadyScreen({ onReady }: { onReady: () => void }) {
 
 /* ─── Profile sheet: partener potențial ─────────────────────────────────── */
 
-function PartnerProfileSheet({
+// Superseded by the shared openUserProfile flow; kept (exported) for reference.
+export function PartnerProfileSheet({
   conn, color, onClose,
 }: {
   conn: OBConnection
@@ -271,88 +273,67 @@ function CollabMatchCard({
   return (
     <div className="h-full flex flex-col items-center justify-center px-5" style={{ background: '#0a0a0a' }}>
 
-      {/* Card */}
+      {/* Card — bannerless, centred, minimal */}
       <div
-        className="w-full max-w-sm rounded-[28px] overflow-hidden"
+        className="w-full max-w-[320px] rounded-3xl px-6 pt-8 pb-6 flex flex-col items-center text-center"
         style={{
           background: 'rgba(255,255,255,.04)',
-          border: '1px solid rgba(255,255,255,.09)',
+          border: '1px solid rgba(255,255,255,.08)',
           opacity: cardIn ? 1 : 0,
           transform: cardIn ? 'translateY(0) scale(1)' : 'translateY(24px) scale(.97)',
           transition: 'opacity .45s cubic-bezier(.32,1,.54,1), transform .45s cubic-bezier(.32,1,.54,1)',
         }}
       >
-        {/* Colour band */}
-        <div className="relative h-28 overflow-hidden">
-          <div className="absolute inset-0" style={{
-            background: `radial-gradient(ellipse at 40% 70%, ${hslToRgba(color, 0.5)} 0%, transparent 68%)`,
-          }} />
-          <div className="absolute inset-x-0 top-0 h-px" style={{
-            background: `linear-gradient(90deg, transparent, ${hslToRgba(color, 0.9)}, transparent)`,
-          }} />
-        </div>
-
-        {/* Avatar — sits on the colour band edge, tappable */}
-        <div className="px-5 -mt-10 mb-4 flex items-end gap-3">
-          <button
-            type="button"
-            onClick={() => setProfileOpen(true)}
-            className="relative flex-shrink-0 active:scale-95 transition-transform"
-          >
-            <div
-              className="w-20 h-20 rounded-[20px] flex items-center justify-center text-[#0a0a0a] text-[26px] font-bold overflow-hidden"
-              style={{ background: color, boxShadow: '0 0 0 3px #111' }}
-            >
-              <img
-                src={CENTRAL_ENDPOINTS.userAvatar(conn.other_id)}
-                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
-                className="h-full w-full object-cover" alt=""
-              />
-              <span>{conn.other_name.charAt(0).toUpperCase()}</span>
-            </div>
-            {/* small "view" badge */}
-            <div
-              className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center"
-              style={{ background: '#1a1a1a', border: '1.5px solid rgba(255,255,255,.12)' }}
-            >
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.6)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
-              </svg>
-            </div>
-          </button>
-          <div className="mb-1 min-w-0">
-            <div className="text-[19px] font-bold tracking-tight truncate">{conn.other_name}</div>
-            <div className="text-[11px] mt-0.5" style={{ color: 'rgba(255,255,255,.3)' }}>Potential partner</div>
-          </div>
-        </div>
-
-        {/* Short reason */}
-        <div className="px-5 pb-5">
-          <p
-            className="text-[13px] leading-[1.6]"
-            style={{
-              color: 'rgba(255,255,255,.45)',
-              display: '-webkit-box',
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: 'vertical',
-              overflow: 'hidden',
-            }}
-          >
-            {conn.reason}
-          </p>
-        </div>
-
-        {/* Actions — horizontal, inside card */}
-        <div
-          className="flex gap-2.5 px-5 pb-5"
-          style={{ borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 16 }}
+        {/* Avatar — centred, tappable */}
+        <button
+          type="button"
+          onClick={() => setProfileOpen(true)}
+          className="relative active:scale-95 transition-transform"
         >
+          <div
+            className="w-[72px] h-[72px] rounded-full flex items-center justify-center text-[#0a0a0a] text-[24px] font-bold overflow-hidden"
+            style={{ background: color }}
+          >
+            <img
+              src={CENTRAL_ENDPOINTS.userAvatar(conn.other_id)}
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+              className="h-full w-full object-cover" alt=""
+            />
+            <span>{conn.other_name.charAt(0).toUpperCase()}</span>
+          </div>
+          <div
+            className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center"
+            style={{ background: '#1a1a1a', border: '1.5px solid rgba(255,255,255,.12)' }}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.6)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+            </svg>
+          </div>
+        </button>
+
+        <div className="mt-4 text-[18px] font-bold tracking-tight">{conn.other_name}</div>
+        <div className="mt-0.5 text-[11px]" style={{ color: 'rgba(255,255,255,.3)' }}>Potential partner</div>
+
+        <p
+          className="mt-4 text-[13px] leading-[1.6]"
+          style={{
+            color: 'rgba(255,255,255,.45)',
+            display: '-webkit-box',
+            WebkitLineClamp: 3,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
+          }}
+        >
+          {conn.reason}
+        </p>
+
+        <div className="mt-6 flex w-full gap-2.5">
           <button
             type="button"
             onClick={onNotNow}
             disabled={busy}
             className="flex-1 py-[13px] rounded-[16px] text-[14px] font-semibold active:opacity-70 transition-opacity disabled:opacity-40"
-            style={{ background: 'rgba(255,255,255,.07)', color: 'rgba(255,255,255,.55)', border: '1px solid rgba(255,255,255,.08)' }}
+            style={{ background: 'rgba(255,255,255,.06)', color: 'rgba(255,255,255,.55)', border: '1px solid rgba(255,255,255,.08)' }}
           >
             Not now
           </button>
@@ -368,9 +349,11 @@ function CollabMatchCard({
         </div>
       </div>
 
-      {/* Full-screen profile sheet */}
       {profileOpen && createPortal(
-        <PartnerProfileSheet conn={conn} color={color} onClose={() => setProfileOpen(false)} />,
+        <ViewedProfilePanel
+          person={{ id: conn.other_id, display_name: conn.other_name, color }}
+          onClose={() => setProfileOpen(false)}
+        />,
         document.body,
       )}
     </div>
@@ -630,6 +613,100 @@ function CollabLobbyScreen({
 
 interface CollabMessage { sender: string; at: number; text?: string; content?: string }
 
+interface ChatProposal {
+  _type: 'proposal'
+  proposal_id: string
+  journey_id: string
+  title: string
+  extra_info: string
+}
+
+// Special chat payloads arrive as a JSON string; everything else is plain text.
+function parseChatProposal(raw: string | undefined): ChatProposal | null {
+  if (!raw || !raw.startsWith('{')) return null
+  try {
+    const obj = JSON.parse(raw) as Record<string, unknown>
+    if (obj._type === 'proposal') return obj as unknown as ChatProposal
+  } catch { /* not JSON — plain message */ }
+  return null
+}
+
+function ChatProposalBubble({
+  proposal, mine, at, userId, otherName, onRefresh,
+}: {
+  proposal: ChatProposal
+  mine: boolean
+  at: number
+  userId: string
+  otherName: string
+  onRefresh: () => Promise<void>
+}) {
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState(false)
+
+  async function approve() {
+    setBusy(true)
+    try {
+      const res = await fetch(CENTRAL_ENDPOINTS.journeyApproveRoot(proposal.journey_id), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, proposal_id: proposal.proposal_id }),
+      })
+      const data = (await res.json()) as { ok: boolean; both_approved?: boolean; error?: string }
+      if (!res.ok || !data.ok) throw new Error(data.error ?? 'approve failed')
+      if (data.both_approved) {
+        await fetch(SERVER_ENDPOINTS.goalCreateSharedRoot, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            journey_id: proposal.journey_id, proposal_id: proposal.proposal_id,
+            title: proposal.title, extra_info: proposal.extra_info,
+          }),
+        })
+      }
+      setDone(true); await onRefresh()
+    } catch (err) { console.error('[proposal] approve:', err) }
+    finally { setBusy(false) }
+  }
+
+  async function decline() {
+    setBusy(true)
+    try {
+      await fetch(CENTRAL_ENDPOINTS.journeyDeclineRoot(proposal.journey_id), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, proposal_id: proposal.proposal_id }),
+      })
+      setDone(true); await onRefresh()
+    } catch (err) { console.error('[proposal] decline:', err) }
+    finally { setBusy(false) }
+  }
+
+  const when = new Date(at * 1000).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+
+  return (
+    <div className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+      <div className="max-w-[82%] rounded-2xl p-4" style={{ background: 'rgba(167,139,250,.10)', border: '1px solid rgba(167,139,250,.3)' }}>
+        <p className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'rgba(167,139,250,.9)' }}>Goal proposal</p>
+        <p className="mt-1 text-sm font-semibold text-white">{proposal.title}</p>
+        {proposal.extra_info && <p className="mt-0.5 text-xs leading-relaxed text-white/55">{proposal.extra_info}</p>}
+        {!mine && !done && (
+          <div className="mt-3 flex gap-2">
+            <button disabled={busy} onClick={() => void decline()}
+              className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/55 hover:border-red-700 hover:text-red-400 disabled:opacity-40">
+              Decline
+            </button>
+            <button disabled={busy} onClick={() => void approve()}
+              className="rounded-lg bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/20 disabled:opacity-40">
+              Approve
+            </button>
+          </div>
+        )}
+        {mine && !done && <p className="mt-2 text-[10px] italic text-white/40">Waiting for {otherName}…</p>}
+        {done && <p className="mt-2 text-[10px] text-emerald-400">Done ✓</p>}
+        <p className="mt-1.5 text-[10px] text-white/30">{when}</p>
+      </div>
+    </div>
+  )
+}
+
 function CollabChatSheet({
   conn, userId, onClose,
 }: {
@@ -696,6 +773,11 @@ function CollabChatSheet({
         )}
         {messages.map((msg, i) => {
           const isMe = msg.sender === userId
+          const proposal = parseChatProposal(msg.content ?? msg.text)
+          if (proposal) return (
+            <ChatProposalBubble key={i} proposal={proposal} mine={isMe} at={msg.at}
+              userId={userId} otherName={conn.other_name} onRefresh={loadMessages} />
+          )
           return (
             <div key={i} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
               <div className="max-w-[78%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed"
@@ -956,11 +1038,11 @@ function CollabNodeDetail({
           )}
         </div>
         <p className="mb-1 text-base font-semibold text-white">{leaf.title}</p>
-        {leaf.tips ? (
+        {mine && (leaf.tips ? (
           <div className="mb-3">
             <GoalTipsCard tips={leaf.tips} compact />
           </div>
-        ) : leaf.extra_info && <p className="mb-3 text-sm leading-relaxed text-white/55">{leaf.extra_info}</p>}
+        ) : leaf.extra_info && <p className="mb-3 text-sm leading-relaxed text-white/55">{leaf.extra_info}</p>)}
         <p className="mb-4 text-xs text-white/40">{formatDuration(leaf.required_time)} estimated</p>
         <div className="flex flex-wrap gap-2">
           {state !== 'finished' && mine && canStart && (
@@ -1295,8 +1377,8 @@ function CollabJourneyView({
     onOpenFocus({
       id: leaf.id,
       title: leaf.title,
-      extraInfo: leaf.extra_info || undefined,
-      tips: leaf.tips || undefined,
+      extraInfo: mine ? (leaf.extra_info || undefined) : undefined,
+      tips: mine ? (leaf.tips || undefined) : undefined,
       requiredTimeSeconds: leaf.required_time,
       state: state === 'finished' ? 'done' : state === 'started' ? 'active' : 'idle',
       canStart: false,
@@ -1879,13 +1961,7 @@ export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { u
       if (!r.ok) throw new Error(`journey list failed (${r.status})`)
       const data = (await r.json()) as JourneyListResponse
       if (data.ok) {
-        const list = data.journeys
-        // TEMP visual test — remove before shipping
-        const mock: JourneyListItem[] = list.length > 0 ? [
-          { ...list[0], id: list[0].id + '_mock2', title: 'Launch side project', goal_count: 5, root_count: 5 },
-          { ...list[0], id: list[0].id + '_mock3', title: 'Read 12 books', goal_count: 3, root_count: 3 },
-        ] : []
-        setJourneys([...list, ...mock])
+        setJourneys(data.journeys)
         setError(null)
       }
       else throw new Error('server returned ok=false')

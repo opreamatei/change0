@@ -231,7 +231,7 @@ export default function ReviewsPanel({ open, onClose, userId, userLabel = '' }: 
   // ── preview ──
   return (
     <div className="fixed inset-0 z-[230] flex flex-col" style={{ background: '#000000' }}>
-      <div className="flex flex-shrink-0 items-center justify-between px-5 pt-[62px] pb-4">
+      <div className="relative z-10 flex flex-shrink-0 items-center justify-between px-5 pt-[62px] pb-4">
         <button type="button" onClick={onClose}
           className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl"
           style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.1)' }}>

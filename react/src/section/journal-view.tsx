@@ -1011,16 +1011,19 @@ export default function JournalView({ openEntryId = null }: JournalViewProps) {
         <div className="text-[34px] font-extrabold tracking-tight">Journal</div>
       </div>
 
-      {/* FAB */}
+      {/* new entry — reads like an entry, sits at the very top */}
       <div
         onClick={() => setScreen({ type: 'compose' })}
-        className="absolute bottom-[100px] right-5 w-[52px] h-[52px] rounded-full bg-white flex items-center justify-center cursor-pointer z-10 active:scale-90 transition-transform"
-        style={{ boxShadow: '0 4px 18px rgba(0,0,0,.55),0 1px 4px rgba(0,0,0,.3)' }}
+        className="mx-5 mt-2 mb-1 flex items-center gap-2.5 px-4 py-3.5 rounded-2xl cursor-pointer active:scale-[.99] transition-transform flex-shrink-0"
+        style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)' }}
       >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <line x1="12" y1="5" x2="12" y2="19" />
-          <line x1="5" y1="12" x2="19" y2="12" />
-        </svg>
+        <div className="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(255,255,255,.08)' }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.7)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+        </div>
+        <div className="text-[15px] font-semibold" style={{ color: 'rgba(255,255,255,.55)' }}>New entry</div>
       </div>
 
       {/* entries list */}
@@ -1032,7 +1035,7 @@ export default function JournalView({ openEntryId = null }: JournalViewProps) {
         )}
         {!loading && entries.length === 0 && (
           <div className="px-6 py-10 text-center text-sm" style={{ color: 'rgba(255,255,255,.3)' }}>
-            No entries yet.<br />Tap + to get started.
+            No entries yet.<br />Tap “New entry” to get started.
           </div>
         )}
         {groups.map(({ label, items }) => (

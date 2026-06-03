@@ -115,7 +115,7 @@ export default function FocusSession({
   target: FocusTarget
   onClose: () => void
 }) {
-  const { title, tips, state: nodeState, isMystery, canStart, pending, rootProgressPct } = target
+  const { title, tips, state: nodeState, isMystery, canStart, pending } = target
   const accent = target.accent
   const partnerStep = !!target.partnerStep
   const [partnerMsg] = useState(() => PARTNER_MESSAGES[Math.floor(Math.random() * PARTNER_MESSAGES.length)])
@@ -294,19 +294,6 @@ export default function FocusSession({
           <div className="mb-2 text-center text-[11px] font-bold uppercase tracking-[.7px]" style={{ color: 'rgba(255,255,255,.3)' }}>
             {title}
           </div>
-          {rootProgressPct !== undefined && !isCelebrating && (
-            <div className="mb-5 flex w-full items-center gap-2.5">
-              <div className="h-[3px] flex-1 overflow-hidden rounded-full" style={{ background: 'rgba(255,255,255,.08)' }}>
-                <div
-                  className="h-full rounded-full transition-all"
-                  style={{ width: `${rootProgressPct}%`, background: 'rgba(255,255,255,.35)' }}
-                />
-              </div>
-              <span className="shrink-0 tabular-nums text-[10px]" style={{ color: 'rgba(255,255,255,.3)' }}>
-                {rootProgressPct}%
-              </span>
-            </div>
-          )}
           {tips && !isCelebrating && (
             <div className="mb-7 w-full max-w-[320px]">
               <GoalTipsCard tips={tips} />

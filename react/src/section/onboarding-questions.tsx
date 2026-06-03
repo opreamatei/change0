@@ -115,7 +115,7 @@ export default function OnboardingQuestions({ goalTitle, scope, onDone, onSkip }
   }
 
   return (
-    <Shell goalTitle={goalTitle}>
+    <Shell goalTitle={goalTitle} counter={`${idx + 1} / ${questions.length}`}>
       <style>{`
         @keyframes obq-in {
           from { opacity: 0; transform: translateY(28px) scale(.94); filter: blur(8px); }
@@ -186,10 +186,13 @@ export default function OnboardingQuestions({ goalTitle, scope, onDone, onSkip }
 }
 
 /* Shared frame: a centred title, no skip — Continue alone carries the flow. */
-function Shell({ goalTitle, children }: { goalTitle: string; children: React.ReactNode }) {
+function Shell({ goalTitle, counter, children }: { goalTitle: string; counter?: string; children: React.ReactNode }) {
   return (
     <div className="absolute inset-0 z-[310] flex flex-col" style={{ background: '#0a0a0a' }}>
       <div className="flex flex-col items-center px-6 pt-[56px] pb-2 flex-shrink-0 text-center">
+        {counter && (
+          <div className="mb-2 text-[12px] font-bold uppercase tracking-[0.2em] text-white/35 tabular-nums">{counter}</div>
+        )}
         <div className="text-[22px] font-extrabold tracking-tight text-white">A few quick questions</div>
         <div className="truncate max-w-[80%] text-[12px]" style={{ color: 'rgba(255,255,255,.38)' }}>{goalTitle}</div>
       </div>

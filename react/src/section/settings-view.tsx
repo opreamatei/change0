@@ -444,7 +444,7 @@ function RingCard({ name, prog }: { name: string; prog: { done: number; total: n
 /* Read-only view of another person's goal portfolio. Renders from the cached
  * snapshot first, then refreshes from the central server. Reuses RingCard and
  * calcRootProgress, the same primitives the owner's own profile uses. */
-function ViewedProfilePanel({ person, onClose }: { person: SharedPerson; onClose: () => void }) {
+export function ViewedProfilePanel({ person, onClose }: { person: SharedPerson; onClose: () => void }) {
   const [goals, setGoals] = useState<Goal[]>([])
   const [name, setName] = useState(person.display_name)
   const [color, setColor] = useState<string | undefined>(person.color)
