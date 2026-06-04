@@ -69,6 +69,9 @@ From another terminal:
 - enter `change0/js` directory 
 - run `http-server` (or any other command to run a server)
 - open the received http url in a browser
+- on load, pick a user (or create one) in the selection menu — the viewer binds
+  that user's client server, so every panel shows that user's data. Use the
+  **Switch** button in the Node View sidebar to inspect a different user.
 
 ### Step 7
 - Use the app, but be patient because OpenAI requests are slow...

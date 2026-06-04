@@ -969,7 +969,7 @@ function PanelActionCard({ entry }: { entry: ChatEntry }) {
   )
 }
 
-const HIDDEN_EVENT_TYPES = new Set(['sse_connected', 'permission_resolved', 'suggested_replies', 'graph_updated'])
+const HIDDEN_EVENT_TYPES = new Set(['sse_connected', 'permission_resolved', 'suggested_replies', 'graph_updated', 'graph_update_noop'])
 
 function formatChatTime(timestamp: number) {
   return new Date(timestamp * 1000).toLocaleTimeString([], {
@@ -1222,7 +1222,7 @@ export default function ChatView({ mode = 'page', sessionId }: { mode?: 'page' |
         loaded = applyPermissionResolution(loaded, r.content)
       }
 
-      const graphUpdates = data.events.filter((e) => e.type === 'graph_updated')
+      const graphUpdates = data.events.filter((e) => e.type === 'graph_updated' || e.type === 'graph_update_noop')
       for (const _ of graphUpdates) {
         loaded = applyGraphUpdateResolved(loaded)
       }
@@ -1273,7 +1273,10 @@ export default function ChatView({ mode = 'page', sessionId }: { mode?: 'page' |
           return
         }
 
-        if (type === 'graph_updated') {
+        if (type === 'graph_updated' || type === 'graph_update_noop') {
+          // graph_update_noop is emitted when the decomposition added no nodes;
+          // it still resolves the pending "graph update" action so the spinner
+          // never hangs waiting for a graph_updated that won't come.
           setEntries((prev) => applyGraphUpdateResolved(prev))
           return
         }
