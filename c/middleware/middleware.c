@@ -1263,8 +1263,19 @@ static _Bool apply_actions(
 			InitString(&ginput, strlen(action->graph_input) + 1);
 			CatString(&ginput, action->graph_input, strlen(action->graph_input));
 			emit_text(emit, session_id, "graph_update_started", action->graph_input);
-			DecomposeInputIntoGraph(&ginput, user);
-			emit_text(emit, session_id, "graph_updated", "");
+			size_t added = DecomposeInputIntoGraph(&ginput, user);
+			/* Only claim a graph update when the decomposition actually added
+			 * nodes. An empty / unusable LLM response adds nothing, and emitting
+			 * graph_updated regardless is what made the stream lie about it. */
+			if (added > 0) {
+				String payload;
+				InitString(&payload, 64);
+				CatTemplateString(&payload, "{\"added\":%zu}", added);
+				emit_text(emit, session_id, "graph_updated", payload.p);
+				FreeString(&payload);
+			} else {
+				emit_text(emit, session_id, "graph_update_noop", "");
+			}
 			FreeString(&ginput);
 			continue;
 		}

@@ -122,7 +122,10 @@ static json_value* extract_ai_json(json_value *root){
     return NULL;
 }
 
-void DecomposeInputIntoGraph(String *input, User *user){
+/* Returns the number of nodes actually added to the graph. A return of 0 means
+ * the decomposition was a no-op (empty / unusable LLM response), so callers must
+ * not report a successful graph update on the strength of being called alone. */
+size_t DecomposeInputIntoGraph(String *input, User *user){
 
 	json_value* root = NULL;
 	UserProfileRecordInput(user, "input_to_graph", input ? input->p : "");
@@ -130,21 +133,32 @@ void DecomposeInputIntoGraph(String *input, User *user){
 	printf("Generating response ...\n");
 	root = call_gpt_decomposition(input);
 
-	cassert(root, "Doc doesn't seem to exist \n");
-	cassert(root->type == json_object, "Doc exists but is not an object \n");
-
-	//cassert(root->u.object.length == CONTEXT_COUNT, "Doc has not CONTEXT_COUNT children. But it exists and it is an object\n");
+	/* These were guarded by cassert, which is currently a no-op, so a NULL or
+	 * malformed response would fall through to a crash. Fail closed instead:
+	 * nothing parsed means nothing added. */
+	if (!root || root->type != json_object){
+		if (root) json_value_free(root);
+		return 0;
+	}
 
 	json_value* response_target = extract_ai_json(root);
-	cassert(response_target, "Respose from OpenAI seems corrupt, can t parse\n");
+	if (!response_target){
+		json_value_free(root);
+		return 0;
+	}
+
+	size_t before = user->nodes.count;
 
 	for (size_t i = 0; i < response_target->u.object.length; i++){
 		json_object_entry entry = response_target->u.object.values[i];
-	
+
 		AddContextNodesFromJSON(entry.name, entry.name_length, entry.value, &user->nodes);
 	}
 
+	size_t added = user->nodes.count - before;
 
 	json_value_free(response_target);
 	json_value_free(root);
+
+	return added;
 }

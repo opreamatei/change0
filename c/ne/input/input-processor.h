@@ -206,6 +206,6 @@ typedef struct UserType User;
 "}"
 
 
-void DecomposeInputIntoGraph(String *input, User *user);
+size_t DecomposeInputIntoGraph(String *input, User *user);
 
 #endif

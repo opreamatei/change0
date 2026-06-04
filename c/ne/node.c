@@ -191,7 +191,21 @@ Node* FindNodeGlobal(NodeContainer *nc, char* target, uint_fast8_t length, size_
 void SetupContextNodes(NodeContainer *nc) {
 	time_t now = change_time_now();
 	for (int i = 0; i < CONTEXT_COUNT; i++) {
-		Node *n = AddNodeEx(nc, context_labels[i], strlen(context_labels[i]), NODE_INIT_ACT, NODE_INIT_WGHT, PARENTLESS, 0, FERTILE, now);
+		/* A graph loaded from disk already holds its context nodes, but the
+		 * loader does not restore nc->contexts[]. Re-bind to the existing root
+		 * node when present and only create one for a genuinely empty graph;
+		 * blindly appending here is what doubled the context set on every
+		 * load -> save cycle. */
+		Node *n = NULL;
+		for (size_t j = 0; j < nc->count; j++) {
+			Node *cand = NodeAt(nc, j);
+			if (!cand->hasParent && strcmp(cand->label, context_labels[i]) == 0) {
+				n = cand;
+				break;
+			}
+		}
+		if (!n)
+			n = AddNodeEx(nc, context_labels[i], strlen(context_labels[i]), NODE_INIT_ACT, NODE_INIT_WGHT, PARENTLESS, 0, FERTILE, now);
 		change_assert(n, "Critical: couldn't initialize context node [%d]\n", i);
 		nc->contexts[i] = n->globalIndex;
 	}
