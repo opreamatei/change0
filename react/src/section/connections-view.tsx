@@ -46,8 +46,8 @@ function parseProposal(text: string): ProposalMessage | null {
   return null
 }
 
-const STATE_PROPOSED  = 0
-const STATE_DECLINED  = 2
+const STATE_PROPOSED   = 0
+const STATE_DECLINED   = 2
 
 function formatTime(ts: number): string {
   const d = new Date(ts * 1000)
@@ -196,7 +196,9 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
       const r = await fetch(CENTRAL_ENDPOINTS.messages(conn.id), { cache: 'no-store' })
       if (!r.ok) return
       const data = (await r.json()) as { ok: boolean; messages: Message[] }
-      if (data.ok) setMessages(data.messages)
+      if (data.ok && Array.isArray(data.messages) && data.messages.length > 0) {
+        setMessages(data.messages)
+      }
     } catch { /* ignore */ }
   }, [conn.id])
 
@@ -211,6 +213,9 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
   async function send() {
     const t = text.trim(); if (!t) return
     setSending(true); setText('')
+    // Optimistic: show message immediately
+    const optimistic: Message = { sender: userId, at: Date.now() / 1000, text: t }
+    setMessages((prev) => [...prev, optimistic])
     try {
       await fetch(CENTRAL_ENDPOINTS.messagesSend, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -223,7 +228,7 @@ function MessageThread({ conn, userId, onBack }: { conn: Connection; userId: str
   return (
     <div className="flex flex-col h-full" style={{ background: '#000' }}>
       {/* header */}
-      <div className="flex items-center gap-3 px-4 py-3 shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,.08)' }}>
+      <div className="flex items-center gap-3 px-4 pb-3 shrink-0" style={{ paddingTop: 'calc(env(safe-area-inset-top, 44px) + 12px)', borderBottom: '1px solid rgba(255,255,255,.08)' }}>
         <button onClick={onBack} className="flex items-center justify-center w-8 h-8 rounded-full text-white/50 hover:text-white hover:bg-white/8 transition-colors">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
@@ -505,7 +510,7 @@ type MatchState = 'idle' | 'checking' | 'searching' | 'found'
 
 /* ─── Main view ────────────────────────────────────────────────── */
 
-export default function ConnectionsView({ userId }: { userId: string }) {
+export default function ConnectionsView({ userId, onThreadChange }: { userId: string; onThreadChange?: (open: boolean) => void }) {
   const [connections, setConnections] = useState<Connection[]>([])
   const [loading, setLoading]         = useState(true)
   const [thread, setThread]           = useState<Connection | null>(null)
@@ -591,11 +596,11 @@ export default function ConnectionsView({ userId }: { userId: string }) {
   }
 
   if (thread) {
-    return <MessageThread conn={thread} userId={userId} onBack={() => setThread(null)} />
+    return <MessageThread conn={thread} userId={userId} onBack={() => { setThread(null); onThreadChange?.(false) }} />
   }
 
-  const proposals = connections.filter((c) => c.state === STATE_PROPOSED)
-  const declined  = connections.filter((c) => c.state === STATE_DECLINED)
+  const proposals  = connections.filter((c) => c.state === STATE_PROPOSED)
+  const declined   = connections.filter((c) => c.state === STATE_DECLINED)
 
   if (loading) {
     return <div className="flex items-center justify-center h-full text-sm text-white/30">Loading…</div>
@@ -703,19 +708,36 @@ export default function ConnectionsView({ userId }: { userId: string }) {
             )
           })()}
 
-          {/* ── Past collaborators (declined / ended) ── */}
+          {/* ── Past / declined ── */}
           {declined.length > 0 && (
-            <section className="space-y-3">
+            <section className="space-y-2">
               <p className="text-[10px] font-semibold uppercase tracking-widest text-white/35 px-1">
-                Past collaborators
+                Past
               </p>
-              {declined.map((c) => (
-                <div key={c.id} className="px-4 py-3 rounded-2xl"
-                  style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)' }}>
-                  <p className="text-sm font-semibold text-white/55">{c.other_name}</p>
-                  {c.reason && <p className="text-xs text-white/25 mt-0.5 line-clamp-2">{c.reason}</p>}
-                </div>
-              ))}
+              {declined.map((c) => {
+                const color = colorFromString(c.other_id || c.other_name)
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => { setThread(c); onThreadChange?.(true) }}
+                    className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-left active:scale-[.98] transition-transform"
+                    style={{ background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.06)' }}
+                  >
+                    <div className="w-10 h-10 rounded-full flex items-center justify-center text-[14px] font-bold shrink-0 opacity-50"
+                      style={{ background: color, color: '#0a0a0a' }}>
+                      {c.other_name.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-white/50 truncate">{c.other_name}</p>
+                      {c.reason && <p className="text-xs text-white/25 mt-0.5 truncate">{c.reason}</p>}
+                    </div>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.18)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                    </svg>
+                  </button>
+                )
+              })}
             </section>
           )}
         </div>

@@ -86,16 +86,29 @@ export default function LoginView({ onLogin }: LoginViewProps) {
   }, [])
 
   async function select(id: string, isNew = false) {
+    const MAX_PORT_RETRIES = 6   // up to ~9 seconds waiting for client process
     try {
       setBusy(true)
       setError(null)
-      const res = await fetchTimeout(CENTRAL_ENDPOINTS.usersSelect, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
-      })
-      if (!res.ok) throw new Error(`Select failed: ${res.status}`)
-      const payload = (await res.json()) as SelectResponse
+      let payload: SelectResponse | null = null
+      for (let attempt = 0; attempt <= MAX_PORT_RETRIES; attempt++) {
+        const res = await fetchTimeout(CENTRAL_ENDPOINTS.usersSelect, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id }),
+        })
+        if (!res.ok) throw new Error(`Select failed: ${res.status}`)
+        const p = (await res.json()) as SelectResponse
+        // For brand-new users the client process may not have started yet —
+        // the server returns port=0. Retry until we get a real port.
+        if (isNew && !p.port && attempt < MAX_PORT_RETRIES) {
+          await new Promise((r) => setTimeout(r, 1500))
+          continue
+        }
+        payload = p
+        break
+      }
+      if (!payload) throw new Error('Client server did not start in time')
       onLogin({ id: payload.id, name: payload.name }, buildClientBaseUrl(payload.port), isNew)
     } catch {
       setError(`Couldn't reach the server at ${serverUrl}. Check the Server URL.`)

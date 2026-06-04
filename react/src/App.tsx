@@ -66,6 +66,8 @@ function App() {
   const [focusTarget, setFocusTarget] = useState<FocusTarget | null>(null)
   const [journalFocus, setJournalFocus] = useState<JournalFocusActions | null>(null)
   const [goalOptions, setGoalOptions] = useState<GoalSelection | null>(null)
+  const [initialCollabJourneyId, setInitialCollabJourneyId] = useState<string | null>(null)
+  const [initialJourneyRootId, setInitialJourneyRootId] = useState<string | null>(null)
   const pendingActionRef = useRef<{ goalId: string } | null>(null)
   // Debounce timer for tree-changed refetches: a multi-level decomposition fires
   // several goal_tree_changed events in a row; collapse them into one refresh.
@@ -85,6 +87,7 @@ function App() {
   function handleLogin(user: LocalUser, baseUrl: string, isNew?: boolean) {
     applySession(user, baseUrl)
     setNeedsOnboarding(!!isNew)
+    setGoalId(ROOT_GOAL_ID)
     setRoute('user')
     window.history.pushState({}, '', buildUserPath(user.id))
   }
@@ -281,8 +284,10 @@ function App() {
       try {
         const res = await fetch(SERVER_ENDPOINTS.profile, { cache: 'no-store' })
         if (!res.ok) return
-        const data = (await res.json()) as { onboarded?: boolean }
-        if (!cancelled && data.onboarded === false) setNeedsOnboarding(true)
+        const data = (await res.json()) as { onboarded?: boolean | number | string }
+        // Server may return false, 0, or "0" — all mean not onboarded yet.
+        // If the field is missing entirely (legacy account), don't trigger.
+        if (!cancelled && 'onboarded' in data && !data.onboarded) setNeedsOnboarding(true)
       } catch {
         /* ignore — fall through to the normal app */
       }
@@ -799,13 +804,20 @@ function App() {
               statusMessage={error ?? message}
               onSelectGoal={openGoalFocus}
               onGoalOptions={setGoalOptions}
+              initialRootGoalId={initialJourneyRootId}
+              onInitialRootGoalConsumed={() => setInitialJourneyRootId(null)}
             />
           ) : goalPanel === 'collab' ? (
-            <TogetherView userId={localUser?.id ?? ''} onOpenFocus={setFocusTarget} onOpenJournal={setJournalFocus} />
+            <TogetherView userId={localUser?.id ?? ''} onOpenFocus={setFocusTarget} onOpenJournal={setJournalFocus} initialJourneyId={initialCollabJourneyId} onInitialJourneyConsumed={() => setInitialCollabJourneyId(null)} />
           ) : goalPanel === 'schedule' ? (
             <SchedulePanel />
           ) : goalPanel === 'profile' ? (
-            <SettingsView viewPerson={profileTarget} onViewPersonConsumed={() => setProfileTarget(null)} />
+            <SettingsView
+              viewPerson={profileTarget}
+              onViewPersonConsumed={() => setProfileTarget(null)}
+              onNavigateToJourney={(goalId) => { setInitialJourneyRootId(goalId); setGoalPanel('journey') }}
+              onNavigateToCollab={(journeyId) => { setInitialCollabJourneyId(journeyId); setGoalPanel('collab') }}
+            />
           ) : (
             <JournalView openEntryId={journalOpenEntryId} />
           )}

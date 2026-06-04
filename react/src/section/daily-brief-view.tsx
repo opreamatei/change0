@@ -41,7 +41,8 @@ interface ScheduleResponse {
 
 interface Block {
   start: number
-  end: number
+  end: number        // render height (clipped to next block start)
+  layoutEnd: number  // unclipped duration — used only for overlap detection
   kind: 'event' | 'rem'
   entry?: ScheduleEntry
   title?: string
@@ -87,12 +88,14 @@ function reminderEnabled(r: RawReminder): boolean {
 
 function layoutBlocks(blocks: Block[]) {
   if (!blocks.length) return
-  blocks.sort((a, b) => a.start - b.start || a.end - b.end)
+  // Sort by start; use layoutEnd as tiebreaker so longer blocks come first
+  blocks.sort((a, b) => a.start - b.start || b.layoutEnd - a.layoutEnd)
   const colEnds: number[] = []
   blocks.forEach((b) => {
+    // Use layoutEnd to check if a column is free
     let c = colEnds.findIndex((e) => e <= b.start)
     if (c === -1) c = colEnds.length
-    colEnds[c] = b.end
+    colEnds[c] = b.layoutEnd   // occupy column up to the real (unclipped) end
     b.col = c
   })
   const visited = new Set<Block>()
@@ -102,7 +105,8 @@ function layoutBlocks(blocks: Block[]) {
     visited.add(b)
     for (let i = 0; i < group.length; i++) {
       blocks.forEach((o) => {
-        if (!visited.has(o) && o.start < group[i].end && o.end > group[i].start) {
+        // Overlap check also uses layoutEnd
+        if (!visited.has(o) && o.start < group[i].layoutEnd && o.layoutEnd > group[i].start) {
           group.push(o)
           visited.add(o)
         }
@@ -194,10 +198,14 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
     return () => { cancelled = true }
   }, [])
 
-  /* selected day's tasks, sorted in time order */
-  const dayEntries = entries
-    .filter((e) => isSameDay(new Date(e.time * 1000), selDate))
-    .sort((a, b) => a.time - b.time)
+  /* selected day's tasks — deduped by goal_index (keep earliest), sorted by time */
+  const dayEntries = (() => {
+    const seen = new Set<number>()
+    return entries
+      .filter((e) => isSameDay(new Date(e.time * 1000), selDate))
+      .sort((a, b) => a.time - b.time)
+      .filter((e) => { if (seen.has(e.goal_index)) return false; seen.add(e.goal_index); return true })
+  })()
 
   /* reminders that fire on the selected weekday */
   const dayReminders = reminders
@@ -213,11 +221,9 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
 
   /* content span (minutes from midnight); each task clamped to the next start */
   let contentMin = Infinity, contentMax = -Infinity
-  dayEntries.forEach((e, i) => {
+  dayEntries.forEach((e) => {
     const s = absStart(e)
-    let en = s + durOf(e)
-    const next = dayEntries[i + 1]
-    if (next) en = Math.min(en, absStart(next))
+    const en = s + durOf(e)
     contentMin = Math.min(contentMin, s)
     contentMax = Math.max(contentMax, en)
   })
@@ -240,19 +246,16 @@ export default function DailyBriefView({ embedded = false }: { embedded?: boolea
     ? Math.max(0, Math.floor(contentMin / 60) - 1) * hourH
     : CAL_START * hourH
 
-  const blocks: Block[] = dayEntries.map((entry, i) => {
+  const blocks: Block[] = dayEntries.map((entry) => {
     const start = absStart(entry) - viewStartMin
-    let end = start + durOf(entry)
-    /* the scheduler lays tasks out sequentially, so never spill into the next */
-    const next = dayEntries[i + 1]
-    if (next) end = Math.min(end, absStart(next) - viewStartMin)
-    return { start, end, kind: 'event' as const, entry }
+    const naturalEnd = start + durOf(entry)
+    // No pre-clipping — layoutBlocks assigns separate columns for overlapping events
+    return { start, end: naturalEnd, layoutEnd: naturalEnd, kind: 'event' as const, entry }
   })
-  // reminders share the timeline columns (ui-2 parity): a 45-min footprint for
-  // collision/layout only; the rendered chip is a fixed short height.
+  // reminders share the timeline columns; 45-min footprint for collision only
   dayReminders.forEach((rem) => {
     const start = rem.minute - viewStartMin
-    blocks.push({ start, end: start + 45, kind: 'rem', title: rem.title })
+    blocks.push({ start, end: start + 45, layoutEnd: start + 45, kind: 'rem', title: rem.title })
   })
   layoutBlocks(blocks)
 

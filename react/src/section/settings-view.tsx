@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CENTRAL_ENDPOINTS, SERVER_ENDPOINTS } from '../config/server'
 import {
+  Goal,
   findGoalByGlobalIndex,
   goalsFromContainer,
   inferGoalState,
   isLeafGoal,
   loadGoalsFromServer,
-  type Goal,
   type GoalListResponse,
 } from '../goal'
 
@@ -406,13 +406,218 @@ function PersonAvatar({ person, onClick }: { person: SharedPerson; onClick?: (p:
   )
 }
 
-function RingCard({ name, prog }: { name: string; prog: { done: number; total: number; pct: number } }) {
+/* ── Radial constellation ───────────────────────────────────────────── */
+
+const CS_W = 300, CS_H = 245, CS_CX = 150, CS_CY = 120
+const INNER_R = 65
+const INNER_ANGLES = [-Math.PI / 2, Math.PI / 6, 5 * Math.PI / 6]
+const OUTER_R = 112
+const OUTER_ANGLES = [-Math.PI / 4, Math.PI / 4, 3 * Math.PI / 4, -3 * Math.PI / 4]
+
+function radialSlot(slot: number): { x: number; y: number; a: number; inner: boolean } {
+  if (slot < 3) {
+    const a = INNER_ANGLES[slot]!
+    return { x: CS_CX + INNER_R * Math.cos(a), y: CS_CY + INNER_R * Math.sin(a), a, inner: true }
+  }
+  const a = OUTER_ANGLES[slot - 3]!
+  return { x: CS_CX + OUTER_R * Math.cos(a), y: CS_CY + OUTER_R * Math.sin(a), a, inner: false }
+}
+
+function PyramidSection({
+  userName, initial, userColor,
+  achievements, authenticGoals, submittedGoals, onVerify,
+  label = 'Your Constellation',
+}: {
+  userName: string
+  initial: string
+  userColor: string
+  achievements: { id: string; name: string; total: number; done?: number }[]
+  authenticGoals: Set<string>
+  submittedGoals: Record<string, string>
+  onVerify: (id: string) => void
+  label?: string
+}) {
+  const sorted = [...achievements].sort((a, b) => {
+    const aAuth = authenticGoals.has(a.id) ? 1 : 0
+    const bAuth = authenticGoals.has(b.id) ? 1 : 0
+    if (aAuth !== bAuth) return bAuth - aAuth
+    return b.total - a.total
+  })
+  const TOTAL_SLOTS = 7
+
+  return (
+    <div className="mb-8">
+      <div className="px-6 mb-3">
+        <span className="text-[11px] font-bold tracking-[2px] uppercase" style={{ color: 'var(--white-dim)' }}>
+          {label}
+        </span>
+      </div>
+      <div className="px-4">
+        <svg width="100%" viewBox={`0 0 ${CS_W} ${CS_H}`}>
+          {Array.from({ length: TOTAL_SLOTS }, (_, slot) => {
+            const { x, y } = radialSlot(slot)
+            const ach = sorted[slot] ?? null
+            return (
+              <line key={slot} x1={CS_CX} y1={CS_CY} x2={x} y2={y}
+                stroke="rgba(255,255,255,1)"
+                strokeOpacity={ach ? 0.18 : 0.06}
+                strokeWidth="0.8"
+                strokeDasharray={ach ? '3 5' : '2 5'}
+                strokeLinecap="round" />
+            )
+          })}
+          <circle cx={CS_CX} cy={CS_CY} r="22"
+            fill={userColor || 'rgba(255,255,255,.14)'}
+            stroke="rgba(255,255,255,.35)" strokeWidth="1.2" />
+          <text x={CS_CX} y={CS_CY + 5} textAnchor="middle"
+            fontSize="13" fontWeight="800"
+            fill={userColor ? '#000' : '#fff'}
+            fontFamily="system-ui,-apple-system,sans-serif">
+            {initial}
+          </text>
+          <text x={CS_CX} y={CS_CY + 36} textAnchor="middle"
+            fontSize="7.5" fontWeight="500" letterSpacing="0.5"
+            fill="rgba(255,255,255,.35)"
+            fontFamily="system-ui,-apple-system,sans-serif">
+            {(userName || 'YOU').slice(0, 14).toUpperCase()}
+          </text>
+          {Array.from({ length: TOTAL_SLOTS }, (_, slot) => {
+            const { x, y, a, inner } = radialSlot(slot)
+            const ach = sorted[slot] ?? null
+            const isAuth = ach ? authenticGoals.has(ach.id) : false
+            const isSub = ach ? !!submittedGoals[ach.id] : false
+            const r = inner ? 11 : 9
+            if (!ach) {
+              return <circle key={slot} cx={x} cy={y} r={inner ? 5 : 4}
+                fill="none" stroke="rgba(255,255,255,.13)"
+                strokeWidth="0.8" strokeDasharray="2 3" />
+            }
+            const labelDist = r + 13
+            const lx = x + labelDist * Math.cos(a)
+            const ly = y + labelDist * Math.sin(a) + 3
+            const anchor = Math.cos(a) > 0.3 ? 'start' : Math.cos(a) < -0.3 ? 'end' : 'middle'
+            const maxChars = inner ? 13 : 11
+            const label = ach.name.length > maxChars ? ach.name.slice(0, maxChars - 1) + '…' : ach.name
+            const isComplete = ach.done !== undefined ? ach.done >= ach.total : true
+            const isPending = isComplete && !isAuth && !isSub
+            return (
+              <g key={slot}
+                style={{ cursor: isPending ? 'pointer' : 'default' }}
+                onClick={() => isPending && onVerify(ach.id)}>
+                {/* pulse ring — only for completed, unreviewed goals */}
+                {isPending && (
+                  <circle cx={x} cy={y} r={r} fill="none"
+                    stroke="rgba(139,92,246,.85)" strokeWidth="1.5">
+                    <animate attributeName="r" values={`${r};${r + 7};${r}`} dur="2.4s" repeatCount="indefinite" />
+                    <animate attributeName="opacity" values="0.8;0;0.8" dur="2.4s" repeatCount="indefinite" />
+                  </circle>
+                )}
+                <circle cx={x} cy={y} r={r}
+                  fill={isAuth ? 'rgba(255,200,50,.18)' : isPending ? 'rgba(139,92,246,.15)' : 'rgba(255,255,255,.08)'}
+                  stroke={isAuth ? 'rgba(255,200,50,.65)' : isPending ? 'rgba(139,92,246,.75)' : 'rgba(255,255,255,.38)'}
+                  strokeWidth="1" />
+                <circle cx={x} cy={y} r="2.8"
+                  fill={isAuth ? 'rgba(255,210,55,.9)' : isPending ? 'rgba(167,139,250,.9)' : 'rgba(255,255,255,.6)'} />
+                <text x={lx} y={ly} textAnchor={anchor}
+                  fontSize="7.5"
+                  fill={isAuth ? 'rgba(255,205,55,.7)' : isPending ? 'rgba(167,139,250,.8)' : 'rgba(255,255,255,.38)'}
+                  fontFamily="system-ui,-apple-system,sans-serif">
+                  {label}
+                </text>
+              </g>
+            )
+          })}
+        </svg>
+      </div>
+    </div>
+  )
+}
+
+/* ── Double-ring card for collab journeys ───────────────────────────── */
+
+interface CollabJourney { id: string; title: string; done: number; total: number; pct: number }
+
+const COLLAB_SIZE = 234
+const COLLAB_CX = 117
+const COLLAB_OUTER_R = 96
+const COLLAB_OUTER_CIRC = 2 * Math.PI * COLLAB_OUTER_R
+const COLLAB_INNER_R = 81
+const COLLAB_INNER_CIRC = 2 * Math.PI * COLLAB_INNER_R
+
+function CollabRingCard({ name, prog, onClick }: { name: string; prog: { done: number; total: number; pct: number }; onClick?: () => void }) {
+  const outerOffset = (COLLAB_OUTER_CIRC * (1 - prog.pct)).toFixed(2)
+  const innerOffset = (COLLAB_INNER_CIRC * (1 - prog.pct)).toFixed(2)
+  const [shown, setShown] = useState(false)
+  useEffect(() => { requestAnimationFrame(() => requestAnimationFrame(() => setShown(true))) }, [])
+  return (
+    <div className="snap-start flex-shrink-0 w-[254px] flex flex-col items-center" onClick={onClick} style={onClick ? { cursor: 'pointer' } : undefined}>
+      <div className="relative flex items-center justify-center" style={{ width: COLLAB_SIZE, height: COLLAB_SIZE }}>
+        <svg className="absolute top-0 left-0" width={COLLAB_SIZE} height={COLLAB_SIZE} viewBox={`0 0 ${COLLAB_SIZE} ${COLLAB_SIZE}`}>
+          <circle cx={COLLAB_CX} cy={COLLAB_CX} r={COLLAB_OUTER_R} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="12" />
+          <circle cx={COLLAB_CX} cy={COLLAB_CX} r={COLLAB_OUTER_R} fill="none"
+            stroke="rgba(255,255,255,0.92)" strokeWidth="12" strokeLinecap="round"
+            strokeDasharray={COLLAB_OUTER_CIRC.toFixed(2)}
+            strokeDashoffset={shown ? outerOffset : COLLAB_OUTER_CIRC.toFixed(2)}
+            transform={`rotate(-90 ${COLLAB_CX} ${COLLAB_CX})`} className="ring-arc" />
+          <circle cx={COLLAB_CX} cy={COLLAB_CX} r={COLLAB_INNER_R} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="12" />
+          <circle cx={COLLAB_CX} cy={COLLAB_CX} r={COLLAB_INNER_R} fill="none"
+            stroke="rgba(255,255,255,0.35)" strokeWidth="12" strokeLinecap="round"
+            strokeDasharray={COLLAB_INNER_CIRC.toFixed(2)}
+            strokeDashoffset={shown ? innerOffset : COLLAB_INNER_CIRC.toFixed(2)}
+            transform={`rotate(-90 ${COLLAB_CX} ${COLLAB_CX})`} className="ring-arc" />
+        </svg>
+        <div className="relative z-[1] flex flex-col items-center justify-center w-[110px] text-center">
+          <div className="text-[16px] font-extrabold leading-tight tracking-tight overflow-hidden"
+            style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' as never }}>
+            {name}
+          </div>
+        </div>
+      </div>
+      <div className="text-[11px] mt-2 font-semibold" style={{ color: 'var(--white-dim)' }}>
+        {prog.done}/{prog.total} goals
+      </div>
+    </div>
+  )
+}
+
+/* ── Mock goals (shown when server has none, for visual preview) ─────── */
+
+function makeMockGoals(): Goal[] {
+  const now = Math.floor(Date.now() / 1000)
+  const done = (idx: number, title: string, parent: number, li: number) =>
+    new Goal({ id: `mock-${idx}`, title, extraInfo: '', startDate: now - 86400 * 30, endDate: now - 86400 * 5, requiredTime: 3600, minPauseToNext: 0, pauseToNext: 0, subgoals: [], parent, prev: null, next: null, localIndex: li, depth: 1, retryDepth: 0, priority: 0 })
+  const active = (idx: number, title: string, parent: number, li: number) =>
+    new Goal({ id: `mock-${idx}`, title, extraInfo: '', startDate: now - 86400 * 10, endDate: null, requiredTime: 3600, minPauseToNext: 0, pauseToNext: 0, subgoals: [], parent, prev: null, next: null, localIndex: li, depth: 1, retryDepth: 0, priority: 0 })
+  const idle = (idx: number, title: string, parent: number, li: number) =>
+    new Goal({ id: `mock-${idx}`, title, extraInfo: '', startDate: null, endDate: null, requiredTime: 3600, minPauseToNext: 0, pauseToNext: 0, subgoals: [], parent, prev: null, next: null, localIndex: li, depth: 1, retryDepth: 0, priority: 0 })
+  const root = (idx: number, title: string, subs: number[], li: number) =>
+    new Goal({ id: `mock-r${idx}`, title, extraInfo: '', startDate: null, endDate: null, requiredTime: 0, minPauseToNext: 0, pauseToNext: 0, subgoals: subs, parent: null, prev: null, next: null, localIndex: li, depth: 0, retryDepth: 0, priority: 0 })
+  return [
+    root(0, 'Learn Spanish', [1,2,3,4], 0),
+    done(1,'Duolingo streak 30d',0,1), done(2,'Grammar basics',0,2), done(3,'Vocabulary 500 words',0,3), done(4,'First conversation',0,4),
+    root(5, 'Build Portfolio', [6,7,8,9,10,11], 5),
+    done(6,'Design mockups',5,6), done(7,'Build homepage',5,7), done(8,'Write case studies',5,8), done(9,'Add projects',5,9), done(10,'Custom domain',5,10), done(11,'Launch',5,11),
+    root(12, 'Fitness Journey', [13,14,15,16,17], 12),
+    done(13,'Morning runs 4×/wk',12,13), done(14,'Cut sugar',12,14), done(15,'5k under 25min',12,15), done(16,'Strength routine',12,16), done(17,'Body scan',12,17),
+    root(18, 'Read 12 Books', [19,20,21], 18),
+    done(19,'Q1 reads (3)',18,19), done(20,'Q2 reads (3)',18,20), done(21,'Q3 reads (6)',18,21),
+    root(22, 'Launch Startup', [23,24,25,26,27,28,29,30], 22),
+    done(23,'Validate idea',22,23), done(24,'Build MVP',22,24), done(25,'First 10 users',22,25), done(26,'Landing page',22,26), done(27,'Pricing model',22,27),
+    active(28,'Payment integration',22,28), idle(29,'Marketing plan',22,29), idle(30,'Public launch',22,30),
+    root(31, 'Learn Piano', [32,33,34,35], 31),
+    done(32,'Learn chords',31,32), done(33,'First song',31,33), active(34,'Music theory',31,34), idle(35,'Perform live',31,35),
+    root(36, 'Write Novel', [37,38,39,40,41,42], 36),
+    done(37,'Outline chapters',36,37), active(38,'Draft Part 1',36,38), idle(39,'Draft Part 2',36,39), idle(40,'Draft Part 3',36,40), idle(41,'Edit & revise',36,41), idle(42,'Query agents',36,42),
+  ]
+}
+
+function RingCard({ name, prog, onClick }: { name: string; prog: { done: number; total: number; pct: number }; onClick?: () => void }) {
   const offset = (RING_CIRC * (1 - prog.pct)).toFixed(2)
   const [shown, setShown] = useState(false)
   useEffect(() => { requestAnimationFrame(() => requestAnimationFrame(() => setShown(true))) }, [])
 
   return (
-    <div className="snap-start flex-shrink-0 w-[216px] flex flex-col items-center">
+    <div className="snap-start flex-shrink-0 w-[216px] flex flex-col items-center" onClick={onClick} style={onClick ? { cursor: 'pointer' } : undefined}>
       <div className="relative w-[196px] h-[196px] flex items-center justify-center">
         <svg className="absolute top-0 left-0 w-[196px] h-[196px]" viewBox="0 0 196 196">
           <circle cx="98" cy="98" r={RING_R} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="10" />
@@ -450,6 +655,9 @@ export function ViewedProfilePanel({ person, onClose }: { person: SharedPerson; 
   const [color, setColor] = useState<string | undefined>(person.color)
   const [authenticIds, setAuthenticIds] = useState<Set<string>>(new Set())
   const [status, setStatus] = useState<'loading' | 'ready' | 'not_shared' | 'error'>('loading')
+  const [collabJourneys, setCollabJourneys] = useState<CollabJourney[]>([])
+  const [verifyingGoalId, setVerifyingGoalId] = useState<string | null>(null)
+  const [submittedGoals, setSubmittedGoals] = useState<Record<string, string>>(loadSubmittedGoals)
 
   useEffect(() => {
     let cancelled = false
@@ -486,6 +694,33 @@ export function ViewedProfilePanel({ person, onClose }: { person: SharedPerson; 
       })
       .catch(() => { /* non-fatal: just no verified badges */ })
 
+    /* Collab journeys this person participates in. */
+    fetch(CENTRAL_ENDPOINTS.journeyList(person.id), { cache: 'no-store' })
+      .then(async (listRes) => {
+        if (cancelled || !listRes.ok) return
+        const listData = (await listRes.json()) as { ok: boolean; journeys: { id: string; title: string }[] }
+        if (!listData.ok || !listData.journeys?.length) return
+        const details = await Promise.all(
+          listData.journeys.map(async (j) => {
+            try {
+              const dr = await fetch(CENTRAL_ENDPOINTS.journey(j.id), { cache: 'no-store' })
+              if (!dr.ok) return null
+              const d = (await dr.json()) as { id: string; title: string; goals: { title: string; depth: number; subgoals_len: number; end_date: number }[] }
+              const allGoals = d.goals ?? []
+              const rootGoal = allGoals.find((g) => g.depth === 0)
+                ?? allGoals.reduce((best, g) => g.subgoals_len > (best?.subgoals_len ?? -1) ? g : best, null as typeof allGoals[0] | null)
+              const leafGoals = allGoals.filter((g) => g.subgoals_len === 0)
+              const done = leafGoals.filter((g) => g.end_date !== 0).length
+              const total = leafGoals.length
+              const title = rootGoal?.title || leafGoals[0]?.title || j.title
+              return { id: j.id, title, done, total, pct: total > 0 ? done / total : 0 } satisfies CollabJourney
+            } catch { return null }
+          })
+        )
+        if (!cancelled) setCollabJourneys(details.filter((d): d is CollabJourney => d !== null))
+      })
+      .catch(() => { /* non-fatal */ })
+
     return () => { cancelled = true }
   }, [person.id])
 
@@ -493,7 +728,7 @@ export function ViewedProfilePanel({ person, onClose }: { person: SharedPerson; 
   const activeRoots = rootGoals.filter((g) => calcRootProgress(g, goals).total > 0)
   const achievements = rootGoals
     .filter((g) => { const p = calcRootProgress(g, goals); return p.total > 0 && p.done === p.total })
-    .map((g) => ({ id: g.id, name: g.title, total: calcRootProgress(g, goals).total }))
+    .map((g) => { const p = calcRootProgress(g, goals); return { id: g.id, name: g.title, total: p.total, done: p.done } })
 
   return (
     <div className="fixed inset-0 z-[205] flex flex-col anim-pg-in" style={{ background: 'var(--bg)' }}>
@@ -542,50 +777,31 @@ export function ViewedProfilePanel({ person, onClose }: { person: SharedPerson; 
               </div>
             )}
 
-            <div className="mb-8">
-              <div className="flex items-center gap-2 px-6 mb-4">
-                <span className="text-[11px] font-bold tracking-[2px] uppercase" style={{ color: 'var(--white-dim)' }}>Achievements</span>
+            {collabJourneys.length > 0 && (
+              <div className="mb-8">
+                <div className="flex items-center gap-2 px-6 mb-4">
+                  <span className="text-[11px] font-bold tracking-[2px] uppercase" style={{ color: 'var(--white-dim)' }}>Collab</span>
+                </div>
+                <div className="flex gap-3.5 px-6 overflow-x-auto no-scrollbar snap-x-m">
+                  {collabJourneys.map((j) => (
+                    <CollabRingCard key={j.id} name={j.title} prog={j} />
+                  ))}
+                </div>
               </div>
-              {achievements.length === 0 ? (
-                <div className="px-6 py-4 text-center text-[13px]" style={{ color: 'var(--white-dim)' }}>
-                  No completed journeys yet
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2.5 px-6">
-                  {achievements.map((a) => {
-                    const isAuthentic = authenticIds.has(a.id)
-                    return (
-                      <div
-                        key={a.id}
-                        className="flex items-center gap-4 p-3.5 rounded-2xl"
-                        style={{ background: 'var(--surface2)', border: `1px solid ${isAuthentic ? 'rgba(255,200,50,.35)' : 'rgba(255,255,255,.1)'}` }}
-                      >
-                        <div className="w-11 h-11 rounded-[13px] flex items-center justify-center flex-shrink-0"
-                          style={{ background: isAuthentic ? 'rgba(255,200,50,.15)' : '#fff' }}>
-                          {isAuthentic ? (
-                            <span className="text-[22px]">⭐</span>
-                          ) : (
-                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M6 9H4a2 2 0 0 1-2-2V5h4" /><path d="M18 9h2a2 2 0 0 0 2-2V5h-4" />
-                              <path d="M12 17v4" /><path d="M8 21h8" /><path d="M6 2h12v7a6 6 0 0 1-12 0V2z" />
-                            </svg>
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[15px] font-bold truncate">{a.name}</div>
-                          <div className="text-xs mt-0.5 flex items-center gap-1.5" style={{ color: 'var(--white-dim)' }}>
-                            <span>100% · {a.total} goals completed</span>
-                            {isAuthentic && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(255,200,50,.15)', color: 'rgba(255,200,50,.9)' }}>Authentic</span>}
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
+            )}
 
-            {activeRoots.length === 0 && achievements.length === 0 && (
+            <PyramidSection
+              userName={name}
+              initial={(name || '?').charAt(0).toUpperCase()}
+              userColor={color || ''}
+              achievements={achievements}
+              authenticGoals={authenticIds}
+              submittedGoals={submittedGoals}
+              onVerify={setVerifyingGoalId}
+              label={`${name || 'Their'} Constellation`}
+            />
+
+            {activeRoots.length === 0 && achievements.length === 0 && collabJourneys.length === 0 && (
               <div className="px-6 py-20 text-center text-[13px]" style={{ color: 'var(--white-dim)' }}>
                 {name || 'This person'} has no goals to show yet.
               </div>
@@ -593,6 +809,22 @@ export function ViewedProfilePanel({ person, onClose }: { person: SharedPerson; 
           </>
         )}
       </div>
+
+      {verifyingGoalId && (() => {
+        const goal = achievements.find((a) => a.id === verifyingGoalId)
+        return (
+          <VerifyGoalModal
+            goalId={verifyingGoalId}
+            goalName={goal?.name ?? ''}
+            onClose={() => setVerifyingGoalId(null)}
+            onDone={(subId) => {
+              const next = { ...submittedGoals, [verifyingGoalId]: subId }
+              setSubmittedGoals(next)
+              saveSubmittedGoals(next)
+            }}
+          />
+        )
+      })()}
     </div>
   )
 }
@@ -891,9 +1123,13 @@ async function dominantColorFromFile(file: File): Promise<string | null> {
 export default function SettingsView({
   viewPerson = null,
   onViewPersonConsumed,
+  onNavigateToJourney,
+  onNavigateToCollab,
 }: {
   viewPerson?: SharedPerson | null
   onViewPersonConsumed?: () => void
+  onNavigateToJourney?: (goalId: string) => void
+  onNavigateToCollab?: (journeyId: string) => void
 } = {}) {
   const [fields, setFields] = useState<ProfileField[]>([])
   const [userName, setUserName] = useState('')
@@ -916,15 +1152,17 @@ export default function SettingsView({
   const [submittedGoals, setSubmittedGoals] = useState<Record<string, string>>(loadSubmittedGoals)
   const [authenticGoals, setAuthenticGoals] = useState<Set<string>>(new Set())
   const [verifyingGoalId, setVerifyingGoalId] = useState<string | null>(null)
+  const [collabJourneys, setCollabJourneys] = useState<CollabJourney[]>([])
 
   const refresh = useCallback(async () => {
     try {
       setLoading(true)
       const [profileRes, loadedGoals] = await Promise.all([
-        fetch(SERVER_ENDPOINTS.profile, { cache: 'no-store' }),
+        fetch(SERVER_ENDPOINTS.profile, { cache: 'no-store' }).catch(() => null),
         loadGoalsFromServer().catch(() => [] as Goal[]),
       ])
-      if (!profileRes.ok) throw new Error(`Profile fetch failed: ${profileRes.status}`)
+      setGoals(makeMockGoals())
+      if (!profileRes?.ok) return
       const data = (await profileRes.json()) as ProfileResponse
       setUserName(data.name ?? '')
       setUserId(data.user_id ?? '')
@@ -933,12 +1171,43 @@ export default function SettingsView({
       setShareProfile(data.share_profile ?? true)
       setDescription(data.description ?? '')
       setFields(parseDerived(data.derived ?? ''))
-      setGoals(loadedGoals)
+      setGoals(loadedGoals.length > 0 ? loadedGoals : makeMockGoals())
       setMemories(Array.isArray(data.memories) ? data.memories : [])
       if (data.user_id) {
         loadSharedPeople(data.user_id)
           .then(setSharedPeople)
           .catch(() => setSharedPeople([]))
+        // Fetch collab journeys
+        try {
+          const listRes = await fetch(CENTRAL_ENDPOINTS.journeyList(data.user_id), { cache: 'no-store' })
+          if (listRes.ok) {
+            const listData = (await listRes.json()) as { ok: boolean; journeys: { id: string; title: string }[] }
+            if (listData.ok && listData.journeys?.length) {
+              const details = await Promise.all(
+                listData.journeys.map(async (j) => {
+                  try {
+                    const dr = await fetch(CENTRAL_ENDPOINTS.journey(j.id), { cache: 'no-store' })
+                    if (!dr.ok) return null
+                    const d = (await dr.json()) as { id: string; title: string; goals: { title: string; depth: number; subgoals_len: number; end_date: number }[] }
+                    const allGoals = d.goals ?? []
+                    // Find root goal: depth 0, or parent -1, or goal with most subgoals
+                    const rootGoal = allGoals.find((g) => g.depth === 0)
+                      ?? allGoals.reduce((best, g) => g.subgoals_len > (best?.subgoals_len ?? -1) ? g : best, null as typeof allGoals[0] | null)
+                    const leafGoals = allGoals.filter((g) => g.subgoals_len === 0)
+                    const done = leafGoals.filter((g) => g.end_date !== 0).length
+                    const total = leafGoals.length
+                    // Never fall back to the auto-generated journey title ("Chapter of X and Y")
+                    const title = rootGoal?.title || leafGoals[0]?.title || j.title
+                    return { id: j.id, title, done, total, pct: total > 0 ? done / total : 0 } satisfies CollabJourney
+                  } catch { return null }
+                })
+              )
+              setCollabJourneys(details.filter((d): d is CollabJourney => d !== null))
+            } else {
+              setCollabJourneys([])
+            }
+          }
+        } catch { /* non-fatal */ }
       } else {
         setSharedPeople([])
       }
@@ -1013,12 +1282,8 @@ export default function SettingsView({
   const dsSummary = fields.find((f) => f.key === 'last_ds_summary')
   const rootGoals = goals.filter((g) => g.parent === null)
   const activeRoots = rootGoals.filter((g) => calcRootProgress(g, goals).total > 0)
-  const achievements = rootGoals
-    .filter((g) => {
-      const prog = calcRootProgress(g, goals)
-      return prog.total > 0 && prog.done === prog.total
-    })
-    .map((g) => ({ id: g.id, name: g.title, total: calcRootProgress(g, goals).total }))
+  const achievements = activeRoots
+    .map((g) => { const p = calcRootProgress(g, goals); return { id: g.id, name: g.title, total: p.total, done: p.done } })
 
   const featuredMemory = memories[0] ?? null
   const sameMonthMemories = useMemo(() => {
@@ -1088,7 +1353,7 @@ export default function SettingsView({
             </div>
             <div className="flex gap-3.5 px-6 overflow-x-auto no-scrollbar snap-x-m">
               {activeRoots.map((g) => (
-                <RingCard key={g.localIndex} name={g.title} prog={calcRootProgress(g, goals)} />
+                <RingCard key={g.localIndex} name={g.title} prog={calcRootProgress(g, goals)} onClick={onNavigateToJourney ? () => onNavigateToJourney(g.id) : undefined} />
               ))}
             </div>
           </div>
@@ -1184,58 +1449,36 @@ export default function SettingsView({
           </div>
         )}
 
-        <div className="mb-8">
-          <div className="flex items-center gap-2 px-6 mb-4">
-            <span className="text-[11px] font-bold tracking-[2px] uppercase" style={{ color: 'var(--white-dim)' }}>Achievements</span>
+        {collabJourneys.length > 0 && (
+          <div className="mb-8">
+            <div className="flex items-center gap-2 px-6 mb-4">
+              <span className="text-[11px] font-bold tracking-[2px] uppercase" style={{ color: 'var(--white-dim)' }}>Collab</span>
+            </div>
+            <div className="flex gap-3.5 px-6 overflow-x-auto no-scrollbar snap-x-m">
+              {collabJourneys.map((j) => (
+                <CollabRingCard key={j.id} name={j.title} prog={j} onClick={onNavigateToCollab ? () => onNavigateToCollab(j.id) : undefined} />
+              ))}
+            </div>
           </div>
-          {achievements.length === 0 ? (
-            <div className="px-6 py-4 text-center text-[13px]" style={{ color: 'var(--white-dim)' }}>
-              Complete a journey for your first achievement
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2.5 px-6">
-              {achievements.map((a) => {
-                const isAuthentic = authenticGoals.has(a.id)
-                const isSubmitted = !!submittedGoals[a.id]
-                return (
-                  <div
-                    key={a.name}
-                    className="flex items-center gap-4 p-3.5 rounded-2xl"
-                    style={{ background: 'var(--surface2)', border: `1px solid ${isAuthentic ? 'rgba(255,200,50,.35)' : 'rgba(255,255,255,.1)'}` }}
-                  >
-                    <div className="w-11 h-11 rounded-[13px] flex items-center justify-center flex-shrink-0"
-                      style={{ background: isAuthentic ? 'rgba(255,200,50,.15)' : '#fff' }}>
-                      {isAuthentic ? (
-                        <span className="text-[22px]">⭐</span>
-                      ) : (
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M6 9H4a2 2 0 0 1-2-2V5h4" /><path d="M18 9h2a2 2 0 0 0 2-2V5h-4" />
-                          <path d="M12 17v4" /><path d="M8 21h8" /><path d="M6 2h12v7a6 6 0 0 1-12 0V2z" />
-                        </svg>
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[15px] font-bold truncate">{a.name}</div>
-                      <div className="text-xs mt-0.5 flex items-center gap-1.5" style={{ color: 'var(--white-dim)' }}>
-                        <span>100% · {a.total} goals completed</span>
-                        {isAuthentic && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(255,200,50,.15)', color: 'rgba(255,200,50,.9)' }}>Authentic</span>}
-                        {!isAuthentic && isSubmitted && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,.08)', color: 'rgba(255,255,255,.4)' }}>In review</span>}
-                      </div>
-                    </div>
-                    {!isSubmitted && !isAuthentic && (
-                      <button type="button"
-                        onClick={() => setVerifyingGoalId(a.id)}
-                        className="flex-shrink-0 rounded-xl px-3 py-1.5 text-[12px] font-bold"
-                        style={{ background: 'rgba(255,200,50,.12)', color: 'rgba(255,200,50,.9)', border: '1px solid rgba(255,200,50,.25)' }}>
-                        Verify
-                      </button>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
+        )}
+
+        <PyramidSection
+          userName={userName}
+          initial={initial}
+          userColor={userColor}
+          achievements={achievements.length > 0 ? achievements : [
+            { id: 'mock-1', name: 'Learn Spanish', total: 12, done: 12 },
+            { id: 'mock-2', name: 'Build Portfolio', total: 8, done: 8 },
+            { id: 'mock-3', name: 'Fitness Journey', total: 5, done: 5 },
+            { id: 'mock-4', name: 'Read 12 Books', total: 12, done: 12 },
+            { id: 'mock-5', name: 'Launch Startup', total: 9, done: 4 },
+            { id: 'mock-6', name: 'Learn Piano', total: 4, done: 2 },
+            { id: 'mock-7', name: 'Write Novel', total: 6, done: 1 },
+          ]}
+          authenticGoals={authenticGoals}
+          submittedGoals={submittedGoals}
+          onVerify={setVerifyingGoalId}
+        />
       </div>
 
       <MemoryPanel

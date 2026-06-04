@@ -28,6 +28,9 @@ export interface CurrentGoalsViewProps {
   onSelectGoal: (selection: GoalSelection) => void
   /** Long-press on a goal card — opens an options menu (e.g. exit journey). */
   onGoalOptions?: (selection: GoalSelection) => void
+  /** When set, the view will switch to the journey whose root goal has this ID. */
+  initialRootGoalId?: string | null
+  onInitialRootGoalConsumed?: () => void
 }
 
 interface PathNode extends PathNodeData {
@@ -112,7 +115,7 @@ function buildJourneyData(root: Goal, goals: Goal[]): JourneyData {
 }
 
 export default function CurrentGoalsView({
-  goals, statusMessage, onSelectGoal, onGoalOptions,
+  goals, statusMessage, onSelectGoal, onGoalOptions, initialRootGoalId, onInitialRootGoalConsumed,
 }: CurrentGoalsViewProps) {
   const [current, setCurrent] = useState(0)
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -145,6 +148,16 @@ export default function CurrentGoalsView({
   useEffect(() => {
     if (current > journeys.length - 1) setCurrent(Math.max(0, journeys.length - 1))
   }, [journeys.length, current])
+
+  // Jump to a specific journey when navigated from a profile ring tap.
+  useEffect(() => {
+    if (!initialRootGoalId || journeys.length === 0) return
+    const idx = journeys.findIndex((j) => j.root.id === initialRootGoalId)
+    if (idx >= 0) {
+      setCurrent(idx)
+      onInitialRootGoalConsumed?.()
+    }
+  }, [initialRootGoalId, journeys, onInitialRootGoalConsumed])
 
   const activeJourney = journeys[current]
 

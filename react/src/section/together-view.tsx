@@ -15,7 +15,7 @@ import type { JournalFocusActions } from './journal-focus-session'
 /* ─── Onboarding ─────────────────────────────────────────────────────────── */
 
 const OB_KEY = 'collab_ob_v1'
-type OBPhase = 'question' | 'declined' | 'finding' | 'active'
+type OBPhase = 'question' | 'lobby' | 'finding' | 'declined' | 'active'
 
 // Minimal connection shape needed for the match card
 interface OBConnection {
@@ -730,15 +730,20 @@ function RequestSwipeDeck({
 /* ─── Overlay: Inactiv ───────────────────────────────────────────────────── */
 
 function CollabLobbyScreen({
-  onFindMatch, onOpenReviews, onResetCollab, hideFind = false,
+  onFindMatch, onOpenReviews, hideFind = false,
 }: {
   onFindMatch: () => void
   onOpenReviews?: () => void
-  onResetCollab?: () => void
   hideFind?: boolean
 }) {
   const [visible, setVisible] = useState(false)
   useEffect(() => { const t = setTimeout(() => setVisible(true), 40); return () => clearTimeout(t) }, [])
+
+  function replay() {
+    setVisible(false)
+    setTimeout(() => setVisible(true), 60)
+  }
+
   return (
     <div
       className="h-full flex flex-col relative overflow-hidden"
@@ -747,12 +752,21 @@ function CollabLobbyScreen({
       {/* top bar */}
       <div className="absolute top-0 left-0 right-0 pt-12 pb-4 px-5 flex items-center justify-between z-10">
         <h1 className="text-[28px] font-bold tracking-tight text-white">Collab</h1>
-        {(onOpenReviews || onResetCollab) && (
-          <div className="flex items-center gap-2">
-            {onResetCollab && <ResetCollabButton onClick={onResetCollab} />}
-            {onOpenReviews && <ReviewsButton onClick={onOpenReviews} />}
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={replay}
+            title="Replay animation"
+            className="w-[34px] h-[34px] rounded-[11px] flex items-center justify-center transition-transform active:scale-95"
+            style={{ background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.1)', color: 'rgba(255,255,255,.45)' }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="1 4 1 10 7 10" />
+              <path d="M3.51 15a9 9 0 1 0 .49-4.5" />
+            </svg>
+          </button>
+          {onOpenReviews && <ReviewsButton onClick={onOpenReviews} />}
+        </div>
       </div>
 
       {/* centered content */}
@@ -1711,9 +1725,22 @@ function CollabJourneyView({
             <polyline points="15 18 9 12 15 6" />
           </svg>
         </button>
-        <div className="flex-1 min-w-0">
-          <div className="text-[11px] text-white/40">{doneCount}/{collabNodes.length} done</div>
-        </div>
+        {/* user avatars — left */}
+        {detail && detail.users.length >= 2 && (
+          <div className="flex items-center -space-x-1.5">
+            {detail.users.slice(0, 2).map((u, i) => (
+              <ParticipantAvatar
+                key={u.id}
+                id={u.id}
+                name={u.display_name}
+                color={u.color || PARTICIPANT_COLORS[i]}
+                className="h-6 w-6 rounded-full text-[10px] font-bold ring-1 ring-white/15"
+              />
+            ))}
+          </div>
+        )}
+
+        <div className="flex-1 min-w-0" />
 
         <div className="flex flex-col items-end gap-2 shrink-0">
           {/* journey pager dots */}
@@ -1734,21 +1761,7 @@ function CollabJourneyView({
               ))}
             </div>
           )}
-
-          {/* user legend */}
-          {detail && detail.users.length >= 2 && (
-            <div className="flex items-center gap-2">
-              {detail.users.slice(0, 2).map((u, i) => (
-                <ParticipantAvatar
-                  key={u.id}
-                  id={u.id}
-                  name={u.display_name}
-                  color={u.color || PARTICIPANT_COLORS[i]}
-                  className="h-6 w-6 rounded-full text-[10px] font-bold ring-1 ring-white/15"
-                />
-              ))}
-            </div>
-          )}
+          <div className="text-[11px] text-white/40">{doneCount}/{collabNodes.length} done</div>
         </div>
       </div>
 
@@ -2144,9 +2157,12 @@ function JourneyPortalCard({
         </span>
       </div>
 
-      {/* bottom: avatars + goal count */}
+      {/* bottom: goal count (stânga) + avatare (dreapta) */}
       <div className="absolute bottom-0 left-0 right-0 px-5 pb-4 z-10">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between">
+          <span className="text-[12px] font-medium" style={{ color: 'rgba(255,255,255,.6)' }}>
+            {(journey.root_count ?? journey.goal_count)} goal{(journey.root_count ?? journey.goal_count) === 1 ? '' : 's'}
+          </span>
           <div className="flex -space-x-2">
             {journey.participants.slice(0, 4).map((p, i) => (
               <ParticipantAvatar
@@ -2159,9 +2175,6 @@ function JourneyPortalCard({
               />
             ))}
           </div>
-          <span className="text-[12px] font-medium" style={{ color: 'rgba(255,255,255,.6)' }}>
-            {(journey.root_count ?? journey.goal_count)} goal{(journey.root_count ?? journey.goal_count) === 1 ? '' : 's'}
-          </span>
         </div>
       </div>
     </button>
@@ -2218,7 +2231,7 @@ function JourneysContent({
   }
 
   if (journeys.length === 0) {
-    return <CollabLobbyScreen onFindMatch={onFindMatch} onOpenReviews={onOpenReviews} onResetCollab={onResetCollab} hideFind={hasRequests} />
+    return <CollabLobbyScreen onFindMatch={onFindMatch} onOpenReviews={onOpenReviews} hideFind={hasRequests} />
   }
 
   return (
@@ -2244,63 +2257,13 @@ function JourneysContent({
 
 /* ─── main together view ─────────────────────────────────────────────────── */
 
-/* ─── Locked gate — shown until the user opts into being discoverable ────── */
 
-function CollabLockedGate({ userId, onReady }: { userId: string; onReady: () => void }) {
-  const [busy, setBusy] = useState(false)
-  async function enable() {
-    if (busy) return
-    setBusy(true)
-    try {
-      await fetch(CENTRAL_ENDPOINTS.connectionsDiscoverable, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: userId }),
-      })
-    } catch { /* ignore */ }
-    onReady()
-  }
-  return (
-    <div className="flex h-full flex-col px-6" style={{ background: '#0a0a0a' }}>
-      <div className="pt-[62px] pb-2">
-        <h1 className="text-[28px] font-bold tracking-tight text-white">Collab</h1>
-      </div>
-
-      <div className="flex flex-1 flex-col items-center justify-center text-center">
-        <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl" style={{ background: 'rgba(99,102,241,.12)', border: '1px solid rgba(99,102,241,.3)' }}>
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="rgba(165,170,255,.95)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="11" width="18" height="11" rx="2.5" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
-          </svg>
-        </div>
-        <h2 className="mb-3 text-[20px] font-bold text-white">Team up on your goals</h2>
-        <div className="max-w-[300px] space-y-3 text-[13px] leading-[1.6]" style={{ color: 'rgba(255,255,255,.45)' }}>
-          <p>Collab matches you with people chasing similar goals — so you can share a journey, keep each other accountable, and review each other's progress.</p>
-          <p>To find matches we build a short, private profile from your goals and make you discoverable to potential partners.</p>
-        </div>
-      </div>
-
-      <div className="pb-10">
-        <button
-          type="button"
-          onClick={() => void enable()}
-          disabled={busy}
-          className="lobby-find-btn w-full rounded-2xl py-4 text-[15px] font-bold text-white transition-transform active:scale-[.98] disabled:opacity-50"
-          style={{ border: 'none' }}
-        >
-          {busy ? 'Setting up…' : "I'm ready"}
-        </button>
-        <p className="mt-3 text-center text-[11px]" style={{ color: 'rgba(255,255,255,.3)' }}>
-          You can turn this off anytime in settings.
-        </p>
-      </div>
-    </div>
-  )
-}
-
-export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { userId: string; onOpenFocus: (target: FocusTarget) => void; onOpenJournal: (props: JournalFocusActions) => void }) {
+export default function TogetherView({ userId, onOpenFocus, onOpenJournal, initialJourneyId, onInitialJourneyConsumed }: { userId: string; onOpenFocus: (target: FocusTarget) => void; onOpenJournal: (props: JournalFocusActions) => void; initialJourneyId?: string | null; onInitialJourneyConsumed?: () => void }) {
   const [ob, setOb] = useState<OBPhase | null>(null)
   const [autoStartFinding, setAutoStartFinding] = useState(false)
   const [postMatchConn, setPostMatchConn] = useState<OBConnection | null>(null)
   const [peopleOpen, setPeopleOpen] = useState(false)
+  const [peopleThreadOpen, setPeopleThreadOpen] = useState(false)
   const [reviewsOpen, setReviewsOpen] = useState(false)
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
   const [journeys, setJourneys] = useState<JourneyListItem[]>([])
@@ -2309,17 +2272,6 @@ export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { u
   // Incoming collab requests that need MY action: the other person proposed and
   // approved (their_approved), I haven't accepted yet.
   const [pendingReqs, setPendingReqs] = useState<OBConnection[]>([])
-  // null = still loading; false = collab locked until the user opts in.
-  const [discoverable, setDiscoverable] = useState<boolean | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    fetch(SERVER_ENDPOINTS.profile, { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((d: { ok?: boolean; discoverable?: boolean }) => { if (!cancelled) setDiscoverable(!!d.discoverable) })
-      .catch(() => { if (!cancelled) setDiscoverable(true) })  // fail open
-    return () => { cancelled = true }
-  }, [userId])
 
   const load = useCallback(async () => {
     if (!userId) return
@@ -2370,31 +2322,48 @@ export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { u
     }
   }, [journeys.length, selectedIdx])
 
+  // Auto-open a specific journey when navigated from a profile ring tap.
+  useEffect(() => {
+    if (!initialJourneyId || journeys.length === 0) return
+    const idx = journeys.findIndex((j) => j.id === initialJourneyId)
+    if (idx >= 0) {
+      setSelectedIdx(idx)
+      onInitialJourneyConsumed?.()
+    }
+  }, [initialJourneyId, journeys, onInitialJourneyConsumed])
+
   const journeyOpen = selectedIdx !== null && journeys[selectedIdx] !== undefined
 
   const obKey = `${OB_KEY}_${userId}`
 
   useEffect(() => {
     if (!userId) return
-    setOb('active')   // show journeys immediately; find-match available via button
-  }, [userId])
+    const stored = localStorage.getItem(obKey)
+    if (stored === 'active' || stored === 'declined') setOb(stored)
+    else setOb('question')
+  }, [userId, obKey])
 
-  const advance = (to: OBPhase) => {
-    setOb(to)
-    if (to !== 'finding') localStorage.setItem(obKey, to)
+  function advanceOb(next: OBPhase) {
+    setOb(next)
+    localStorage.setItem(obKey, next)
   }
 
   if (ob === null) return <div className="h-full" style={{ background: '#0a0a0a' }} />
-  if (discoverable === false) {
-    return <CollabLockedGate userId={userId} onReady={() => setDiscoverable(true)} />
-  }
+  if (ob === 'question') return (
+    <CollabReadyScreen onReady={() => {
+      // mark as seen immediately so next app open skips the intro
+      localStorage.setItem(obKey, 'active')
+      setAutoStartFinding(true)
+      advanceOb('finding')
+    }} />
+  )
   if (ob === 'finding') return (
     <CollabFindingScreen
       userId={userId}
       autoStart={autoStartFinding}
-      onConfirm={() => { advance('active') }}
-      onNotNow={() => advance('declined')}
-      onBack={() => advance('question')}
+      onConfirm={(conn) => { setPostMatchConn(conn ?? null); advanceOb('active') }}
+      onNotNow={() => advanceOb('active')}
+      onBack={() => advanceOb('question')}
     />
   )
 
@@ -2433,8 +2402,8 @@ export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { u
             error={error}
             onSelect={setSelectedIdx}
             onOpenReviews={() => setReviewsOpen(true)}
-            onFindMatch={() => { setAutoStartFinding(true); advance('finding') }}
-            onResetCollab={() => { localStorage.removeItem(obKey); advance('question') }}
+            onFindMatch={() => { setAutoStartFinding(true); advanceOb('finding') }}
+            onResetCollab={() => { localStorage.removeItem(obKey); setOb('question') }}
             hasRequests={pendingReqs.length > 0}
           />
         </div>
@@ -2501,24 +2470,26 @@ export default function TogetherView({ userId, onOpenFocus, onOpenJournal }: { u
           transform: peopleOpen ? 'translateX(0)' : 'translateX(100%)',
         }}
       >
-        <div
-          className="px-5 pt-[62px] pb-4 flex items-center gap-3.5 flex-shrink-0"
-          style={{ borderBottom: '1px solid rgba(255,255,255,.07)' }}
-        >
-          <button
-            type="button"
-            onClick={() => setPeopleOpen(false)}
-            className="w-[34px] h-[34px] rounded-[11px] flex items-center justify-center flex-shrink-0"
-            style={{ background: 'var(--surface2)', border: '1px solid var(--border)' }}
+        {!peopleThreadOpen && (
+          <div
+            className="px-5 pt-[62px] pb-4 flex items-center gap-3.5 flex-shrink-0"
+            style={{ borderBottom: '1px solid rgba(255,255,255,.07)' }}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <polyline points="15 18 9 12 15 6" />
-            </svg>
-          </button>
-          <div className="text-lg font-bold tracking-tight">People</div>
-        </div>
+            <button
+              type="button"
+              onClick={() => { setPeopleOpen(false); setPeopleThreadOpen(false) }}
+              className="w-[34px] h-[34px] rounded-[11px] flex items-center justify-center flex-shrink-0"
+              style={{ background: 'var(--surface2)', border: '1px solid var(--border)' }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </button>
+            <div className="text-lg font-bold tracking-tight">People</div>
+          </div>
+        )}
         <div className="flex-1 overflow-hidden relative">
-          {peopleOpen && <ConnectionsView userId={userId} />}
+          {peopleOpen && <ConnectionsView userId={userId} onThreadChange={setPeopleThreadOpen} />}
         </div>
       </div>
     </div>

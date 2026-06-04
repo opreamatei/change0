@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { SERVER_ENDPOINTS } from '../config/server'
+import { PathCanvas } from '../components/path-canvas'
+import type { PathNodeData, NodeState } from '../components/path-canvas'
 import {
   findGoalByGlobalIndex,
   findGoalById,
@@ -147,9 +149,53 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
   const [clarifyCtx, setClarifyCtx] = useState<ClarifyCtx | null>(null)
   const [openStep, setOpenStep] = useState<number | null>(null)
 
+  const [creationFailed, setCreationFailed] = useState(false)
+
+  const [pathDim, setPathDim] = useState({ w: 0, h: 0 })
+  const pathRef = useRef<HTMLDivElement>(null)
+
   const creationDoneRef = useRef(false)
   const creationRunRef = useRef(0)
   const dragRef = useRef<{ startX: number; dx: number; dragging: boolean }>({ startX: 0, dx: 0, dragging: false })
+
+  /* Measure the PathCanvas container whenever the journey screen is active. */
+  useEffect(() => {
+    if (screen !== 'journey') return
+    const el = pathRef.current
+    if (!el) return
+    function measure() {
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      setPathDim({ w: Math.floor(r.width), h: Math.floor(r.height) })
+    }
+    measure()
+    const obs = new ResizeObserver(measure)
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [screen])
+
+  /* Convert journey steps to PathNodeData for PathCanvas. */
+  const pathNodes = useMemo((): PathNodeData[] =>
+    journeySteps.map((s, i) => ({
+      key: i,
+      title: s.title,
+      nodeState: (s.state === 'done' ? 'done' : s.state === 'active' ? 'active' : 'idle') as NodeState,
+      num: i + 1,
+      isMystery: false,
+    })),
+    [journeySteps],
+  )
+
+  const pathFocusIdx = useMemo(() => {
+    let idx = pathNodes.findIndex((n) => n.nodeState === 'active')
+    if (idx < 0) {
+      for (let i = pathNodes.length - 1; i >= 0; i--) {
+        if (pathNodes[i].nodeState === 'done') { idx = i; break }
+      }
+    }
+    if (idx < 0) idx = 0
+    return idx
+  }, [pathNodes])
 
   /* Mark the account as mid-onboarding so a refresh resumes the flow rather
    * than dropping into an empty app. Best-effort. */
@@ -254,7 +300,11 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
   async function runCreation(goalTitle: string, scope: string, meta: { name: string; cat: string }) {
     const runId = ++creationRunRef.current
     creationDoneRef.current = false
+    setCreationFailed(false)
     setScreen('loading')
+
+    let attempts = 0
+    const MAX_ATTEMPTS = 10  // ~25 seconds before showing escape button
 
     while (creationRunRef.current === runId) {
       try {
@@ -271,6 +321,10 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
         await finalizeCreatedGoal(data['goal-id'], meta)
         return
       } catch {
+        attempts++
+        if (attempts >= MAX_ATTEMPTS) {
+          setCreationFailed(true)
+        }
         // Server not available yet — wait a moment and try again. The loading
         // animation keeps running in the meantime.
         await new Promise((r) => setTimeout(r, 2500))
@@ -297,7 +351,6 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
     let cancelled = false
     let raf = 0
 
-    const canvas = document.getElementById('ob-loading-canvas') as HTMLCanvasElement | null
     const nodesLayer = document.getElementById('ob-loading-nodes')
     const blur = document.getElementById('ob-loading-blur')
     const msgEl = document.getElementById('ob-loading-msg')
@@ -305,17 +358,14 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
     const N = 5
     const SW = window.innerWidth
     const SH = window.innerHeight
-    const CX = SW / 2
-    // Span 150% of the viewport so the path runs off-screen, top and bottom.
-    const topY = SH * -0.25
-    const botY = SH * 1.25
-    // Scatter the nodes a little off-centre; they build from the bottom upward
-    // and sway left-right per frame.
-    const DISPERSE = [-26, 30, -34, 22, -16]
+    const amp = Math.min(SW * 0.27, 88)
+    const topY = SH * 0.20
+    const botY = SH * 0.78
+    const stepH = (botY - topY) / (N - 1)
+    // i=0 at bottom (active/first step), i=N-1 at top — bottom-to-top zigzag
     const positions = Array.from({ length: N }, (_, i) => ({
-      baseX: CX + (DISPERSE[i] ?? 0),
-      y: botY - ((botY - topY) * i) / (N - 1),
-      phase: i * 1.1,
+      x: SW / 2 + amp * Math.sin((i * Math.PI) / 2),
+      y: botY - i * stepH,
       icon: STEP_ICON_CYCLE[i % STEP_ICON_CYCLE.length],
     }))
 
@@ -329,40 +379,47 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
     const nodeEls: HTMLDivElement[] = []
     if (nodesLayer) {
       nodesLayer.innerHTML = ''
+
+      // SVG bezier paths — same style as the static journey map
+      const svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      svgEl.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;z-index:1;pointer-events:none;overflow:visible;'
+      nodesLayer.appendChild(svgEl)
+      const pathEls: SVGPathElement[] = []
+      for (let pi = 0; pi < N - 1; pi++) {
+        const a = positions[pi], b = positions[pi + 1]
+        const pe = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+        pe.setAttribute('d', `M${a.x} ${a.y} C${a.x} ${a.y - stepH * 0.42},${b.x} ${b.y + stepH * 0.42},${b.x} ${b.y}`)
+        pe.setAttribute('fill', 'none')
+        pe.setAttribute('stroke', 'rgba(255,255,255,0.35)')
+        pe.setAttribute('stroke-width', '3')
+        pe.setAttribute('stroke-linecap', 'round')
+        pe.setAttribute('stroke-dasharray', '6 9')
+        pe.style.opacity = '0'
+        svgEl.appendChild(pe)
+        pathEls.push(pe)
+      }
+      ;(nodesLayer as HTMLDivElement & { __pathEls?: SVGPathElement[] }).__pathEls = pathEls
+
       positions.forEach((pos) => {
         const el = document.createElement('div')
         el.className = 'ob-loading-node'
-        el.style.left = pos.baseX + 'px'
-        el.style.top = pos.y + 'px'
-        el.style.transition = 'none' // driven per-frame below
+        el.style.cssText = `left:${pos.x}px;top:${pos.y}px;transform:translate(-50%,-50%) scale(0);opacity:0;`
         el.innerHTML = ICONS[pos.icon] ?? ''
         nodesLayer.appendChild(el)
         nodeEls.push(el)
       })
     }
 
-    let ctx: CanvasRenderingContext2D | null = null
-    let W = 0
-    let H = 0
-    if (canvas) {
-      ctx = canvas.getContext('2d')
-      const dpr = window.devicePixelRatio || 1
-      canvas.width = canvas.offsetWidth * dpr
-      canvas.height = canvas.offsetHeight * dpr
-      ctx?.scale(dpr, dpr)
-      W = canvas.offsetWidth
-      H = canvas.offsetHeight
-    }
+    // Cycle: BUILD (staggered pop-in) → HOLD → FADE OUT → repeat
+    const CYCLE = 2800
+    const BUILD_END = 0.62   // 0–62%: nodes appear one by one
+    const FADE_START = 0.80  // 80–100%: all fade out together
+    const buildStep = BUILD_END / N
 
-    const CYCLE = 4200       // build + soft fade, then repeat if the server is still busy
-    const FADE_START = 0.82
-    const FADE_IN_END = 0.12
-    const OSC_AMP = 11       // px of gentle left-right sway
-    const OSC_PERIOD = 2200  // ms per sway cycle (slow, smooth)
-    const stepT = 1 / N
-    // smooth easeInOutCubic — no overshoot, so nodes settle in rather than pop
-    const ease = (t: number) =>
-      t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+    // easeOutBack — satisfying overshoot pop per node
+    const C1 = 1.70158, C3 = C1 + 1
+    const popEase = (x: number) =>
+      x <= 0 ? 0 : x >= 1 ? 1 : 1 + C3 * Math.pow(x - 1, 3) + C1 * Math.pow(x - 1, 2)
 
     const msgs = ['Preparing…', 'Analyzing…', 'Personalizing…', 'Shaping your journey…', 'Almost there…']
     let cycleStart = performance.now()
@@ -371,74 +428,36 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
       if (cancelled) return
       let t = (now - cycleStart) / CYCLE
       if (t >= 1) {
-        // One full build/fade cycle finished. If the server is done, advance;
-        // otherwise restart from an already-faded state so the loop never snaps.
         if (creationDoneRef.current) { navTo('journey'); return }
         cycleStart = now
         t = 0
       }
 
-      const buildT = Math.min(1, t / FADE_START)
-      const fadeIn = ease(Math.min(1, t / FADE_IN_END))
-      const fadeOut = t < FADE_START ? 1 : 1 - ease(Math.min(1, (t - FADE_START) / (1 - FADE_START)))
-      const cycleAlpha = fadeIn * fadeOut
+      const fadeOut = t >= FADE_START ? 1 - (t - FADE_START) / (1 - FADE_START) : 1
+      const pathEls = (nodesLayer as HTMLDivElement & { __pathEls?: SVGPathElement[] })?.__pathEls ?? []
 
-      if (blur) blur.style.opacity = (0.45 * cycleAlpha).toFixed(3)
-
-      // nodes pop in one after another
       for (let i = 0; i < N; i++) {
-        // wider reveal window so nodes ease in gently and overlap, no abrupt pop
-        const local = Math.max(0, Math.min(1, (buildT - i * stepT) / (stepT * 1.35)))
         const el = nodeEls[i]
         if (!el) continue
-        const e = ease(local)
-        const dx = OSC_AMP * Math.sin(now / OSC_PERIOD + positions[i].phase)
-        const scale = 0.72 + 0.28 * e            // settle from 72% → 100%, no overshoot
-        const rise = (1 - e) * 14                // drift up a touch as it settles
-        el.style.transform = `translate(-50%, -50%) translate(${dx.toFixed(1)}px, ${rise.toFixed(1)}px) scale(${scale.toFixed(3)})`
-        el.style.opacity = String((0.78 * e * cycleAlpha).toFixed(3))
+        if (t <= BUILD_END) {
+          const local = Math.max(0, Math.min(1, (t - i * buildStep) / (buildStep * 0.75)))
+          el.style.transform = `translate(-50%,-50%) scale(${(popEase(local) * fadeOut).toFixed(3)})`
+          el.style.opacity = String(Math.min(1, local * 3) * fadeOut)
+        } else {
+          el.style.transform = `translate(-50%,-50%) scale(${fadeOut.toFixed(3)})`
+          el.style.opacity = String(fadeOut)
+        }
       }
 
-      // dotted connectors grow between nodes
-      if (ctx) {
-        ctx.clearRect(0, 0, W, H)
-        ctx.save()
-        ctx.globalAlpha = cycleAlpha
-        for (let i = 0; i < positions.length - 1; i++) {
-          const ls = (i + 0.6) * stepT
-          const le = ls + stepT * 0.5
-          if (buildT < ls) continue
-          const lt = ease(Math.min((buildT - ls) / (le - ls), 1))
-          const p1 = positions[i]
-          const p2 = positions[i + 1]
-          const x1 = p1.baseX + OSC_AMP * Math.sin(now / OSC_PERIOD + p1.phase)
-          const x2 = p2.baseX + OSC_AMP * Math.sin(now / OSC_PERIOD + p2.phase)
-          const y1 = p1.y, y2 = p2.y
-          const midY = (y1 + y2) / 2   // bezier control height → smooth S-curve
-          ctx.save()
-          ctx.setLineDash([5, 9])
-          ctx.beginPath()
-          ctx.moveTo(x1, y1)
-          const STEPS = 22
-          for (let s = 1; s <= STEPS; s++) {
-            const tt = (s / STEPS) * lt
-            const u = 1 - tt
-            const bx = u*u*u*x1 + 3*u*u*tt*x1 + 3*u*tt*tt*x2 + tt*tt*tt*x2
-            const by = u*u*u*y1 + 3*u*u*tt*midY + 3*u*tt*tt*midY + tt*tt*tt*y2
-            ctx.lineTo(bx, by)
-          }
-          ctx.strokeStyle = 'rgba(255,255,255,0.34)'
-          ctx.lineWidth = 3
-          ctx.stroke()
-          ctx.restore()
-        }
-        ctx.restore()
+      for (let i = 0; i < pathEls.length; i++) {
+        const local = Math.max(0, Math.min(1, (t - (i + 0.5) * buildStep) / (buildStep * 0.75)))
+        pathEls[i].style.opacity = String(Math.min(1, local * 3) * fadeOut)
       }
 
       if (msgEl) {
-        const want = msgs[Math.min(msgs.length - 1, Math.floor(buildT * msgs.length))]
+        const msgT = Math.min(1, t / BUILD_END)
+        const want = creationFailed ? 'Something went wrong' : msgs[Math.min(msgs.length - 1, Math.floor(msgT * msgs.length))]
         if (msgEl.textContent !== want) msgEl.textContent = want
-        msgEl.style.opacity = cycleAlpha.toFixed(3)
       }
 
       raf = requestAnimationFrame(frame)
@@ -451,7 +470,7 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
       if (nodesLayer) nodesLayer.innerHTML = ''
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [screen])
+  }, [screen, creationFailed])
 
   /* ─── navigation helper with a soft fade ─── */
   const [leaving, setLeaving] = useState(false)
@@ -520,9 +539,6 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
     }
   }
 
-  const stepCount = journeySteps.length
-  const doneCount = journeySteps.filter((s) => s.state === 'done').length
-  const journeyPct = stepCount ? Math.round((doneCount / stepCount) * 100) : 0
 
   return (
     <div className="ob-root">
@@ -635,12 +651,31 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
         {screen === 'loading' && (
           <div className="ob-screen ob-screen-loading">
             <div className="ob-loading-blur" id="ob-loading-blur" />
-            <canvas id="ob-loading-canvas" className="ob-loading-canvas" />
             <div id="ob-loading-nodes" className="ob-loading-nodes" />
             <div className="ob-loading-text">
               <div className="ob-loading-msg" id="ob-loading-msg">
                 Preparing…
               </div>
+              <div style={{ fontSize: 13, color: 'rgba(255,255,255,.35)', marginTop: 6 }}>
+                Building your personal journey — this takes about a minute
+              </div>
+              {creationFailed && (
+                <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+                  <p style={{ fontSize: 13, color: 'rgba(255,255,255,.45)', textAlign: 'center' }}>
+                    Server is taking longer than expected
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => { void postProfile('onboarded', '1').catch(() => {}); onComplete() }}
+                    style={{
+                      padding: '12px 28px', borderRadius: 16, background: '#fff', color: '#000',
+                      fontSize: 14, fontWeight: 700, border: 'none', cursor: 'pointer',
+                    }}
+                  >
+                    Open app
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -752,41 +787,25 @@ export default function OnboardingView({ onComplete }: OnboardingViewProps) {
                 <div className="ob-jcat">{journeyMeta.cat}</div>
                 <div className="ob-jname">{journeyMeta.name || '—'}</div>
               </div>
-              <div className="ob-jprog">
-                <div className="ob-jprog-pct">{journeyPct}%</div>
-                <div className="ob-jprog-lbl">progress</div>
-              </div>
             </div>
-            <div className="ob-journey-path">
-              {journeySteps.map((step, i) => (
-                <div key={i} style={{
-                  width: '100%',
-                  animation: 'ob-jstep-in .5s cubic-bezier(.22,1,.36,1) both',
-                  animationDelay: `${(journeySteps.length - 1 - i) * 70}ms`,
-                }}>
-                  {i > 0 && <div className={`ob-connector ${step.state === 'done' ? 'ob-done' : ''}`} />}
-                  <div
-                    className={`ob-jnode ob-${step.state}`}
-                    onClick={() => step.state !== 'locked' && setOpenStep(i)}
-                  >
-                    <div className="ob-jnode-circle-wrap">
-                      <div className="ob-jnode-circle">
-                        <Icon name={step.state === 'locked' ? 'lock' : step.icon} />
-                      </div>
-                      <div className="ob-jnode-check">✓</div>
-                    </div>
-                    <div className="ob-jnode-info">
-                      <div className="ob-jnode-title">{step.title}</div>
-                      <div className="ob-jnode-dur">{step.dur}</div>
-                      {step.state === 'active' && <div className="ob-jnode-badge">NOW</div>}
-                    </div>
-                  </div>
-                </div>
-              ))}
+            {/* Serpentine path — same PathCanvas used by the main app */}
+            <div ref={pathRef} className="ob-journey-canvas-wrap">
+              {pathDim.w > 0 && pathDim.h > 0 && pathNodes.length > 0 && (
+                <PathCanvas
+                  nodes={pathNodes}
+                  width={pathDim.w}
+                  height={pathDim.h}
+                  hasMysteryZone={false}
+                  initialFocusIdx={pathFocusIdx}
+                  onSelect={(idx) => setOpenStep(idx)}
+                />
+              )}
             </div>
-            <button className="ob-journey-cta" onClick={completeJourneyView}>
-              Start my journey →
-            </button>
+            <div className="ob-journey-cta-wrap">
+              <button className="ob-journey-cta" onClick={completeJourneyView}>
+                Start my journey →
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -909,17 +928,16 @@ const OB_CSS = `
 /* LOADING */
 .ob-screen-loading { padding: 0; justify-content: center; align-items: center; }
 .ob-loading-blur { position: absolute; inset: 0; filter: blur(70px); opacity: 0.45; z-index: 0; transition: background .5s ease; }
-.ob-loading-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; }
 .ob-loading-nodes { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
 .ob-loading-node {
   position: absolute; width: 56px; height: 56px; border-radius: 50%;
   background: rgba(255,255,255,0.95); display: flex; align-items: center; justify-content: center;
   transform: translate(-50%, -50%) scale(0); opacity: 0;
-  transition: transform .42s cubic-bezier(0.34,1.56,0.64,1), opacity .25s ease;
   box-shadow: 0 0 0 7px rgba(255,255,255,0.12), 0 0 24px rgba(255,255,255,0.18);
+  will-change: transform, opacity;
 }
 .ob-loading-node svg { width: 26px; height: 26px; display: block; stroke: #000; color: #000; }
-.ob-loading-text { position: absolute; top: 50%; left: 0; right: 0; transform: translateY(-50%); display: flex; flex-direction: column; align-items: center; z-index: 20; gap: 6px; pointer-events: none; }
+.ob-loading-text { position: absolute; bottom: 80px; left: 0; right: 0; display: flex; flex-direction: column; align-items: center; z-index: 20; gap: 6px; pointer-events: none; }
 .ob-loading-msg { font-size: 18px; font-weight: 800; letter-spacing: -0.4px; transition: opacity .35s ease; }
 /* PROPOSALS */
 .ob-screen-proposal { padding: 0; justify-content: flex-start; }
@@ -957,15 +975,12 @@ const OB_CSS = `
 .ob-jback:hover { background: var(--ob-border2); }
 
 /* JOURNEY */
-.ob-screen-journey { padding: 0; justify-content: flex-start; align-items: stretch; overflow-y: auto; }
-.ob-journey-topbar { position: sticky; top: 0; z-index: 5; padding: 52px 20px 16px; background: linear-gradient(to bottom, var(--ob-bg) 75%, transparent); display: flex; align-items: flex-start; gap: 14px; flex-shrink: 0; }
+.ob-screen-journey { padding: 0; justify-content: flex-start; align-items: stretch; overflow: hidden; }
+.ob-journey-topbar { padding: 52px 20px 12px; background: var(--ob-bg); display: flex; align-items: flex-start; gap: 14px; flex-shrink: 0; z-index: 5; }
 .ob-jmeta { flex: 1; }
 .ob-jcat { font-size: 10px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--ob-dim); margin-bottom: 3px; }
 .ob-jname { font-size: 20px; font-weight: 800; letter-spacing: -0.4px; }
-.ob-jprog { text-align: right; flex-shrink: 0; }
-.ob-jprog-pct { font-size: 22px; font-weight: 800; }
-.ob-jprog-lbl { font-size: 10px; color: var(--ob-dim); font-weight: 600; }
-.ob-journey-path { display: flex; flex-direction: column; align-items: center; padding: 8px 0 120px; width: 100%; }
+.ob-journey-canvas-wrap { flex: 1; position: relative; overflow: hidden; min-height: 0; }
 .ob-connector { width: 2px; height: 52px; margin: 0 auto; background: linear-gradient(to bottom, var(--ob-border2), var(--ob-border)); }
 .ob-connector.ob-done { background: linear-gradient(to bottom, rgba(255,255,255,0.4), rgba(255,255,255,0.15)); }
 .ob-jnode { display: flex; flex-direction: column; align-items: center; width: 100%; padding: 0 24px; cursor: pointer; }
@@ -987,8 +1002,9 @@ const OB_CSS = `
 .ob-jnode-dur { font-size: 11px; color: var(--ob-dim); margin-top: 3px; font-weight: 600; }
 .ob-jnode-badge { display: inline-flex; margin-top: 7px; padding: 3px 10px; background: #fff; color: #000; border-radius: 20px; font-size: 10px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; animation: ob-pop .4s cubic-bezier(0.34,1.56,0.64,1); }
 @keyframes ob-pop { from { transform: scale(0.7); opacity: 0;} to {transform: scale(1); opacity:1;} }
-.ob-journey-cta { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); width: calc(100% - 48px); max-width: 320px; padding: 17px; background: #fff; color: #000; border: none; border-radius: 16px; font-size: 15px; font-weight: 700; cursor: pointer; z-index: 10; }
-.ob-journey-cta:active { transform: translateX(-50%) scale(0.97); }
+.ob-journey-cta-wrap { flex-shrink: 0; padding: 12px 24px 32px; background: linear-gradient(to top, var(--ob-bg) 55%, transparent); display: flex; justify-content: center; }
+.ob-journey-cta { width: 100%; max-width: 320px; padding: 17px; background: #fff; color: #000; border: none; border-radius: 16px; font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit; transition: transform .1s; }
+.ob-journey-cta:active { transform: scale(0.97); }
 
 /* STEP SHEET */
 .ob-sheet-overlay { position: fixed; inset: 0; z-index: 400; background: rgba(0,0,0,0.75); backdrop-filter: blur(8px); opacity: 0; pointer-events: none; transition: opacity .25s; display: flex; align-items: flex-end; }

@@ -992,19 +992,9 @@ function PanelAssistantContent({
   if (entry.kind === 'assistant') {
     return (
       <>
-        <div className="text-[10px] font-semibold mb-0.5 px-1" style={{ color: 'var(--white-dim)' }}>Personal</div>
-        <div
-          className="px-3 py-2 text-[13px] leading-snug"
-          style={{
-            background: 'var(--surface2)',
-            color: '#fff',
-            border: '1px solid var(--border)',
-            borderRadius: '16px 16px 16px 4px',
-          }}
-        >
+        <div className="px-1 py-0.5 text-[13px] leading-relaxed text-white">
           <AssistantContent content={entry.content} />
         </div>
-        <div className="text-[10px] mt-0.5 px-1" style={{ color: 'var(--white-dim)' }}>{formatChatTime(entry.timestamp)}</div>
         {entry.suggestions && entry.suggestions.length > 0 && !entry.suggestionsHidden && (
           <div className="mt-2 flex flex-wrap gap-2">
             {entry.suggestions.map((s, i) => {
@@ -1502,27 +1492,16 @@ export default function ChatView({ mode = 'page', sessionId }: { mode?: 'page' |
           return <ActionBubble key={entry.id} entry={entry} />
         })}
         {thinking && (panelMode ? (
-          <div className="flex flex-col max-w-[78%] self-start items-start">
-            <div className="text-[10px] font-semibold mb-0.5 px-1" style={{ color: 'var(--white-dim)' }}>Personal</div>
-            <div
-              className="px-3 py-2 text-[13px] leading-snug"
-              style={{
-                background: 'var(--surface2)',
-                color: '#fff',
-                border: '1px solid var(--border)',
-                borderRadius: '16px 16px 16px 4px',
-              }}
-            >
-              <span className="inline-flex items-center gap-1">
-                {[0, 1, 2].map((dot) => (
-                  <span
-                    key={dot}
-                    className="size-1.5 rounded-full bg-neutral-400 animate-bounce"
-                    style={{ animationDelay: `${dot * 140}ms` }}
-                  />
-                ))}
-              </span>
-            </div>
+          <div className="flex self-start px-1 py-1">
+            <span className="inline-flex items-center gap-1">
+              {[0, 1, 2].map((dot) => (
+                <span
+                  key={dot}
+                  className="size-1.5 rounded-full bg-neutral-400 animate-bounce"
+                  style={{ animationDelay: `${dot * 140}ms` }}
+                />
+              ))}
+            </span>
           </div>
         ) : <ThinkingBubble />)}
         <div ref={bottomRef} />
@@ -1675,23 +1654,14 @@ export default function ChatView({ mode = 'page', sessionId }: { mode?: 'page' |
         <button
           type="button"
           className={panelMode
-            ? 'w-10 h-10 bg-white rounded-xl flex items-center justify-center cursor-pointer flex-shrink-0 active:opacity-85 disabled:cursor-not-allowed disabled:bg-[#2a2a2a]'
-            : 'rounded-xl bg-[#111] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#e0e0e0] disabled:cursor-not-allowed disabled:bg-[#2a2a2a] disabled:text-white/40'}
+            ? 'w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer flex-shrink-0 active:opacity-85 disabled:cursor-not-allowed disabled:opacity-40'
+            : 'rounded-xl px-4 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-40'}
+          style={panelMode ? { background: 'var(--surface2)', border: '1px solid var(--border)' } : { background: '#111' }}
           onClick={() => void send()}
           disabled={!input.trim() || sending}
         >
-          {sending ? (
-            <span className="inline-flex items-center gap-1">
-              {[0, 1, 2].map((dot) => (
-                <span
-                  key={dot}
-                  className={`size-1.5 rounded-full animate-bounce ${panelMode ? 'bg-black' : 'bg-[#111]'}`}
-                  style={{ animationDelay: `${dot * 140}ms` }}
-                />
-              ))}
-            </span>
-          ) : panelMode ? (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          {panelMode ? (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="22" y1="2" x2="11" y2="13" />
               <polygon points="22 2 15 22 11 13 2 9 22 2" />
             </svg>
