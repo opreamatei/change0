@@ -1,13 +1,9 @@
 #### Hey there! Please read the disclaimer.
 
-| The following are dev notes which were initially meant to present the 
-| change0 demo, they were not initially meant to be public, 
-| so take into account the document was translated from my native language
-| and might sound akward without some context. This is my perspective, my technical documentation 
-| and philosophy about the change project as of june 2026. This is the demo (experimental) presentation
-| preparation started 6 months prior to june and the C backend development started 3 months prior
-| This project is developed by 2 people! (currently) This document was written by the programmer so the POV is limited. 
-| Credits are not attributed to one person.
+> The following are dev notes which were initially meant to present the change0 demo, they were not initially meant to be public, so take into account the document was translated from my native language and might sound akward without some context. This is my perspective, my technical documentation and philosophy about the change project as of june 2026. This is the demo (experimental) presentation.
+Preparation started around 6 months prior to june and the C backend development started 3 months prior
+This project is developed by 2 people! (currently) This document was written by the programmer so the POV is limited. 
+Credits are not attributed to one person.
 
 # CHANGE
 
