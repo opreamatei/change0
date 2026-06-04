@@ -2,6 +2,7 @@
 
 #include "openai.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +20,7 @@
 #define AI_OPENAI_HOST "api.openai.com"
 #define AI_OPENAI_PORT "443"
 #define AI_OPENAI_RAW_CAP (4 * 1024 * 1024)
+#define AI_OPENAI_MAX_RETRIES 5
 
 typedef struct {
     int fd;
@@ -30,7 +32,10 @@ static void ai_tls_close(ai_tls_conn *c) {
     if (!c) return;
 
     if (c->ssl) {
-        SSL_shutdown(c->ssl);
+        /* Skip SSL_shutdown: we use Connection: close so the server has
+         * already closed the session.  Calling SSL_shutdown after an abrupt
+         * close (RST / no TLS close_notify) writes to a dead socket and can
+         * fault inside OpenSSL's BIO layer even with SIGPIPE ignored. */
         SSL_free(c->ssl);
         c->ssl = NULL;
     }
@@ -126,6 +131,32 @@ static ai_openai_status ai_tls_connect(ai_tls_conn *conn) {
     return AI_OPENAI_OK;
 }
 
+/* Return a malloc'd copy of `src` with the value of any "Authorization: Bearer sk-..."
+   header line replaced by "sk-REDACTED".  Caller must free. */
+static char *ai_redact_auth(const char *src) {
+    size_t slen = strlen(src);
+    char *out = malloc(slen + 1);
+    if (!out) return NULL;
+    memcpy(out, src, slen + 1);
+
+    char *p = out;
+    while ((p = strstr(p, "Authorization: Bearer "))) {
+        char *val = p + strlen("Authorization: Bearer ");
+        /* Find end of token (space, \r, \n, or NUL) */
+        char *end = val;
+        while (*end && *end != ' ' && *end != '\r' && *end != '\n') end++;
+        /* Replace with "sk-REDACTED" */
+        const char *repl = "sk-REDACTED";
+        size_t rlen = strlen(repl);
+        size_t tail = slen - (size_t)(end - out);
+        memmove(val + rlen, end, tail + 1);
+        memcpy(val, repl, rlen);
+        slen = strlen(out);
+        p = val + rlen;
+    }
+    return out;
+}
+
 static ai_openai_status ai_ssl_write_all(SSL *ssl, const char *buf, size_t len) {
     if (!ssl || !buf) return AI_OPENAI_ERR_ARG;
 
@@ -166,10 +197,24 @@ static ai_openai_status ai_read_all(SSL *ssl, String *out) {
             continue;
         }
 
-        break;
-    }
+        /* SSL_ERROR_ZERO_RETURN  = clean TLS close_notify.
+         * SSL_ERROR_SYSCALL/errno=0 = server closed TCP without close_notify
+         *   (common with Connection: close).
+         * Both mean "no more data" — treat as success.
+         * Any other error means something actually went wrong. */
+        int ssl_err = SSL_get_error(ssl, n);
+        if (ssl_err == SSL_ERROR_ZERO_RETURN)
+            return AI_OPENAI_OK;
+        if (ssl_err == SSL_ERROR_SYSCALL && errno == 0)
+            return AI_OPENAI_OK;
 
-    return AI_OPENAI_OK;
+        FreeString(out);
+        out->p = NULL;
+        out->len = 0;
+        out->cap = 0;
+        out->used = 0;
+        return AI_OPENAI_ERR_READ;
+    }
 }
 
 static char *ai_find_body(char *http_response) {
@@ -187,6 +232,17 @@ static int ai_http_status_code(const char *http_response) {
     }
 
     return 0;
+}
+
+/* Strip bare control characters from AI text output.
+ * Passes all printable ASCII and all UTF-8 multi-byte sequences (>= 0x80). */
+static void sanitize_ai_output(char *buf, size_t len) {
+    if (!buf) return;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char ch = (unsigned char)buf[i];
+        if (ch < 0x20 && ch != '\n' && ch != '\r' && ch != '\t')
+            buf[i] = ' ';
+    }
 }
 
 static int ai_extract_json_string_field(
@@ -241,6 +297,14 @@ static ai_openai_status ai_dup_string(const char *src, String *dst) {
     return AI_OPENAI_OK;
 }
 
+static _Bool ai_should_retry_status(ai_openai_status st) {
+    return st == AI_OPENAI_ERR_DNS ||
+           st == AI_OPENAI_ERR_CONNECT ||
+           st == AI_OPENAI_ERR_TLS ||
+           st == AI_OPENAI_ERR_WRITE ||
+           st == AI_OPENAI_ERR_READ;
+}
+
 static ai_openai_status ai_openai_request(
     const char *request,
     ai_openai_response *out,
@@ -248,74 +312,99 @@ static ai_openai_status ai_openai_request(
 ) {
     if (!request || !out) return AI_OPENAI_ERR_ARG;
 
-    memset(out, 0, sizeof(*out));
+    ai_openai_status last_status = AI_OPENAI_ERR_ARG;
 
-    ai_tls_conn conn;
+    for (int attempt = 0; attempt < AI_OPENAI_MAX_RETRIES; attempt++) {
+        memset(out, 0, sizeof(*out));
 
-    ai_openai_status st = ai_tls_connect(&conn);
-    if (st != AI_OPENAI_OK) {
-        return st;
-    }
+        ai_tls_conn conn;
 
-    st = ai_ssl_write_all(conn.ssl, request, strlen(request));
-    if (st != AI_OPENAI_OK) {
+        ai_openai_status st = ai_tls_connect(&conn);
+        if (st != AI_OPENAI_OK) {
+            last_status = st;
+            if (ai_should_retry_status(st) && attempt + 1 < AI_OPENAI_MAX_RETRIES) {
+                sleep(1);
+                continue;
+            }
+            return st;
+        }
+
+        st = ai_ssl_write_all(conn.ssl, request, strlen(request));
+        if (st != AI_OPENAI_OK) {
+            ai_tls_close(&conn);
+            last_status = st;
+            if (ai_should_retry_status(st) && attempt + 1 < AI_OPENAI_MAX_RETRIES) {
+                sleep(1);
+                continue;
+            }
+            return st;
+        }
+
+        String raw = {0};
+
+        st = ai_read_all(conn.ssl, &raw);
+
         ai_tls_close(&conn);
-        return st;
-    }
 
-    String raw = {0};
+        if (st != AI_OPENAI_OK) {
+            last_status = st;
+            if (ai_should_retry_status(st) && attempt + 1 < AI_OPENAI_MAX_RETRIES) {
+                sleep(1);
+                continue;
+            }
+            return st;
+        }
 
-    st = ai_read_all(conn.ssl, &raw);
+        int code = ai_http_status_code(c_str(&raw));
 
-    ai_tls_close(&conn);
+        if (code < 200 || code >= 300) {
+            char *redacted = ai_redact_auth(request);
+            dump_to_file(PROJECT_ROOT "data/dumps/sent.txt",
+                         redacted ? redacted : request,
+                         redacted ? strlen(redacted) : strlen(request));
+            free(redacted);
+            dump_to_file(PROJECT_ROOT "data/dumps/received.txt", c_str(&raw), raw.len);
 
-    if (st != AI_OPENAI_OK) {
-        return st;
-    }
+            out->raw_http = raw;
 
-    int code = ai_http_status_code(c_str(&raw));
+            char *body = ai_find_body(c_str(&out->raw_http));
+            if (body) {
+                ai_dup_string(body, &out->body);
+            }
 
-    if (code < 200 || code >= 300) {
-        dump_to_file(PROJECT_ROOT "sent.txt", request, strlen(request));
-        dump_to_file(PROJECT_ROOT "received.txt", c_str(&raw), raw.len);
+            return AI_OPENAI_ERR_HTTP;
+        }
+
+        char *body = ai_find_body(c_str(&raw));
+        if (!body) {
+            FreeString(&raw);
+            return AI_OPENAI_ERR_PARSE;
+        }
 
         out->raw_http = raw;
 
-        char *body = ai_find_body(c_str(&out->raw_http));
-        if (body) {
-            ai_dup_string(body, &out->body);
-        }
-
-        return AI_OPENAI_ERR_HTTP;
-    }
-
-    char *body = ai_find_body(c_str(&raw));
-    if (!body) {
-        FreeString(&raw);
-        return AI_OPENAI_ERR_PARSE;
-    }
-
-    out->raw_http = raw;
-
-    st = ai_dup_string(body, &out->body);
-    if (st != AI_OPENAI_OK) {
-        ai_openai_response_free(out);
-        return st;
-    }
-
-    if (expect_id) {
-        if (!ai_extract_json_string_field(
-                c_str(&out->body),
-                "id",
-                out->id,
-                sizeof(out->id)
-            )) {
+        st = ai_dup_string(body, &out->body);
+        if (st != AI_OPENAI_OK) {
             ai_openai_response_free(out);
-            return AI_OPENAI_ERR_PARSE;
+            return st;
         }
+
+        if (expect_id) {
+            if (!ai_extract_json_string_field(
+                    c_str(&out->body),
+                    "id",
+                    out->id,
+                    sizeof(out->id)
+                )) {
+                ai_openai_response_free(out);
+                return AI_OPENAI_ERR_PARSE;
+            }
+        }
+
+        return AI_OPENAI_OK;
     }
 
-    return AI_OPENAI_OK;
+    return last_status;
 }
 
 ai_openai_status ai_openai_create_response(
@@ -503,6 +592,7 @@ char *openai_extract_output_text_dup(json_value *root, size_t *out_len) {
 
                 memcpy(dup, text->u.string.ptr, len);
                 dup[len] = '\0';
+                sanitize_ai_output(dup, len);
 
                 if (out_len) {
                     *out_len = len;
@@ -648,7 +738,7 @@ String *ai_openai_call_gpt_request(ai_gpt_request *req) {
         ai_openai_response_free(&created);
         free(json_body);
 
-        cassert(0, "Error: OpenAI request failed. Check sent.txt and received.txt\n");
+        cassert(0, "Error: OpenAI request failed. Check data/dumps/sent.txt and data/dumps/received.txt\n");
     }
 
     free(json_body);

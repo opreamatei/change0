@@ -19,8 +19,8 @@ void **FilterTopPercent(
     GetValueFn getValue
 );
 
-Node** FilterNodeByActivationGlobal(int_fast64_t percentage, size_t *count);
-Node** FilterNodeByWeightGlobal(int_fast64_t percentage, size_t *count);
+Node** FilterNodeByActivationGlobal(int_fast64_t percentage, size_t *count, NodeContainer *nc);
+Node** FilterNodeByWeightGlobal(int_fast64_t percentage, size_t *count, NodeContainer *nc);
 
 Connection** FilterNodeNeighboursByActivation(
     Node* node,
@@ -34,6 +34,6 @@ Connection** FilterNodeNeighboursByWeight(
     size_t *count
 );
 
-char* ComputeNodeFamily(Node* node, int_fast64_t percA, int_fast64_t percW, size_t depth, size_t *length);
+char* ComputeNodeFamily(NodeContainer *nc, Node* node, int_fast64_t percA, int_fast64_t percW, size_t depth, size_t *length);
 
 #endif

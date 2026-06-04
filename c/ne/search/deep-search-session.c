@@ -11,6 +11,9 @@
 
 static ds_emit_like_func ds_emit = NULL;
 
+/* Max external judge/retry rounds before accepting the best-effort conclusion. */
+#define DS_MAX_EXTERNAL_ROUNDS 8
+
 _Bool init_ds_memory(DS_memory *d){
 	if (!d) return 0;
 
@@ -63,14 +66,18 @@ _Bool try_terminate(DS_memory *mem, String *out, size_t depth, Task* task, Strin
 
 static inline void write_feedback(DS_memory* mem, String* out, String* reason){
 	printf("\n%s\n\n", reason->p);
-	CatTemplateString(&mem->persistent, "{ Server Intervention :  You had previously tried to execute this task, but failed the automatic validation, here is feedback: [%s]. Your previous response that caused the failing is [%s]. You may repeat the round with this hint. }", c_str(reason), &mem->dynamic.p);
+	CatTemplateString(&mem->persistent, "{ Server Intervention :  You had previously tried to execute this task, but failed the automatic validation, here is feedback: [%s]. Your previous response that caused the failing is [%s]. You may repeat the round with this hint. }", c_str(reason), c_str(&mem->dynamic));
 	EmptyString(&mem->dynamic);
 }
 
 static _Bool judge_result(String *out, String* reason, Task *task, char *ds_id){
 	ds_emit(ds_id, "judge-start", "{\"judge\":true}", FSIZE("{\"judge\":true}"));
-	
-	size_t len = 0; 
+
+	/* Fresh reason each round — parse_judge_result appends, so without this the
+	 * feedback from every previous round accumulates and pollutes the prompt. */
+	EmptyString(reason);
+
+	size_t len = 0;
 
 	_Bool pass = 0;
 	_Bool received_pass = 0;
@@ -134,7 +141,7 @@ static _Bool think(DS_memory *mem, String *out, size_t depth, Task* task, char *
 	// check if finished
 
 	String conclusion; InitString(&conclusion, 1024);
-	exec_response(doc, &mem->dynamic, depth, &conclusion, ds_id);
+	exec_response(doc, &mem->dynamic, depth, &conclusion, ds_id, mem->user);
 
 	_Bool terminated = try_terminate(mem, out, depth, task, &conclusion);
 	
@@ -152,12 +159,13 @@ static void lazy_load(){
     }
 }
 
-void start_ds_session(Task *task, char* id, String* out){
+void start_ds_session(Task *task, char* id, String* out, User *user){
 	lazy_load();
 
 	DS_memory mem;
 	if (massert(init_ds_memory(&mem), "Couldn't allocate memory for ds session"))
 		return;
+	mem.user = user;
 
 	InitString(out, 1024);
 	
@@ -174,7 +182,7 @@ void start_ds_session(Task *task, char* id, String* out){
 
 	ds_emit(id, "p-mem", mem.persistent.p, mem.persistent.len);
 
-	RefreshGraph();
+	RefreshGraph(&user->nodes);
 
 	ds_emit(id, "ds-start", "{\"start\" : true}", FSIZE("{\"start\" : true}"));
 	
@@ -183,8 +191,6 @@ void start_ds_session(Task *task, char* id, String* out){
 	String reason; InitString(&reason, 1024);
 
 	while (++edepth){
-		cassert(edepth < 10, "Error : External Depth went way too hight\n");
-
 		idepth = 1;
 		while(idepth++) {
 			_Bool status = think(&mem, out, idepth, task, id);
@@ -195,8 +201,19 @@ void start_ds_session(Task *task, char* id, String* out){
 		_Bool success = judge_result(out, &reason, task, id);
 		if (success) break;
 
+		/*
+		 * The judge can stay unsatisfied indefinitely (e.g. it keeps asking for
+		 * "more concrete findings" on a conclusion that is already adequate).
+		 * Rather than crash, accept the best-effort conclusion after a bounded
+		 * number of rounds — `out` already holds the latest finished result.
+		 */
+		if (edepth >= DS_MAX_EXTERNAL_ROUNDS){
+			printf("[ds] judge not satisfied after %zu rounds; accepting best-effort result.\n", edepth);
+			ds_emit(id, "judge-giveup", c_str(&reason), reason.len);
+			break;
+		}
 
-		// failed task 
+		// failed task
 		write_feedback(&mem, out, &reason);
 	}
 

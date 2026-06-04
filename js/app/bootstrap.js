@@ -1,4 +1,4 @@
-import {$,EP,meta,transport,resize,base,status,id,local,save,color} from "./shared.js";
+import {$,EP,meta,transport,resize,base,status,id,local,save,color,loadEndpointBase,setEndpointBase,defaultEndpointBase,getLocalUser,setLocalUser,centralListUsers,centralCreateUser,centralLogin} from "./shared.js";
 import {createGraphView} from "./graph-view.js";
 
 const toastState={timer:0};
@@ -48,8 +48,10 @@ const graphView=createGraphView({
   confirmAction:confirmGraphAction
 });
 
+let endpointBase=loadEndpointBase();
+
 const R={sessions:local("graph-viewer.research-sessions.v5",[]),active:"",prepared:id("rs"),source:null,state:"disconnected",busy:false,first:0};
-const L={items:local("graph-viewer.goals.v5",[]),server:[],byIndex:new Map(),active:"",source:null,state:"disconnected",busy:false,load:false,decomp:false,selected:0,focus:0,explode:false,mode:"structure",first:0};
+const L={items:local("graph-viewer.goals.v5",[]),server:[],byIndex:new Map(),active:"",source:null,state:"disconnected",busy:false,load:false,copyBusy:false,decomp:false,selected:0,focus:0,explode:false,mode:"structure",first:0};
 const timelineState={
   canvas:$("timeline-canvas"),
   ctx:$("timeline-canvas").getContext("2d"),
@@ -107,6 +109,46 @@ const goalStructureState={
 if(!R.active&&R.sessions.length)R.active=R.sessions[0].id;
 if(!L.active&&L.items.length)L.active=L.items[0].id;
 
+function closeStream(store){
+  if(!store.source)return;
+  store.source.close();
+  store.source=null;
+}
+
+function closeActiveStreams(){
+  closeStream(R);
+  closeStream(L);
+}
+
+function syncEndpointUi(message=`Using ${endpointBase}`,good=true){
+  const input=$("endpoint-base-input");
+  const statusNode=$("endpoint-status");
+  const resetButton=$("reset-endpoint");
+  if(input)input.value=endpointBase;
+  if(statusNode){
+    statusNode.textContent=message;
+    statusNode.classList.toggle("is-good",good);
+    statusNode.classList.toggle("is-bad",!good);
+  }
+  if(resetButton)resetButton.disabled=endpointBase===defaultEndpointBase();
+}
+
+async function applyEndpointChange(rawValue,{reloadGraph=true}={}){
+  endpointBase=setEndpointBase(rawValue);
+  closeActiveStreams();
+  R.state="disconnected";
+  L.state="disconnected";
+  R.detail="Ready.";
+  L.detail="Ready.";
+  syncEndpointUi(`Using ${endpointBase}`,true);
+  panels();
+  if(reloadGraph){
+    await graphView.loadGraph();
+    await loadGoals(false);
+  }
+  return endpointBase;
+}
+
 function itemList(root,items,active,onClick,empty){
   root.innerHTML="";
   if(!items.length){
@@ -115,7 +157,7 @@ function itemList(root,items,active,onClick,empty){
   }
   for(const item of items){
     const button=document.createElement("button");
-    button.className="session-item"+(item.id===active||item.globalIndex===active?" is-active":"");
+    button.className="session-item"+(item.id===active||item.localIndex===active?" is-active":"");
     button.innerHTML=`<div class="session-item__head"><div class="session-item__title">${item.title||item.taskName||"Untitled"}</div>${item.lengthLabel?`<div class="session-item__length">${item.lengthLabel}</div>`:""}</div><div class="session-item__meta">${item.meta||""}</div><div class="session-item__status">${item.status||"Saved"}</div>`;
     button.onclick=()=>onClick(item);
     root.appendChild(button);
@@ -281,9 +323,13 @@ function panels(){
   $("goal-status-detail").textContent=L.detail||"Ready.";
   $("start-research").disabled=R.busy||!$("research-task").value.trim();
   $("create-goal").disabled=L.busy||!$("goal-title").value.trim();
+  $("refresh-goals").disabled=L.load||L.copyBusy;
+  $("refresh-goals-sidebar").disabled=L.load||L.copyBusy;
+  $("save-goals-copy").disabled=L.load||L.copyBusy;
+  $("load-goals-copy").disabled=L.copyBusy;
   itemList($("research-session-list"),R.sessions||[],R.active,item=>selectResearchSession(item.id,true),"No saved deep-search sessions.");
-  const goalItems=L.server.map(goal=>({...goal,title:goal.title,lengthLabel:formatGoalLength(goal),meta:`#${goal.globalIndex} · depth ${goal.depth} · ${goal.subgoals.length} children`,status:goalStatus(goal)}));
-  itemList($("goal-list"),goalItems,L.selected,item=>selectGoal(item.globalIndex,{focus:false}),"No server goals loaded.");
+  const goalItems=L.server.map(goal=>({...goal,title:goal.title,lengthLabel:formatGoalLength(goal),meta:`#${goal.localIndex} · depth ${goal.depth} · ${goal.subgoals.length} children`,status:goalStatus(goal)}));
+  itemList($("goal-list"),goalItems,L.selected,item=>selectGoal(item.localIndex,{focus:false}),"No server goals loaded.");
   $("timeline-total-chip").textContent=`${activeResearch().length} Events`;
   $("timeline-session-chip").textContent=R.active?`Session ${R.active}`:"No Session";
   $("timeline-header-subtitle").textContent=activeResearch().length?"Drag to pan. Hover or click a node for event details.":"Start or open a session.";
@@ -292,16 +338,17 @@ function panels(){
   $("goal-structure-count-chip").textContent=`${L.server.length} Goals`;
   const selectedGoal=L.byIndex.get(L.selected);
   $("goal-structure-selected-chip").textContent=selectedGoal?selectedGoal.title:"No Selection";
+  $("message-panel-status").textContent=`POST ${EP.msg}`;
 }
 
 function activeResearch(){return (R.sessions||[]).find(session=>session.id===R.active)?.events||[]}
 function activeGoalEvents(){return (L.items||[]).find(goal=>goal.id===L.active)?.events||[]}
-function selectGoal(globalIndex,{focus=true}={}){
-  const goal=L.byIndex.get(Number(globalIndex));
+function selectGoal(localIndex,{focus=true}={}){
+  const goal=L.byIndex.get(Number(localIndex));
   if(!goal)return false;
-  L.selected=goal.globalIndex;
+  L.selected=goal.localIndex;
   if(focus&&goal.subgoals.length){
-    L.focus=goal.globalIndex;
+    L.focus=goal.localIndex;
     L.explode=false;
   }
   L.detail="Selected.";
@@ -340,6 +387,23 @@ function formatGoalLength(goal){
 
   return parts.slice(0,3).join(" ");
 }
+function formatDurationSeconds(totalSeconds){
+  const seconds=Math.max(0,Math.round(Number(totalSeconds)||0));
+  if(!seconds)return"0s";
+
+  const days=Math.floor(seconds/86400);
+  const hours=Math.floor((seconds%86400)/3600);
+  const minutes=Math.floor((seconds%3600)/60);
+  const leftoverSeconds=seconds%60;
+  const parts=[];
+
+  if(days)parts.push(`${days}d`);
+  if(hours)parts.push(`${hours}h`);
+  if(minutes)parts.push(`${minutes}m`);
+  if(!parts.length||leftoverSeconds)parts.push(`${leftoverSeconds}s`);
+
+  return parts.slice(0,3).join(" ");
+}
 function closeGoalStructureInspector(){
   $("goal-structure-inspector").classList.remove("is-visible");
   $("goal-structure-inspector").setAttribute("aria-hidden","true");
@@ -351,8 +415,11 @@ function openGoalStructureInspector(goal){
   }
   const rows=[
     ["title",goal.title||"Untitled goal"],
+    ["id",goal.id||""],
     ["extra info",(goal.extra_info||"No extra info").trim()||"No extra info"],
-    ["length",formatGoalLength(goal)]
+    ["length",formatGoalLength(goal)],
+    ["min pause to next",formatDurationSeconds(goal.min_pause_to_next)],
+    ["pause to next",formatDurationSeconds(goal.pause_to_next)]
   ];
   $("goal-structure-inspector-title").textContent=goal.title||"Goal details";
   $("goal-structure-inspector-body").innerHTML=rows.map(([label,value])=>`
@@ -737,14 +804,18 @@ async function startResearch(event){
 function normGoal(raw){
   return{
     id:String(raw?.id||""),
-    globalIndex:Number(raw?.globalIndex||0),
+    localIndex:Number(raw?.localIndex||0),
     title:String(raw?.title||"Untitled goal"),
     extra_info:String(raw?.extra_info||""),
     start_date:Number(raw?.start_date||0),
     end_date:Number(raw?.end_date||0),
     required_time:Number(raw?.required_time||0),
+    min_pause_to_next:Number(raw?.min_pause_to_next||0),
+    pause_to_next:Number(raw?.pause_to_next||0),
     subgoals:Array.isArray(raw?.subgoals)?raw.subgoals.map(Number).filter(Number.isFinite):[],
     parent:Number(raw?.parent||0),
+    prev:Number(raw?.prev||0),
+    next:Number(raw?.next||0),
     depth:Number(raw?.depth||0)
   };
 }
@@ -763,9 +834,9 @@ async function loadGoals(selectNewest=false){
     const response=await fetch(EP.goalList,{cache:"no-store"});
     const raw=await response.json();
     if(!response.ok||raw.ok===false||!Array.isArray(raw.goals))throw new Error(JSON.stringify(raw));
-    L.server=raw.goals.map(normGoal).filter(goal=>goal.globalIndex>0).sort((a,b)=>a.globalIndex-b.globalIndex);
-    L.byIndex=new Map(L.server.map(goal=>[goal.globalIndex,goal]));
-    if(L.server.length)L.selected=selectNewest?L.server.at(-1).globalIndex:(L.byIndex.has(L.selected)?L.selected:L.server[0].globalIndex);
+    L.server=raw.goals.map(normGoal).filter(goal=>goal.localIndex>0).sort((a,b)=>a.localIndex-b.localIndex);
+    L.byIndex=new Map(L.server.map(goal=>[goal.localIndex,goal]));
+    if(L.server.length)L.selected=selectNewest?L.server.at(-1).localIndex:(L.byIndex.has(L.selected)?L.selected:L.server[0].localIndex);
     L.detail="Loaded.";
   }catch(error){
     L.detail="Error.";
@@ -774,6 +845,28 @@ async function loadGoals(selectNewest=false){
     L.load=false;
     panels();
     drawGoals();
+  }
+}
+
+async function copyGoals(method,url,done,{reload=false}={}){
+  if(L.copyBusy)return;
+  L.copyBusy=true;
+  panels();
+  toast(`${method} ${url}`);
+  try{
+    const response=await fetch(url,{method,cache:"no-store"});
+    const text=await response.text();
+    let payload=null;
+    try{payload=text?JSON.parse(text):null}catch{}
+    if(!response.ok||payload?.ok===false)throw new Error(payload?.error||text||`HTTP ${response.status}`);
+    toast(done+(payload?.path?`: ${payload.path}`:""),true);
+    if(reload)await loadGoals(false);
+  }catch(error){
+    console.error(error);
+    toast(transport(error),false);
+  }finally{
+    L.copyBusy=false;
+    panels();
   }
 }
 
@@ -857,7 +950,7 @@ function drawGoals(){
   const positions=[];
   let row=0;
   function walk(goal,depth){
-    const children=byParent.get(goal.globalIndex)||[];
+    const children=byParent.get(goal.localIndex)||[];
     const start=row;
     if(!children.length)row++;
     else children.forEach(child=>walk(child,depth+1));
@@ -867,18 +960,45 @@ function drawGoals(){
   const mid=(Math.min(...positions.map(point=>point.y))+Math.max(...positions.map(point=>point.y)))/2;
   positions.forEach(point=>{point.y-=mid});
   goalStructureState.positions=positions;
-  const map=new Map(positions.map(point=>[point.goal.globalIndex,point]));
+  const map=new Map(positions.map(point=>[point.goal.localIndex,point]));
   const screen=point=>({x:point.x+goalStructureState.cameraX+w*.28,y:point.y+goalStructureState.cameraY+h*.54});
-  const hoveredIndex=goalStructureState.hoveredGoal?.globalIndex||0;
+  const hoveredIndex=goalStructureState.hoveredGoal?.localIndex||0;
   let selectedPoint=null;
   c.lineCap="round";
+
+  c.save();
+  c.setLineDash([5,9]);
+  for(const point of positions){
+    if(!point.goal.next)continue;
+    const target=map.get(point.goal.next);
+    if(!target)continue;
+    const a=screen(point);
+    const b=screen(target);
+    const linkedHover=point.goal.localIndex===hoveredIndex||target.goal.localIndex===hoveredIndex;
+    const sameDepth=Math.abs(a.x-b.x)<4;
+    const bend=sameDepth?Math.max(36,Math.abs(a.y-b.y)*.28):0;
+    c.strokeStyle=linkedHover?"rgba(255,255,255,.28)":"rgba(255,255,255,.13)";
+    c.lineWidth=linkedHover?1.4:1;
+    c.beginPath();
+    if(sameDepth){
+      const side=Math.sign(b.y-a.y)||1;
+      c.moveTo(a.x+34,a.y);
+      c.bezierCurveTo(a.x+72+side*bend,a.y,a.x+72+side*bend,b.y,b.x+34,b.y);
+    }else{
+      c.moveTo(a.x,a.y);
+      c.bezierCurveTo((a.x+b.x)/2,a.y,(a.x+b.x)/2,b.y,b.x,b.y);
+    }
+    c.stroke();
+  }
+  c.restore();
+
   for(const point of positions){
     for(const childId of point.goal.subgoals){
       const target=map.get(childId);
       if(!target)continue;
       const a=screen(point);
       const b=screen(target);
-      const linkedHover=point.goal.globalIndex===hoveredIndex||target.goal.globalIndex===hoveredIndex;
+      const linkedHover=point.goal.localIndex===hoveredIndex||target.goal.localIndex===hoveredIndex;
       c.strokeStyle=linkedHover?"rgba(125,211,252,.4)":"rgba(125,211,252,.24)";
       c.lineWidth=linkedHover?2.2:1.4;
       c.beginPath();
@@ -889,9 +1009,9 @@ function drawGoals(){
   }
   for(const point of positions){
     const s=screen(point);
-    const selected=point.goal.globalIndex===L.selected;
-    const hovered=point.goal.globalIndex===hoveredIndex;
-    const co=color(point.goal.globalIndex);
+    const selected=point.goal.localIndex===L.selected;
+    const hovered=point.goal.localIndex===hoveredIndex;
+    const co=color(point.goal.localIndex);
     const radius=selected?32:hovered?30:28;
     if(selected||hovered){
       c.beginPath();
@@ -909,7 +1029,7 @@ function drawGoals(){
     c.fillStyle="#fff";
     c.font=selected||hovered?"740 12px system-ui":"740 11px system-ui";
     c.textAlign="center";
-    c.fillText(String(point.goal.globalIndex),s.x,s.y+4);
+    c.fillText(String(point.goal.localIndex),s.x,s.y+4);
     c.font=selected||hovered?"650 12px system-ui":"650 11px system-ui";
     c.fillText(point.goal.title.slice(0,36),s.x,s.y+46);
     if(selected)selectedPoint={goal:point.goal,x:s.x,y:s.y,hasChildren:point.goal.subgoals.length>0};
@@ -921,7 +1041,7 @@ function drawGoals(){
 function syncGoalContextAction(point=null){
   const button=$("decompose-selected-goal");
   if(!button)return;
-  const canShow=Boolean(point)&&L.mode!=="timeline"&&!L.decomp&&!point.hasChildren&&L.selected===point.goal.globalIndex;
+  const canShow=Boolean(point)&&L.mode!=="timeline"&&!L.decomp&&!point.hasChildren&&!point.goal.end_date&&L.selected===point.goal.localIndex;
   if(!canShow){
     button.disabled=true;
     button.classList.remove("is-visible");
@@ -945,12 +1065,18 @@ async function decomposeGoal(){
     panels();
     return;
   }
+  if(goal.end_date){
+    L.detail="Ready.";
+    toast("Cannot decompose a completed goal.",false);
+    panels();
+    return;
+  }
   L.decomp=true;
   L.detail="Decomposing.";
   syncGoalContextAction(null);
   panels();
   try{
-    const response=await fetch(EP.goalDecompose,{method:"POST",cache:"no-store",headers:{"Content-Type":"application/json"},body:JSON.stringify({goalIndex:goal.globalIndex})});
+    const response=await fetch(EP.goalDecompose,{method:"POST",cache:"no-store",headers:{"Content-Type":"application/json"},body:JSON.stringify({goalIndex:goal.localIndex})});
     const raw=await response.json();
     if(!response.ok||raw.ok===false)throw new Error(JSON.stringify(raw));
     L.detail=raw.decomposedNow?"Decomposed.":"Children loaded.";
@@ -1043,7 +1169,7 @@ function handleGoalStructurePointerUp(event){
   if(!wasDragging){
     const hit=pickGoalAt(x,y,w,h);
     if(hit){
-      selectGoal(hit.globalIndex,{focus:false});
+      selectGoal(hit.localIndex,{focus:false});
       goalStructureState.hoveredGoal=hit;
       openGoalStructureInspector(hit);
     }else if(L.focus){
@@ -1064,7 +1190,7 @@ function handleGoalStructureDoubleClick(event){
   const {x,y}=goalStructurePoint(event);
   const hit=pickGoalAt(x,y,w,h);
   if(hit){
-    selectGoal(hit.globalIndex,{focus:true});
+    selectGoal(hit.localIndex,{focus:true});
     goalStructureState.hoveredGoal=hit;
     openGoalStructureInspector(hit);
   }
@@ -1132,6 +1258,24 @@ async function submitMsg(event){
   }
 }
 
+async function submitEndpoint(event){
+  event.preventDefault();
+  const nextValue=$("endpoint-base-input").value.trim();
+  $("apply-endpoint").disabled=true;
+  $("reset-endpoint").disabled=true;
+  try{
+    await applyEndpointChange(nextValue,{reloadGraph:true});
+    toast("Server endpoint updated");
+  }catch(error){
+    const message=transport(error);
+    syncEndpointUi(message,false);
+    toast(message,false);
+  }finally{
+    $("apply-endpoint").disabled=false;
+    $("reset-endpoint").disabled=endpointBase===defaultEndpointBase();
+  }
+}
+
 $("graph-confirm-cancel").onclick=()=>closeConfirm(false);
 $("graph-confirm-accept").onclick=()=>closeConfirm(true);
 $("graph-confirm-backdrop").addEventListener("click",event=>{if(event.target===$("graph-confirm-backdrop"))closeConfirm(false)});
@@ -1156,6 +1300,30 @@ $("message-input").addEventListener("keydown",event=>{
   if(event.key==="Enter"){
     event.preventDefault();
     $("message-form").requestSubmit();
+  }
+});
+$("endpoint-form").onsubmit=submitEndpoint;
+$("endpoint-form").addEventListener("pointerdown",event=>event.stopPropagation());
+$("endpoint-form").addEventListener("mousedown",event=>event.stopPropagation());
+$("reset-endpoint").onclick=async()=>{
+  $("apply-endpoint").disabled=true;
+  $("reset-endpoint").disabled=true;
+  try{
+    await applyEndpointChange(defaultEndpointBase(),{reloadGraph:true});
+    toast("Server endpoint reset");
+  }catch(error){
+    const message=transport(error);
+    syncEndpointUi(message,false);
+    toast(message,false);
+  }finally{
+    $("apply-endpoint").disabled=false;
+    $("reset-endpoint").disabled=endpointBase===defaultEndpointBase();
+  }
+};
+$("endpoint-base-input").addEventListener("keydown",event=>{
+  if(event.key==="Enter"){
+    event.preventDefault();
+    $("endpoint-form").requestSubmit();
   }
 });
 $("research-form").onsubmit=startResearch;
@@ -1193,6 +1361,8 @@ function initGoalView(){
   $("goal-form").addEventListener("mousedown",event=>event.stopPropagation());
   $("refresh-goals").onclick=()=>loadGoals(false);
   $("refresh-goals-sidebar").onclick=()=>loadGoals(false);
+  $("save-goals-copy").onclick=async()=>{if(await confirmGraphAction("Save goals copy?","This will overwrite the saved goals copy on disk. Continue only if this is intentional.","Save copy"))copyGoals("POST",EP.goalExport,"Goals copy saved")};
+  $("load-goals-copy").onclick=async()=>{if(await confirmGraphAction("Load saved goals copy?","This will replace the current in-memory goals with the saved copy. Unsaved current goal state may be lost.","Load copy"))copyGoals("GET",EP.goalLoad,"Goals copy loaded",{reload:true})};
   $("decompose-selected-goal").onclick=decomposeGoal;
   $("decompose-selected-goal").addEventListener("pointerdown",event=>event.stopPropagation());
   $("decompose-selected-goal").addEventListener("mousedown",event=>event.stopPropagation());
@@ -1208,6 +1378,7 @@ function initGoalView(){
 }
 
   try{
+    syncEndpointUi(`Using ${endpointBase}`,true);
     panels();
     drawResearchTimeline();
     drawGoalTimeline();
@@ -1218,10 +1389,147 @@ function initGoalView(){
 
   try{
     initGoalView();
-    loadGoals(false);
   }catch(error){
     console.error("Goal view init failed",error);
     L.detail="Goal view unavailable.";
   }
+
+/* ---- Multi-user selection ----------------------------------------------
+ * The viewer is a single-user shell: it only ever talks to one user's client
+ * server at a time. The central server (127.0.0.1:8085) owns the user list and
+ * hands out the bound client-server port. Selecting a user re-binds EP (via
+ * centralLogin -> setEndpointBase, which mutates the shared EP object in place)
+ * so every request/command below automatically targets that user's data. */
+function syncUserChip(){
+  const user=getLocalUser();
+  const node=$("current-user-name");
+  if(node)node.textContent=user?user.name:"—";
+}
+
+function userGateStatus(message,bad=false){
+  const node=$("user-gate-status");
+  if(!node)return;
+  node.textContent=message;
+  node.classList.toggle("is-bad",bad);
+}
+
+function openUserGate(){
+  const gate=$("user-gate");
+  gate.classList.add("is-visible");
+  gate.setAttribute("aria-hidden","false");
+  refreshUserGate();
+}
+
+function closeUserGate(){
+  const gate=$("user-gate");
+  gate.classList.remove("is-visible");
+  gate.setAttribute("aria-hidden","true");
+}
+
+async function bootData(){
+  syncEndpointUi(`Using ${endpointBase}`,true);
+  try{await loadGoals(false)}catch(error){console.error("Goal load failed",error)}
+  try{await graphView.loadGraph()}catch(error){console.error("Graph load failed",error)}
+}
+
+async function refreshUserGate(){
+  const list=$("user-gate-list");
+  userGateStatus("Loading users…");
+  try{
+    const users=await centralListUsers();
+    list.innerHTML="";
+    if(!users.length){
+      list.innerHTML=`<div class="user-gate__empty">No users yet. Create one below.</div>`;
+    }else{
+      const current=getLocalUser();
+      for(const user of users){
+        const button=document.createElement("button");
+        button.type="button";
+        button.className="user-gate__user";
+        const dot=document.createElement("span");
+        dot.className="user-gate__dot";
+        dot.style.background=user.color||color(user.id.length);
+        const label=document.createElement("span");
+        label.textContent=user.name;
+        const tag=document.createElement("span");
+        tag.className="user-gate__id";
+        tag.textContent=current&&current.id===user.id?"current":user.id.slice(0,8);
+        button.append(dot,label,tag);
+        button.onclick=()=>selectUser(user.id);
+        list.appendChild(button);
+      }
+    }
+    const current=getLocalUser();
+    userGateStatus(current?`Signed in as ${current.name}. Pick a user to switch.`:"Pick a user to begin.");
+  }catch(error){
+    list.innerHTML="";
+    userGateStatus(transport(error),true);
+  }
+}
+
+async function selectUser(userId){
+  const buttons=document.querySelectorAll("#user-gate-list .user-gate__user");
+  buttons.forEach(b=>{b.disabled=true});
+  userGateStatus("Starting client server…");
+  try{
+    const {user,base}=await centralLogin(userId);
+    endpointBase=base;
+    syncUserChip();
+    closeUserGate();
+    closeActiveStreams();
+    R.state="disconnected";L.state="disconnected";R.detail="Ready.";L.detail="Ready.";
+    panels();
+    await bootData();
+    toast(`Signed in as ${user.name}`);
+    return true;
+  }catch(error){
+    buttons.forEach(b=>{b.disabled=false});
+    userGateStatus(transport(error),true);
+    return false;
+  }
+}
+
+async function resolveStartupUser(){
+  syncUserChip();
+  const stored=getLocalUser();
+  if(stored&&await selectUser(stored.id))return;
+  openUserGate();
+}
+
+$("switch-user").onclick=openUserGate;
+$("user-gate-create-form").onsubmit=async event=>{
+  event.preventDefault();
+  const name=$("user-gate-new-name").value.trim();
+  if(!name)return;
+  $("user-gate-create").disabled=true;
+  userGateStatus("Creating user…");
+  try{
+    const created=await centralCreateUser(name);
+    $("user-gate-new-name").value="";
+    await selectUser(created.id);
+  }catch(error){
+    userGateStatus(transport(error),true);
+  }finally{
+    $("user-gate-create").disabled=false;
+  }
+};
+$("user-gate").addEventListener("pointerdown",event=>event.stopPropagation());
+$("user-gate-create-form").addEventListener("pointerdown",event=>event.stopPropagation());
+
+resolveStartupUser();
+
 timelineState.canvas.style.cursor="grab";
 goalTimelineState.canvas.style.cursor="grab";
+
+(function(){
+  const app=document.querySelector(".app");
+  const btn=$("sidebar-toggle");
+  const hidden=localStorage.getItem("sidebar-hidden")==="1";
+  if(hidden)app.classList.add("sidebar-hidden");
+  btn.classList.toggle("is-active",hidden);
+  btn.onclick=()=>{
+    const isHidden=app.classList.toggle("sidebar-hidden");
+    btn.classList.toggle("is-active",isHidden);
+    try{localStorage.setItem("sidebar-hidden",isHidden?"1":"0")}catch{}
+  };
+}());

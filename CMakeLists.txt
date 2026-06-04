@@ -9,6 +9,11 @@ set(CMAKE_C_EXTENSIONS OFF)
 
 find_package(OpenSSL REQUIRED)
 
+add_library(timeutil SHARED ${CMAKE_SOURCE_DIR}/c/lib/util/time-util.c)
+target_include_directories(timeutil PUBLIC
+	${CMAKE_SOURCE_DIR}/c/lib/util
+)
+
 add_library(hd SHARED ${CMAKE_SOURCE_DIR}/c/lib/hd/hashdict.c)
 target_include_directories(hd PUBLIC ${CMAKE_SOURCE_DIR}/c/lib/hd)
 
@@ -22,13 +27,14 @@ target_include_directories(util PUBLIC
 	${CMAKE_SOURCE_DIR}/c/lib/jsonp
 	${CMAKE_SOURCE_DIR}/c
 )
-target_link_libraries(util PUBLIC jsonp change-errors)
+target_link_libraries(util PUBLIC jsonp change-errors timeutil)
 
 add_library(change-errors SHARED ${CMAKE_SOURCE_DIR}/c/lib/util/change-errors.c)
 target_include_directories(change-errors PUBLIC 
 	${CMAKE_SOURCE_DIR}/c
 	${CMAKE_SOURCE_DIR}/c/lib/util
 )
+target_link_libraries(change-errors PUBLIC timeutil)
 
 add_library(openai SHARED ${CMAKE_SOURCE_DIR}/c/lib/openai/openai.c)
 target_include_directories(openai PUBLIC 
@@ -49,6 +55,7 @@ target_link_libraries(mockopenai PUBLIC openai)
 add_library(ui SHARED ${CMAKE_SOURCE_DIR}/c/cli/ui.c)
 target_include_directories(ui PUBLIC
     ${CMAKE_SOURCE_DIR}/c/cli   
+    ${CMAKE_SOURCE_DIR}/c/srv
     ${CMAKE_SOURCE_DIR}/c       
 )
 target_link_libraries(ui PUBLIC
@@ -58,8 +65,10 @@ target_link_libraries(ui PUBLIC
     graphexport
     inputprocessor
     deepsearchsession
+    user-management
     goal
     http-server
+    central-server
     globals
 )
 
@@ -71,6 +80,34 @@ target_include_directories(graphexport PUBLIC
 target_link_libraries(graphexport PUBLIC
     util
     node
+)
+
+add_library(schedule-system SHARED ${CMAKE_SOURCE_DIR}/c/ne/goal/schedule-system.c)
+target_include_directories(schedule-system PUBLIC
+    ${CMAKE_SOURCE_DIR}/c/ne/goal
+    ${CMAKE_SOURCE_DIR}/c/ne
+    ${CMAKE_SOURCE_DIR}/c/lib/hd
+    ${CMAKE_SOURCE_DIR}/c/lib/util
+    ${CMAKE_SOURCE_DIR}/c/lib/jsonp
+    ${CMAKE_SOURCE_DIR}/c/ne/profile
+    ${CMAKE_SOURCE_DIR}/c/srv
+    ${CMAKE_SOURCE_DIR}/c
+)
+target_link_libraries(schedule-system PUBLIC goal-health)
+
+add_library(goal-health SHARED ${CMAKE_SOURCE_DIR}/c/ne/goal/goal-health.c)
+target_include_directories(goal-health PUBLIC
+    ${CMAKE_SOURCE_DIR}/c/ne/goal
+    ${CMAKE_SOURCE_DIR}/c/ne/profile
+    ${CMAKE_SOURCE_DIR}/c/ne
+    ${CMAKE_SOURCE_DIR}/c/srv
+    ${CMAKE_SOURCE_DIR}/c/lib/util
+    ${CMAKE_SOURCE_DIR}/c
+)
+target_link_libraries(goal-health PUBLIC goal-util userprofile user-management util)
+
+target_link_libraries(graphexport PUBLIC
+	goal-util
 )
 
 add_library(graphengine SHARED ${CMAKE_SOURCE_DIR}/c/ne/graph/graph-engine.c)
@@ -161,12 +198,14 @@ target_include_directories(aiaction PUBLIC
     ${CMAKE_SOURCE_DIR}/c/ne/search
     ${CMAKE_SOURCE_DIR}/c/ne/goal
     ${CMAKE_SOURCE_DIR}/c/ne
+    ${CMAKE_SOURCE_DIR}/c/srv
 )
 target_link_libraries(aiaction PUBLIC
     jsonp
     util
     search
     goal-info
+    schedule-system
     comparsing
     globals
 )
@@ -195,20 +234,149 @@ target_link_libraries(inputprocessor PUBLIC
     jsonp
     node
     json2graph
+    userprofile
 )
 
-add_library(http-server SHARED ${CMAKE_SOURCE_DIR}/c/srv/http-server.c)
+add_library(middleware SHARED ${CMAKE_SOURCE_DIR}/c/middleware/middleware.c)
+target_include_directories(middleware PUBLIC
+	${CMAKE_SOURCE_DIR}/c
+	${CMAKE_SOURCE_DIR}/c/middleware
+	${CMAKE_SOURCE_DIR}/c/ne
+	${CMAKE_SOURCE_DIR}/c/ne/goal
+	${CMAKE_SOURCE_DIR}/c/ne/input
+	${CMAKE_SOURCE_DIR}/c/ne/profile
+	${CMAKE_SOURCE_DIR}/c/ne/search
+	${CMAKE_SOURCE_DIR}/c/lib/openai
+	${CMAKE_SOURCE_DIR}/c/lib/util
+	${CMAKE_SOURCE_DIR}/c/lib/jsonp
+	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/journal
+	${CMAKE_SOURCE_DIR}/c/srv/user
+)
+target_link_libraries(middleware PUBLIC
+	util
+	jsonp
+	openai
+	inputprocessor
+	userprofile
+	goal
+	deepsearchsession
+	connections
+	journal
+)
+
+add_library(userprofile SHARED ${CMAKE_SOURCE_DIR}/c/ne/profile/user-profile.c)
+target_include_directories(userprofile PUBLIC
+	${CMAKE_SOURCE_DIR}/c/ne/profile
+	${CMAKE_SOURCE_DIR}/c/ne
+	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/srv/user
+	${CMAKE_SOURCE_DIR}/c/ne/goal
+	${CMAKE_SOURCE_DIR}/c/lib/util
+	${CMAKE_SOURCE_DIR}/c/lib/jsonp
+	${CMAKE_SOURCE_DIR}/c
+)
+target_link_libraries(userprofile PUBLIC
+	util
+	goal-util
+	user-management
+	jsonp
+)
+
+add_dependencies(userprofile user-management)
+
+add_library(http-util SHARED ${CMAKE_SOURCE_DIR}/c/srv/http-util.c)
+target_include_directories(http-util PUBLIC
+	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c
+	${CMAKE_SOURCE_DIR}/c/lib/util
+)
+target_link_libraries(http-util PUBLIC util change-errors)
+
+add_library(journal SHARED
+	${CMAKE_SOURCE_DIR}/c/journal/journal.c
+	${CMAKE_SOURCE_DIR}/c/journal/journal-embeds.c
+	${CMAKE_SOURCE_DIR}/c/journal/journal-handlers.c
+	${CMAKE_SOURCE_DIR}/c/journal/reminders.c
+	${CMAKE_SOURCE_DIR}/c/journal/reminders-handlers.c
+)
+target_include_directories(journal PUBLIC
+	${CMAKE_SOURCE_DIR}/c
+	${CMAKE_SOURCE_DIR}/c/journal
+	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/srv/http-server
+	${CMAKE_SOURCE_DIR}/c/srv/user
+	${CMAKE_SOURCE_DIR}/c/ne/goal
+	${CMAKE_SOURCE_DIR}/c/lib/util
+)
+target_link_libraries(journal PUBLIC util user-management http-util goal-util)
+
+add_library(http-server SHARED
+	${CMAKE_SOURCE_DIR}/c/srv/http-server/server.c
+	${CMAKE_SOURCE_DIR}/c/srv/http-server/sse.c
+	${CMAKE_SOURCE_DIR}/c/srv/http-server/routes.c
+	${CMAKE_SOURCE_DIR}/c/srv/http-server/goal-handlers.c
+	${CMAKE_SOURCE_DIR}/c/srv/http-server/graph-handlers.c
+	${CMAKE_SOURCE_DIR}/c/srv/http-server/middleware-handlers.c
+	${CMAKE_SOURCE_DIR}/c/srv/http-server/profile-handlers.c
+	${CMAKE_SOURCE_DIR}/c/srv/http-server/dev-handlers.c
+	${CMAKE_SOURCE_DIR}/c/srv/http-server/review-handlers.c
+)
 target_include_directories(http-server PUBLIC
 	${CMAKE_SOURCE_DIR}/c
 	${CMAKE_SOURCE_DIR}/c/ne
 	${CMAKE_SOURCE_DIR}/c/lib/util
+	${CMAKE_SOURCE_DIR}/c/lib/jsonp
+	${CMAKE_SOURCE_DIR}/c/lib/openai
+	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/srv/http-server
+	${CMAKE_SOURCE_DIR}/c/srv/match-system
+	${CMAKE_SOURCE_DIR}/c/srv/user
+	${CMAKE_SOURCE_DIR}/c/journal
 )
-target_link_libraries(http-server PUBLIC 
+target_link_libraries(http-server PUBLIC
 	node
 	graphexport
 	util
 	goal
 	inputprocessor
+	middleware
+	user-management
+	connections
+	http-util
+	journal
+	pthread
+)
+
+add_library(central-server SHARED
+	${CMAKE_SOURCE_DIR}/c/srv/central-server/central-server.c
+	${CMAKE_SOURCE_DIR}/c/srv/match-system/shared-journey.c
+	${CMAKE_SOURCE_DIR}/c/srv/central-server/central-users.c
+	${CMAKE_SOURCE_DIR}/c/srv/central-server/central-conn.c
+	${CMAKE_SOURCE_DIR}/c/srv/central-server/central-reviews.c
+)
+target_include_directories(central-server PUBLIC
+	${CMAKE_SOURCE_DIR}/c
+	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/srv/central-server
+	${CMAKE_SOURCE_DIR}/c/srv/http-server
+	${CMAKE_SOURCE_DIR}/c/srv/match-system
+	${CMAKE_SOURCE_DIR}/c/srv/user
+	${CMAKE_SOURCE_DIR}/c/middleware
+	${CMAKE_SOURCE_DIR}/c/lib/util
+	${CMAKE_SOURCE_DIR}/c/lib/jsonp
+	${CMAKE_SOURCE_DIR}/c/ne
+	${CMAKE_SOURCE_DIR}/c/ne/goal
+)
+target_link_libraries(central-server PUBLIC
+	util
+	jsonp
+	user-management
+	connections
+	journey
+	http-server
+	middleware
+	http-util
 	pthread
 )
 
@@ -226,8 +394,10 @@ target_include_directories(goal PUBLIC
 	${CMAKE_SOURCE_DIR}/c/ne
 	${CMAKE_SOURCE_DIR}/c/ne/goal
 	${CMAKE_SOURCE_DIR}/c/ne/search
+	${CMAKE_SOURCE_DIR}/c/ne/profile
+	${CMAKE_SOURCE_DIR}/c/srv/user
 )
-target_link_libraries(goal PUBLIC goal-ai goal-info goal-util util openai jsonp node)
+target_link_libraries(goal PUBLIC schedule-system goal-ai goal-info goal-util userprofile util openai jsonp node)
 
 add_library(goal-util SHARED ${CMAKE_SOURCE_DIR}/c/ne/goal/goal-util.c)
 target_include_directories(goal-util 
@@ -239,6 +409,19 @@ target_include_directories(goal-util
 	${CMAKE_SOURCE_DIR}/c/ne/goal
 )
 target_link_libraries(goal-util PUBLIC util globals jsonp)
+
+add_library(journey SHARED ${CMAKE_SOURCE_DIR}/c/srv/user/journey.c)
+target_include_directories(journey PUBLIC
+	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/srv/user
+	${CMAKE_SOURCE_DIR}/c/ne
+	${CMAKE_SOURCE_DIR}/c/ne/goal
+	${CMAKE_SOURCE_DIR}/c/lib/util
+	${CMAKE_SOURCE_DIR}/c/lib/jsonp
+	${CMAKE_SOURCE_DIR}/c/lib/hd
+	${CMAKE_SOURCE_DIR}/c
+)
+target_link_libraries(journey PUBLIC util http-util)
 
 add_library(goal-info SHARED ${CMAKE_SOURCE_DIR}/c/ne/goal/goal-info.c)
 target_include_directories(goal-info 
@@ -259,22 +442,54 @@ target_include_directories(goal-ai
 )
 target_link_libraries(goal-ai PUBLIC util goal-info openai deepsearchsession)
 
+add_library(user-management SHARED
+	${CMAKE_SOURCE_DIR}/c/srv/user/user-management.c
+	${CMAKE_SOURCE_DIR}/c/srv/user/user-io.c
+)
+target_include_directories(user-management PUBLIC
+	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/srv/user
+	${CMAKE_SOURCE_DIR}/c
+	${CMAKE_SOURCE_DIR}/c/lib/util
+	${CMAKE_SOURCE_DIR}/c/lib/jsonp
+	${CMAKE_SOURCE_DIR}/c/ne/goal
+	${CMAKE_SOURCE_DIR}/c/ne
+)
+target_link_libraries(user-management PUBLIC util journey node graphexport)
+
+add_library(connections SHARED
+	${CMAKE_SOURCE_DIR}/c/srv/match-system/connections.c
+	${CMAKE_SOURCE_DIR}/c/srv/match-system/ai-matching.c
+	${CMAKE_SOURCE_DIR}/c/srv/match-system/disk-storage.c
+	${CMAKE_SOURCE_DIR}/c/srv/match-system/reviews.c
+)
+target_include_directories(connections PUBLIC
+	${CMAKE_SOURCE_DIR}/c
+	${CMAKE_SOURCE_DIR}/c/srv
+	${CMAKE_SOURCE_DIR}/c/srv/match-system
+	${CMAKE_SOURCE_DIR}/c/srv/user
+	${CMAKE_SOURCE_DIR}/c/lib/util
+	${CMAKE_SOURCE_DIR}/c/lib/jsonp
+	${CMAKE_SOURCE_DIR}/c/lib/openai
+)
+target_link_libraries(connections PUBLIC util jsonp user-management openai)
+
 add_executable(change ${CMAKE_SOURCE_DIR}/c/main.c)
 target_include_directories(change PRIVATE
     ${CMAKE_SOURCE_DIR}/c
     ${CMAKE_SOURCE_DIR}/c/ne
     ${CMAKE_SOURCE_DIR}/c/lib
     ${CMAKE_SOURCE_DIR}/c/lib/util
-    ${CMAKE_SOURCE_DIR}/c/lib/openai
+    ${CMAKE_SOURCE_DIR}/c/lib/openaicma
 )
 
 target_link_libraries(
 	change PRIVATE
 
-	hd jsonp node util ui 
-	graphexport search deepsearchsession 
-	deepsearchexecute openai 
-	mockopenai mocks aiaction json2graph 
-	graphengine inputprocessor http-server
+	hd jsonp node util ui
+	graphexport search deepsearchsession
+	deepsearchexecute openai
+	mockopenai mocks aiaction json2graph
+	graphengine inputprocessor http-server central-server
 	goal
 )

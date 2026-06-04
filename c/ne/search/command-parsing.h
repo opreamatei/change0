@@ -6,7 +6,7 @@
 #include "goal-util.h"
 #include "node.h"
 
-void print_global_context_nodes(String *buff, char *suffix);
+void print_global_context_nodes(String *buff, char *suffix, NodeContainer *nc);
 
 _Bool decompose_command_1_params(
 		json_value *doc, String *ErrorBuff,
@@ -16,12 +16,13 @@ _Bool decompose_command_1_params(
 		);
 
 _Bool decompose_command_2_params(
-		json_value *doc, String *ErrorBuff, 
-		int_fast64_t *percentage, 
-		char (*target)[NODE_LABEL_CAP], size_t *target_length, 
+		json_value *doc, String *ErrorBuff,
+		int_fast64_t *percentage,
+		char (*target)[NODE_LABEL_CAP], size_t *target_length,
 		char (*criteria)[16], size_t *criteria_length,
 		int_fast64_t *context,
-		String *intent);
+		String *intent,
+		NodeContainer *nc);
 
 _Bool decompose_command_3_params(
 	json_value* doc, String* ErrorBuff,
@@ -29,7 +30,8 @@ _Bool decompose_command_3_params(
 	int_fast64_t *context,
 	int_fast64_t *percA, int_fast64_t *percW,
 	int_fast64_t *depth,
-	String *intent
+	String *intent,
+	NodeContainer *nc
 	);
 
 _Bool decompose_command_4_params(
@@ -48,6 +50,21 @@ _Bool decompose_command_6_params(
 		json_value *doc, String *ErrorBuff,
 		goalIDType *goal_id,
 		char (*method)[32], size_t *method_length
+		);
+
+_Bool decompose_command_7_params(
+		json_value *doc, String *ErrorBuff,
+		time_t *offset_schedule
+		);
+
+_Bool decompose_command_8_params(
+		json_value *doc, String *ErrorBuff,
+		char (*section)[32], size_t *section_length,
+		size_t *max
+		);
+
+_Bool decompose_command_9_params(
+		json_value *doc, String *ErrorBuff
 		);
 
 void cat_perc_to_buffer(String *buffer, int_fast64_t percentage);

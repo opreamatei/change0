@@ -2,25 +2,56 @@
 #define GOAL_UTIL_DECLARATIONS
 
 #include <stddef.h>
+#include <stdint.h>
 #include <time.h>
+#include <string.h>
 #include "config.h"
 #include "node.h"
 #include "util.h"
+#include "globals.h"
+
+/* Forward declaration — callers that need the full struct include user-management.h directly. */
+typedef struct UserType User;
 
 #define GOAL_REQUIRED_TIME_ERROR_MARGIN 0.5
-#define INITIAL_GOAL_INDEX 1 // must be > 0
+#define INITIAL_GOAL_INDEX 1 /* must be > 0 */
 #define GOAL_ID_SIZE 32
 #define GOAL_MIN_SECONDS 60 * 16
 
+/*
+ * Decomposition growth tolerance.
+ *
+ * When a goal is decomposed, the new total (sum of children) may exceed the
+ * parent's prior estimate. How much growth is allowed depends on the goal's
+ * ABSOLUTE size (not its depth): goal_growth_tolerance(old_estimate) returns a
+ * ratio T, and the new total falls into one of three zones:
+ *
+ *   new_total <= old * (1 + T)            -> SILENT:   accepted, no AI call.
+ *   new_total <= old * (1 + HARD_K * T)   -> JUDGE:    must be justified by the
+ *                                                      growth judge; on reject,
+ *                                                      re-decompose.
+ *   new_total >  old * (1 + HARD_K * T)   -> HARD CAP: never allowed; children
+ *                                                      are scaled down to fit.
+ *
+ * T grows with size: a months-long goal gets a wide silent band, a one-hour
+ * goal a narrow one (so it can never silently triple). T is interpolated
+ * between MIN (at SMALL) and MAX (at BIG).
+ */
+#define GOAL_GROWTH_TOL_MIN 0.2                          /* T for small goals (<= SMALL seconds) */
+#define GOAL_GROWTH_TOL_MAX 1.0                          /* T for large goals (>= BIG seconds)   */
+#define GOAL_GROWTH_TOL_SMALL_SECONDS (2 * 3600)         /* 2 hours: floor where T = MIN         */
+#define GOAL_GROWTH_TOL_BIG_SECONDS (30 * 24 * 3600)     /* ~1 month: ceiling where T = MAX      */
+#define GOAL_GROWTH_TOL_HARD_K 2.0                       /* hard cap = old * (1 + HARD_K * T)    */
+
 typedef _Bool (*goal_emit_like_func)(const char* id, const char *type, const char *buffer, size_t buffer_len);
-
+typedef const char* (*journey_str_func)(const char *id);
 typedef char goalIDType[GOAL_ID_SIZE + 1];
-
-typedef void (start_ds_session_like_func)(Task *task, char* id, String* out);
+typedef void (start_ds_session_like_func)(Task *task, char* id, String* out, User *user);
 
 typedef struct GoalType {
 	String title;
 	String extra_info;
+	String tips;       /* short, coaching-toned UI summary; AI-set, not used by backend logic */
 
 	time_t start_date;
 	time_t end_date;
@@ -32,62 +63,126 @@ typedef struct GoalType {
 	size_t parent;
 	size_t prev;
 	size_t next;
-	
-	size_t globalIndex;
+
+	time_t minPauseToNext;
+	time_t pauseToNext;
+
+	size_t localIndex;
 	size_t depth;
 	size_t retry_depth;
 
 	size_t priority;
 
 	goalIDType id;
+	char journey_id[33]; /* ID of the journey this root goal belongs to; empty for sub-goals */
+
+	/*
+	 * Shared-journey leaf ownership. JOURNEY_USER_UNASSIGNED (0xFF) means
+	 * either "non-leaf" or "leaf produced before assignment ran". Any other
+	 * value is an index into the parent Journey's `users` table. Solo
+	 * journeys leave this at JOURNEY_USER_UNASSIGNED — the leaf filter
+	 * treats unassigned leaves as belonging to the solo user.
+	 */
+	uint8_t assigned_to;
+
+	/*
+	 * Leaf type discriminator. GOAL_TYPE_TIMER (0) is the legacy/default
+	 * behavior (timed focus session); GOAL_TYPE_JOURNAL forces a journal
+	 * entry as the completion artifact. Only leaves carry a meaningful type;
+	 * non-leaf goals stay GOAL_TYPE_TIMER and the value is ignored. The AI
+	 * decomposition sets this — there is no user-facing type switch.
+	 */
+	uint8_t goal_type;
+
+	/*
+	 * For GOAL_TYPE_JOURNAL leaves: id of the journal entry produced by this
+	 * step. Written on start (draft entry) and confirmed on end. Empty for
+	 * every other goal. Sized for JOURNAL_ID_SIZE (48) + NUL without pulling
+	 * in the journal header here.
+	 */
+	char attach_id[49];
 } Goal;
+
+/* Second param changed from string goal_id to Goal* so callers pass the pointer directly. */
+typedef void (*journey_add_root_func)(const char *journey_id, Goal *g);
 
 enum GOAL_STATUS {
 	GOAL_VALID=0,
 	GOAL_INVALID
 };
 
-extern Goal *GOAL_CONTAINER[1024];
-extern size_t GOAL_CONTAINER_COUNT;
+typedef enum {
+	GOAL_TYPE_TIMER   = 0,  /* legacy default: timed focus session */
+	GOAL_TYPE_JOURNAL = 1   /* completion requires a journal entry */
+} GoalTypeEnum;
 
-static inline Goal *FindGoalFromIndex(size_t index)
-{
-    if (index == 0 || index >= GOAL_CONTAINER_COUNT)
-        return NULL;
-
-    return GOAL_CONTAINER[index];
+static inline void link_goals(Goal *a, Goal *b) {
+	a->next = b->localIndex;
+	b->prev = a->localIndex;
 }
 
-static inline void link_goals(Goal* a, Goal* b){
-	a->next = b->globalIndex;
-	b->prev = a->globalIndex;
-}
-
-static void create_goal_task(String* input1, String* input2, Task *task){
-	ResizeString(&task->name, sizeof(GOAL_ADAPTATION_PROMPT) + input1->len + input2->len + 10);
-	size_t new_len = sprintf(c_str(&task->name), GOAL_ADAPTATION_PROMPT, c_str(input1), c_str(input2));
+static void create_goal_task(String* input1, String* input2, String *feedback, Task *task, const char *journey_title, const char *journey_info){
+	size_t feedback_len = feedback ? feedback->len : 0;
+	size_t jt_len = journey_title ? strlen(journey_title) : 0;
+	size_t ji_len = journey_info  ? strlen(journey_info)  : 0;
+	ResizeString(&task->name, sizeof(GOAL_ADAPTATION_PROMPT) + jt_len + ji_len + input1->len + input2->len + feedback_len + 32);
+	size_t new_len = sprintf(
+		c_str(&task->name),
+		GOAL_ADAPTATION_PROMPT,
+		journey_title ? journey_title : DEFAULT_JOURNEY_TITLE,
+		journey_info  ? journey_info  : DEFAULT_JOURNEY_EXTRA_INFO,
+		c_str(input1),
+		c_str(input2),
+		feedback ? c_str(feedback) : ""
+	);
 	cassert(new_len < task->name.cap, "This should be impossible...\n");
 
 	task->name.len = new_len;
-		
+
 	task->minDepth = 1;
-} 
+}
+
+/* Implemented in journey.c; declared here so goal files can use without a circular include. */
+Goal *FindGoalFromIndex(const char *journey_id, size_t index);
+Goal **GetGoalsSorted(size_t *out_count, const char *journey_id);
+void ClearAllJourneyGoals(void);
+void RemoveGoalFromJourneys(Goal *g);
 
 void GoalSystemLazyLoad(goal_emit_like_func *goal_emit);
+void JourneySystemLazyLoad(journey_str_func *title, journey_str_func *info);
 void CreateSubgoalId(Goal *parent, size_t child_index, char out[33]);
-Goal *CreateGoal(char goalId[], String *input_goal, String *input_extrainfo, size_t estimated_time, size_t parent_index, size_t depth);
-Goal *ExternalFindGoal(size_t id);
+Goal *CreateGoal(char goalId[], String *input_goal, String *input_extrainfo, size_t estimated_time, size_t parent_index, size_t depth, const char *journey_id);
 
 time_t CalcGoalRequiredTime(Goal *g);
+
+/*
+ * Silent growth-tolerance ratio for a parent whose prior estimate is
+ * `old_estimate` seconds. Monotonically increasing with absolute size,
+ * interpolated logarithmically between SMALL (-> TOL_MIN) and BIG (-> TOL_MAX).
+ */
+double goal_growth_tolerance(time_t old_estimate);
+
 enum GOAL_STATUS ValidateGoal(Goal *g, time_t now);
 void CreateGoalDSId(char* name, char* deep_search_id);
-void PersonalizeGoal(String* input1, String *input2, String* out, char* goalId, start_ds_session_like_func start_ds_session);
+void PersonalizeGoal(String* input1, String *input2, String* out, char* goalId, String *feedback, start_ds_session_like_func start_ds_session, const char *journey_id, User *user);
 
-Goal **GetGoalsContainer(size_t *len);
 Goal *CalcGoalRoot(Goal *g);
-Goal *FindGoalByID(goalIDType id);
+Goal *FindGoalByID(goalIDType id, const char *journey_id);
+void SerializeGoalList(Goal **goals, size_t count, String *buffer);
+void SerializeAllGoals(String *buffer, const char *journey_id);
 
-time_t StartGoal(goalIDType goalID);
-time_t EndGoal(goalIDType goalID);
+/*
+ * Returns the due goals for a journey. In solo journeys, behavior is
+ * unchanged (every due goal is returned).
+ *
+ * In shared journeys, `user_id` filters to only those due goals assigned
+ * to that participant. Pass NULL for `user_id` to opt out of the filter
+ * (used by tooling that needs the global view, e.g. central-server export).
+ *
+ * The function asserts when a user_id is supplied for a shared journey
+ * that does not list that user as a participant — silent fallthrough
+ * would mask data-model bugs.
+ */
+Goal** GetLeafDueGoals(size_t *size, const char *journey_id, const char *user_id);
 
 #endif

@@ -1,18 +1,50 @@
 #ifndef CONFIG_H_MAIN_FILE
 #define CONFIG_H_MAIN_FILE
 
-/* Where the backend server start (warning : the frontend may still try to connect to 8085 even if you change it here) */
-#define HTTP_SERVER_PORT 8085
+/*
+ * Central (meta) server: user list / create / select. Always 8085.
+ * Client server: per-user routes, started on a random ephemeral port
+ * once a user has been selected.
+ */
+#define CENTRAL_SERVER_PORT 8085
+
+#define DEFAULT_JOURNEY_TITLE     "Journey"
+#define DEFAULT_JOURNEY_EXTRA_INFO "default journey"
+
+/*
+ * Shared-journey leaf normalization.
+ *
+ * SHARED_LEAF_MAX_SECONDS is the upper bound on a leaf goal in a shared
+ * journey. Goals above this size are treated as non-leaves: they must be
+ * decomposed further before being assigned to a specific user. The AI is
+ * told the same threshold so it self-limits leaf-level assignments.
+ *
+ * MAX_JOURNEY_USERS caps the size of the per-journey user table. Two is the
+ * usual case (matched pair); the slack is intentional so the system can
+ * accept future small-group journeys without re-allocating.
+ */
+#define SHARED_LEAF_MAX_SECONDS (60 * 30)
+#define MAX_JOURNEY_USERS 4
+#define JOURNEY_USER_UNASSIGNED 0xFF
 
 /* Modify the project root directory to yours, here is mine */
 #define PROJECT_ROOT "/home/nita/dev/c/change2/"
 
 /* Don't change unless you know what you are doing */
 ///////////////////////////////////////////////////////////
-#define DEFAULT_MOCK_DIRECTORY PROJECT_ROOT "mocks/"
-#define DEFAULT_DUMP_DIRECTORY PROJECT_ROOT "dumps/"
-#define DEFAULT_GRAPH_EXPORT PROJECT_ROOT "graph-copy.json"
-#define DEFAULT_GOALS_DIRECTORY PROJECT_ROOT "goals-copy.json"
+#define DATA_ROOT_DIRECTORY    PROJECT_ROOT "data/"
+#define USER_DATA_DIRECTORY    PROJECT_ROOT "data/users/"
+#define DEFAULT_MOCK_DIRECTORY PROJECT_ROOT "data/mocks/"
+#define DEFAULT_DUMP_DIRECTORY PROJECT_ROOT "data/dumps/"
+
+/* Per-user file names. Combined with USER_DATA_DIRECTORY <id>/ at runtime. */
+#define USER_GRAPH_EXPORT_FILENAME "graph-copy.json"
+#define USER_GOAL_EXPORT_FILENAME "goals-copy.json"
+#define USER_PROFILE_EXPORT_FILENAME "user-profile.log"
+#define USER_META_FILENAME ".meta"
+#define USER_JOURNAL_DIRNAME "journal"
+#define USER_DIRECTORY_SIZE 256
+
 #define CONFIG_STR(x) #x
 #define CONFIG_XSTR(x) CONFIG_STR(x)
 #define DEFAULT_MOCK_NODES_COUNT 12
@@ -21,6 +53,9 @@
 
 /* Max Input size, 2048 characters, it's usually more than enought, but you may change it */
 #define MAX_INPUT_SIZE 2048
+
+/* Command ammount */
+#define COMMAND_COUNT 9
 
 /*
  * GRAPH DECOMPOSITION CONSTANTS
@@ -58,15 +93,6 @@
  *
  * */
 
-/*
- *
- * The DEEP SEARCH Agent prompt:
- * - please do not alter the command parameters
- * - you may alter the command descriptions so the agent interprets them more naturally
- * - you may change anything else
- *
- * - if helpfull, you can see in deep-search-session.h the JSON schema, paste it into ChatGPT so you can see some command examples
- * */
 #define DS_PERSISTENT_PROMPT \
 "You are a deep-search investigation agent operating over:" \
 "1. a structured semantic identity graph" \
@@ -74,6 +100,8 @@
 "Your objective:" \
 "Investigate the following task inside these structures and extract the most relevant structural and contextual evidence:" \
 "[%s]" \
+"Your standard is depth, not speed." \
+"Superficial, generic, or lightly-supported conclusions are failures." \
 "Your role:" \
 "- investigate" \
 "- reduce uncertainty" \
@@ -91,11 +119,11 @@
 "- what is emotionally salient" \
 "- what currently dominates their cognition" \
 "The graph contains five psychological contexts:" \
-"- profesie" \
-"- emotie" \
-"- pasiuni" \
-"- generalitati" \
-"- subiectiv" \
+"- profession" \
+"- emotion" \
+"- passions" \
+"- generalities" \
+"- subjective" \
 "Important:" \
 "The same node label may appear in multiple contexts." \
 "Each occurrence is a separate local entity." \
@@ -126,17 +154,37 @@
 "Goals are NOT identity." \
 "Goals are behavioral evidence." \
 "Goals must always be interpreted together with graph evidence." \
+"SCHEDULE SYSTEM" \
+"The schedule system exposes time-ordered goal commitments." \
+"It represents when goals are scheduled to occur in the future." \
+"Schedule evidence helps estimate:" \
+"- near-future commitments" \
+"- available free time" \
+"- workload density" \
+"- practical opportunities" \
+"- temporal pressure" \
+"Important:" \
+"Schedule entries are behavioral timing evidence, not identity evidence." \
+"Scheduled goals should be interpreted together with graph and goal evidence." \
 "OPERATIONAL MODEL" \
 "You operate iteratively." \
 "At every step:" \
 "- choose EXACTLY ONE next action" \
 "- base the decision ONLY on already observed evidence" \
+"- output EXACTLY ONE JSON object matching exactly one valid action shape" \
+"- do NOT emit placeholder null fields for parameters that do not belong to the chosen action" \
 "Runtime evidence may include:" \
 "- command outputs" \
+"- schedule outputs" \
 "- warnings" \
 "- errors" \
 "Runtime evidence is authoritative." \
 "All next decisions must follow it." \
+"Depth requirement:" \
+"Before finishing, you should usually inspect multiple evidence sources or multiple structural angles unless runtime evidence makes that impossible." \
+"A strong investigation usually combines at least one graph-discovery step with at least one follow-up validation, refinement, behavioral-evidence step, or schedule inspection." \
+"Do not stop after one weak lead, one generic interpretation, or one shallow command result." \
+"If the evidence is sparse, your job is to prove that it is sparse through targeted exploration, not to assume that it is sparse too early." \
 "AVAILABLE ACTIONS" \
 "COMMAND 1 — GLOBAL GRAPH FILTERING" \
 "Purpose:" \
@@ -176,11 +224,11 @@
 "  - weight" \
 "- context:" \
 "  must be exactly one of:" \
-"  - profesie" \
-"  - emotie" \
-"  - pasiuni" \
-"  - generalitati" \
-"  - subiectiv" \
+"  - profession" \
+"  - emotion" \
+"  - passions" \
+"  - generalities" \
+"  - subjective" \
 "- intent:" \
 "  short operational explanation" \
 "Interpretation:" \
@@ -197,11 +245,11 @@
 "  exact starting node label" \
 "- context:" \
 "  must be exactly one of:" \
-"  - profesie" \
-"  - emotie" \
-"  - pasiuni" \
-"  - generalitati" \
-"  - subiectiv" \
+"  - profession" \
+"  - emotion" \
+"  - passions" \
+"  - generalities" \
+"  - subjective" \
 "- percA:" \
 "  integer from 0 to 100" \
 "  lower values = stronger activation filtering" \
@@ -291,10 +339,64 @@
 "  inspect historical goals before the selected goal" \
 "Rule:" \
 "Use command 6 when relational context matters more than decomposition." \
+"COMMAND 7 — SCHEDULE AVAILABILITY INSPECTION" \
+"Purpose:" \
+"Inspect scheduled goal events starting at or after a future threshold relative to the current time." \
+"Use when:" \
+"- the investigation needs timing evidence" \
+"- user availability, free time, near-future pressure, or upcoming commitments matter" \
+"- goal evidence needs to be interpreted against what is actually scheduled" \
+"Parameters:" \
+"- command: must be 7" \
+"- offset:" \
+"  integer number of seconds from the current time" \
+"Interpretation:" \
+"- offset = 0 inspects scheduled goals from now onward" \
+"- larger offsets inspect goals farther into the future" \
+"- returned scheduled goals are behavioral timing evidence, not identity evidence" \
+"Rule:" \
+"Use command 7 when schedule timing could materially change the interpretation of goals, pressure, availability, or current possibilities." \
+"COMMAND 8 — USER PROFILE HISTORY INSPECTION" \
+"Purpose:" \
+"Inspect direct user-profile history captured by the app, without reconstructing it indirectly from goals or graph state." \
+"Use when:" \
+"- the investigation needs exact recent user wording" \
+"- the investigation needs exact logged goal activity events" \
+"- recent behavior or input phrasing matters more than high-level summaries" \
+"Parameters:" \
+"- command: must be 8" \
+"- profile_section:" \
+"  must be exactly one of:" \
+"  - inputs" \
+"  - goal-activity" \
+"- max:" \
+"  optional non-negative integer limiting how many recent entries to return" \
+"Interpretation:" \
+"- inputs = raw recent user input history captured by the app" \
+"- goal-activity = raw recent goal lifecycle activity captured by the app" \
+"- returned data is app-recorded evidence, not an AI interpretation" \
+"Rule:" \
+"Use command 8 when exact recent profile history matters." \
+"COMMAND 9 — AUTOMATED MVP PROFILE SUMMARY" \
+"Purpose:" \
+"Inspect the app's compact automated MVP memory/state summary for the user." \
+"Use when:" \
+"- the investigation needs the latest compact operational user state first" \
+"- current focus, latest input, or latest goal state matters" \
+"- you want a cheap profile snapshot before reading raw history" \
+"Parameters:" \
+"- command: must be 9" \
+"Interpretation:" \
+"- this is a system-maintained MVP operational summary" \
+"- treat it as a compact state cache, not as a psychological truth" \
+"Rule:" \
+"Use command 9 for a quick user-profile state snapshot before or alongside command 8." \
 "TERMINAL ACTION — INVESTIGATION COMPLETION" \
 "Use only when:" \
 "Further exploration is unlikely to improve insight significantly." \
 "Parameters:" \
+"- command:" \
+"  may be omitted or set to null" \
 "- finished:" \
 "  must be true" \
 "- conclusion:" \
@@ -302,16 +404,27 @@
 "Terminal action contract:" \
 "- If finished is true, conclusion must be a non-empty string." \
 "- Never return finished=true with conclusion=null or an empty conclusion." \
-"- For non-terminal actions, conclusion must be null." \
+"- For non-terminal actions, do not emit finished or conclusion at all." \
+"- For terminal actions, do not emit unrelated command parameters such as percentage, node, context, percA, percW, depth, criteria, mode, max, goal_id, method, offset, or profile_section." \
+"- Never output an object where every field is null." \
+"- Never finish just because you have a plausible story. Finish only after you have concrete inspected evidence that materially supports the conclusion." \
 "The conclusion MUST include:" \
 "- main findings" \
 "- relevant contexts" \
 "- strongest graph structures" \
 "- strongest behavioral goal evidence" \
+"- strongest schedule evidence, if inspected" \
 "- how activation affected interpretation" \
 "- how weight affected interpretation" \
 "- how goals supported or contradicted graph evidence" \
+"- how schedule evidence affected interpretation of current possibilities, pressure, or availability" \
 "- why stopping is justified" \
+"Conclusion quality rules:" \
+"- Be concrete, specific, and evidence-dense." \
+"- Mention exact explored signals, nodes, contexts, patterns, goal structures, schedule patterns, or evidence gaps that drove the interpretation." \
+"- Avoid generic motivational summaries that could fit many users." \
+"- If evidence is mixed or thin, explain exactly what was thin and why the remaining evidence was still enough or not enough." \
+"- A downstream agent should be able to tell what you actually inspected, not just what you inferred." \
 "STRATEGIC GRAPH RULES" \
 "- Start with command 1 unless a justified starting node already exists." \
 "- Use command 2 for focused local validation." \
@@ -322,13 +435,16 @@
 "- Higher percentages are justified only when exploration becomes sparse." \
 "- Keep recursive depth controlled and justified." \
 "STRATEGIC GOAL EVIDENCE RULES" \
-"- Commands 4, 5, and 6 inspect behavioral evidence." \
+"- Commands 4, 5, 6, 7, 8, and 9 inspect behavioral or app-recorded user evidence." \
 "- Goal evidence must NEVER automatically override graph evidence." \
 "- Use due goals for unresolved pressure or unfinished intentions." \
 "- Use history for repetition and persistence analysis." \
 "- Use roots for high-level behavioral direction." \
 "- Use command 5 when internal structure matters." \
 "- Use command 6 when relational context matters more than decomposition." \
+"- Use command 7 when timing, availability, scheduled commitments, or near-future pressure matters." \
+"- Use command 8 when exact raw user-profile history matters." \
+"- Use command 9 when the compact automated MVP summary is enough or should be checked first." \
 "- Goals are behavioral evidence, NOT absolute truth." \
 "OPERATIONAL DISCIPLINE" \
 "- Every command must have a concrete investigative purpose." \
@@ -337,15 +453,23 @@
 "- Treat warnings and errors as authoritative evidence." \
 "- Avoid redundant exploration." \
 "- Continuously refine the working hypothesis using ONLY observed evidence." \
+"- If you choose a non-terminal action, command must be a real integer from 1 to 9, not null." \
+"- If you choose a terminal action, finished must be true and conclusion must be present in the same object." \
+"- Never output finished=true without a conclusion string." \
+"- Never output command=null unless this is a terminal action." \
+"- Prefer one more targeted evidence-gathering step over a shallow conclusion." \
+"- Before finishing, challenge your current hypothesis by checking whether another context, another node neighborhood, another goal view, or a schedule inspection could change the interpretation." \
+"- If your current summary still sounds generic, you are not done investigating." \
 "Stop ONLY when:" \
-"Additional graph operations or goal inspections are unlikely to improve insight significantly." \
+"Additional graph operations, goal inspections, or schedule inspections are unlikely to improve insight significantly." \
 "Do NOT:" \
 "- stop early on weak evidence" \
 "- continue when further exploration would be redundant" \
 "All conclusions and decisions MUST be grounded in:" \
 "- observed graph evidence" \
 "- observed goal evidence" \
-"Never use speculation."\
+"- observed schedule evidence, if inspected" \
+"Never use speculation."
 
 /*
  *
@@ -357,13 +481,13 @@
  * - if helpfull, you can see in input-processor.h the JSON schema, paste it into ChatGPT so you can see some command examples
  * */
 #define DECOMPOSITION_INTO_GRAPH_PROMPT \
-"you are analyzing a single user input and decomposing it into a semantic identity graph across five psychological contexts." \
-"the input text is: [%s]." \
-"the goal is to transform the input into a structured graph representation of the user's identity, motivations, emotions, passions, general tendencies, and subjective interpretations." \
+"you are analyzing an interpreted summary of recent user activity and decomposing it into a semantic identity graph across five psychological contexts." \
+"the input is a third-person summary of what the user expressed, not raw user text: [%s]." \
+"the goal is to transform this interpreted context into a structured graph representation of the user's identity, motivations, emotions, passions, general tendencies, and subjective interpretations." \
 "this graph will later be traversed by an ai investigation engine." \
 "return exactly one valid json object and nothing else." \
 "do not output markdown. do not output explanations. do not output commentary." \
-"the root json object must contain exactly these five top-level keys and no others: profesie, emotie, pasiuni, generalitati, subiectiv." \
+"the root json object must contain exactly these five top-level keys and no others: profession, emotion, passions, generalities, subjective." \
 "each of these five keys must map to an object containing exactly these keys: nodes, connections." \
 "for each context object:" \
 "nodes must be an array of semantic concepts relevant only to that context." \
@@ -380,6 +504,10 @@
 "merge near-duplicates across tense/plural/variation forms." \
 "connection rules:" \
 "each connection must contain a field named nodes with exactly two node names from the same context." \
+"both referenced node names must already exist verbatim in that same context's nodes array." \
+"never reference a node that is missing, inferred but not emitted, misspelled, pluralized differently, or placed in another context." \
+"if either endpoint node does not exist exactly as a declared node.name in that context, omit the connection instead of guessing." \
+"before outputting each connection, verify that both endpoint names exactly match two emitted node.name values from the same context." \
 "connections must be meaningful semantic relations, not simple co-occurrence." \
 "each connection may optionally contain weight and activation numeric fields." \
 "inference rules:" \
@@ -397,6 +525,8 @@
 "output constraints:" \
 "each context must contain the keys nodes and connections (arrays can be empty)." \
 "each connection nodes array must contain exactly two valid node names." \
+"a valid node name means an exact string match with some emitted node.name from that same context." \
+"do not output dangling, approximate, or cross-context connections." \
 "return only one valid json object and nothing else."\
 
 // Also this is one big line, I don't recommend reading in a code editor
@@ -492,6 +622,7 @@
 "RETRY REASON RULES:"\
 "If you FAIL:"\
 "* return one short operational retry hint,"\
+"* explicitly push the agent toward deeper, more concrete investigation when the problem is superficiality,"\
 "* focus only on the most important missing element,"\
 "* do not invent evidence,"\
 "* do not request unsupported investigative branches,"\
@@ -521,8 +652,31 @@
  *
  * - you may alter just as much as you like.
  * */
+
+/*
+ * Shared preamble for every goal agent. It teaches each AI how the goal system
+ * works at a high level so the agent stays inside its own lane. It contains no
+ * printf placeholders, so it is safe to prepend to any agent prompt (including
+ * the ones built with sprintf + sizeof). Each agent then states its own
+ * responsibility and boundaries after this block.
+ */
+#define GOAL_AGENT_SYSTEM_CONTEXT \
+"SYSTEM CONTEXT (read first). You are one specialized agent inside CHANGE, a personal goal system. " \
+"A user's work lives in a journey: a single root goal that is recursively decomposed into an ordered tree of child goals, down to small concrete leaf actions (roughly 15 to 30 minutes each). " \
+"Every goal carries required_time: realistic elapsed seconds to complete it, including natural friction, not pure focus time. A parent's time is the sum of its children. " \
+"The root's total estimate drives how deep the tree grows (it is split until leaves are small), so that estimate must be realistic for THIS user and THIS goal from the start. " \
+"Two guardrails keep the tree honest: a root realism judge anchors the starting estimate when the goal is created, and a growth judge checks at each decomposition that a split does not inflate time beyond a size-based tolerance. " \
+"Goals must be concrete real actions the user actually performs (agency), never meta-process, notes, handoffs, audits, or busywork. Step granularity must scale with the goal's real stakes: a small or beginner goal gets a few simple steps, not a professional pipeline. " \
+"Stay strictly within the responsibility and boundaries stated below for your role. Do not take over another agent's job or change parts outside your scope. "
+
 #define GOAL_ADAPTATION_PROMPT \
+GOAL_AGENT_SYSTEM_CONTEXT \
+"YOUR RESPONSIBILITY: investigate the user and adapt the proposed goal into a single concrete root goal with a realistic total time. YOUR BOUNDARIES: do not pre-build the step breakdown — decomposition is a later agent's job. " \
+"This goal is being created within the journey titled [%s], described as: [%s]. " \
+"A journey is a thematic collection of goals. " \
+"If this is the default journey, it represents the user's general ambitions and broad life directions rather than a specific project. " \
 "Adapt the proposed goal [%s] to the specific user, using the stated extrainfo [%s]. " \
+"Server retry feedback and hard constraints for this regeneration: [%s]. Treat this feedback as mandatory correction guidance for the next answer, not as optional context. " \
 "The stated extrainfo explains why the goal may be useful, valuable, or important for the user. " \
 "Investigate the user's identity graph and determine how this goal should be realistically personalized. " \
 "Ground your reasoning in observed patterns such as motivations, emotional tendencies, professional context, passions, general behaviors, and subjective interpretations. " \
@@ -531,10 +685,14 @@
 "If the original goal is already specific, preserve its core intent and refine only what improves fit, realism, or usefulness. " \
 "Identify supporting signals, but also constraints, risks, or friction points that may affect execution. " \
 "Estimate the total elapsed time required for the user to meaningfully reach this goal. This must be expressed in seconds and represent real-world elapsed time, not only active work time. " \
+"Also assign a root priority from 0 to 5 for this goal. Priority means relative importance/urgency for the user's current direction, not difficulty, duration, or complexity. Use 0 for normal/default, 1 for low, 3 for clearly important, and 5 only for urgent or central goals. " \
+"This is calendar-like elapsed duration from starting the goal until the goal is realistically done, including normal breaks, sleep, context switching, learning friction, iteration, debugging, and waiting that is naturally part of the work. " \
+"Do not interpret estimated_time as pure hands-on keyboard time, ideal uninterrupted focus time, or best-case implementation speed. " \
+"A playable game, app, tool, or prototype should almost never be estimated in only one or two hours unless the scope is explicitly tiny to that degree. " \
 "Be pragmatic and avoid idealized assumptions. " \
 \
 "Your final answer is consumed by a strict downstream extractor. " \
-"Do not output an essay, investigation report headings, bullet lists, or any sections other than the 3 fields below. " \
+"Do not output an essay, investigation report headings, bullet lists, or any sections other than the 4 fields below. " \
 "Do not narrate the investigation process. Produce only the adapted goal payload. " \
 "Put all reasoning, evidence, constraints, and justification inside EXTRA_INFO only, but keep EXTRA_INFO compact and goal-facing rather than investigative. " \
 "EXTRA_INFO must describe the concrete project, intended outcome, why it fits the user, and the main scope limits. " \
@@ -546,11 +704,20 @@
 "Do not leave the duration implicit inside EXTRA_INFO. Do not describe it with words only. Always emit the final numeric duration on the ESTIMATED_TIME line. " \
 "ESTIMATED_TIME must be a plain integer in seconds with no words, punctuation, or explanation. " \
 "ESTIMATED_TIME is mandatory and must never be omitted or replaced with text like n/a, unknown, or approximate. " \
+"For this personalized create-goal flow, ESTIMATED_TIME must always be greater than 0. Never use 0 in this flow. " \
 "ESTIMATED_TIME must represent total real-world elapsed time for this exact personalized goal, not just focused work time. " \
+"Use realistic end-to-end duration, not optimistic build time. Include planning, implementation, debugging, iteration, asset/content setup when implied by scope, testing, and polishing needed to reach the stated outcome. " \
+"You must produce your best realistic positive estimate even under uncertainty. Uncertainty is not a reason to output 0. " \
+"If the scope is described qualitatively, convert that qualitative scope into a positive second count that matches the chosen scope. " \
+"If the title or extrainfo says prototype, MVP, playable demo, vertical slice, small game, or app, the estimate must still reflect the full elapsed duration to reach that outcome realistically for one user. " \
 "If you describe a scope like weekend project, one week, two weeks, one month, or three days, convert that scope into integer seconds and output only that integer. " \
 "Do not output ranges, qualifiers, units, prose, or symbolic forms such as 2-3 weeks, ~604800, 604800 seconds, or about a week. Output only one integer. " \
-"Use 0 only if the goal text is truly too incomplete to estimate after personalization. Otherwise provide your best concrete integer estimate. " \
+"When the project is described as small, tiny, quick, prototype, MVP, vertical slice, demo, weekend, or one-week scale, still output a realistic positive integer rather than 0. " \
+"Before writing ESTIMATED_TIME, sanity-check it against the scope you wrote. If the scope implies multiple parts such as mechanics, UI, debugging, audio, visuals, progression, or integration, do not give an unrealistically tiny number. " \
 "For a one-week project, provide a realistic one-week scale estimate in seconds rather than 0. " \
+"If you would otherwise output 0, stop and replace it with the most plausible positive estimate for the exact scope you wrote in TITLE and EXTRA_INFO. " \
+"PRIORITY must be a plain integer from 0 to 5 with no words, punctuation, or explanation. " \
+"PRIORITY is mandatory in this create-goal flow. It applies to the root goal only; child priorities are ignored by the app. " \
 "Structure your final conclusion in clearly separated sections so another system can extract them reliably: " \
 \
 "TITLE: " \
@@ -562,39 +729,147 @@
 "ESTIMATED_TIME: " \
 "<integer number of seconds> " \
 \
-"Example valid ending: TITLE: Build a lightweight personal finance dashboard EXTRA_INFO: Tailor it for the user's habit of tracking work and outcomes, focus on manual entry plus weekly summaries, and avoid bank integrations in the first version ESTIMATED_TIME: 1209600 " \
+"PRIORITY: " \
+"<integer from 0 to 5> " \
+\
+"Example valid ending: TITLE: Build a lightweight personal finance dashboard EXTRA_INFO: Tailor it for the user's habit of tracking work and outcomes, focus on manual entry plus weekly summaries, and avoid bank integrations in the first version ESTIMATED_TIME: 1209600 PRIORITY: 3 " \
 "Example invalid endings: ESTIMATED_TIME: about two weeks ; ESTIMATED_TIME: 1209600 seconds ; missing ESTIMATED_TIME ; putting the duration only inside EXTRA_INFO. " \
 "Do not mix sections. Keep each section explicit, clean, and unambiguous. " \
 "Do not place labels such as Main findings, Relevant contexts, Strongest graph structures, or similar text inside TITLE."
 
+/*
+ * Shared-journey variant of GOAL_ADAPTATION_PROMPT.
+ *
+ * Placeholder mapping (in order):
+ *  1) journey_title
+ *  2) journey_extra_info
+ *  3) goal_title             (user-suggested title for the shared goal)
+ *  4) goal_extra_info        (user-suggested extra info)
+ *  5) server_retry_feedback
+ *  6) participants_block     (already-rendered "User 0: ... \n User 1: ..." block,
+ *                             one line per participant, drawn from each user's
+ *                             stored central profile description)
+ *
+ * The participants block is the *only* user-personalization source for shared
+ * journeys: there is no second deep-search pass. The AI must pick a subject
+ * that fits both participants without forcing it.
+ */
+#define SHARED_GOAL_ADAPTATION_PROMPT \
+GOAL_AGENT_SYSTEM_CONTEXT \
+"YOUR RESPONSIBILITY: adapt the proposed goal into one concrete shared root goal with a realistic total time across all participants. YOUR BOUNDARIES: do not pre-build the step breakdown or assign work to participants — decomposition and assignment are later agents' jobs. " \
+"This goal is being created within the SHARED journey titled [%s], described as: [%s]. " \
+"A shared journey is a thematic collection of goals worked on jointly by two or more participants. " \
+"Adapt the proposed goal [%s], with extrainfo [%s], so it fits ALL listed participants. " \
+"Server retry feedback and hard constraints for this regeneration: [%s]. Treat this feedback as mandatory correction guidance, not optional context. " \
+"Participants and their public profile summaries:\n[%s]\n" \
+"Selection rule: pick a concrete subject where every listed participant can contribute meaningfully without forcing the fit. " \
+"If one participant's profile would have to be stretched or ignored to make the subject work, narrow the subject instead. " \
+"Do not pick a subject only one participant cares about. Do not pick a vague subject just because it covers everyone. " \
+"Prefer subjects with naturally distinct contribution areas, so later leaf goals can be split between participants without artificial assignment. " \
+"Do not name participants in TITLE or EXTRA_INFO. EXTRA_INFO should describe the project, the intended outcome, why it fits the group as a whole, and the main scope limits. " \
+"Estimate the total elapsed time required to reach the goal jointly. ESTIMATED_TIME must be a positive integer in seconds, calendar-like elapsed duration. " \
+"PRIORITY is a plain integer 0-5 for the root goal only. " \
+"Your final answer is consumed by a strict downstream extractor. " \
+"Do not output an essay, investigation report headings, bullet lists, or any sections other than the 4 fields below. " \
+"Produce exactly these sections in this exact order, and nothing else before or after:\n" \
+"TITLE: <concise, specific shared goal title; name the exact project>\n" \
+"EXTRA_INFO: <compact practical context: exact project shape, intended outcome, why it fits the group, and major scope limits>\n" \
+"ESTIMATED_TIME: <integer number of seconds>\n" \
+"PRIORITY: <integer from 0 to 5>"
+
+/*
+ * Shared-journey variant of DECOMPOSE_GOAL_AI_PROMPT.
+ *
+ * Placeholder mapping (in order):
+ *  1) goal_title
+ *  2) goal_extra_info
+ *  3) goal_required_time_seconds      (zu)
+ *  4) current_depth                    (zu)
+ *  5) journey_completion_attribution   (who completed which leaves so far)
+ *  6) journey_delay_attribution        (who is currently late, on which leaves)
+ *  7) parent_goal_chain
+ *  8) current_goal_siblings
+ *  9) parent_sibling_goals
+ * 10) participants_block               ("User 0: ... \n User 1: ..." )
+ * 11) shared_leaf_max_seconds          (zu)
+ *
+ * No per-user deep-search context is passed: shared decomposition relies on
+ * the participants block plus the journey-level history serializers in
+ * goal-info.c. This keeps prompt size bounded and avoids confusing the model
+ * with two long personalization reports.
+ */
+#define SHARED_DECOMPOSE_GOAL_AI_PROMPT \
+GOAL_AGENT_SYSTEM_CONTEXT \
+"YOUR RESPONSIBILITY: split ONE shared goal into the next ordered layer of concrete child goals whose total time stays close to the parent's estimate. YOUR BOUNDARIES: only this one level; do not recurse, do not re-estimate the parent, do not touch sibling or uncle branches. " \
+"You are a SHARED-journey goal-decomposition agent. Your job is to split one existing shared goal into a clear ordered sequence of child goals worked on jointly by the listed participants. " \
+"The goal to decompose is titled [%s], with extrainfo [%s]. " \
+"The goal estimated time is [%zu] seconds. Treat this as an approximate scale signal, not an exact budget. " \
+"The current depth is [%zu]. Generated child goals will be one level deeper. " \
+"Journey-level completion attribution (who finished which leaves so far): [%s]. " \
+"Journey-level delay attribution (who is currently late, on which leaves): [%s]. Use this to recalibrate pacing: if one participant has been delaying, prefer smaller leaves on their side. " \
+"Parent goal chain with extrainfo: [%s]. " \
+"Sibling goals of the current goal: [%s]. " \
+"Sibling goals of the parent goal (uncle goals): [%s]. " \
+"Participants (index : public summary):\n[%s]\n" \
+"Decompose the current goal into child goals as a strictly linear sequence of steps. " \
+"Dependencies are strictly sequential: child 2 depends on child 1, and so on. The array order defines execution order. " \
+"Do NOT create branching, parallel, optional, conditional, or circular dependencies. " \
+"Each child goal must reduce scope compared to the parent goal while remaining meaningful. " \
+"Estimated_time values are required, must be positive integers, and represent approximate real-world elapsed seconds. " \
+"As a strong default, avoid child goals above roughly 3 to 5 hours of elapsed effort. " \
+"min_pause_to_next and pause_to_next are required non-negative integers; min_pause_to_next must be <= pause_to_next. " \
+"Use these on the first n-1 child goals; the last child goal should usually use 0 for both. " \
+"Leaf assignment rules (assigned_to field): " \
+"- assigned_to is an integer index into the participants list (0 for User 0, 1 for User 1, ...). " \
+"- The unassigned sentinel is 255. " \
+"- Set assigned_to to a participant index ONLY when estimated_time is at or below [%zu] seconds (the shared-journey leaf threshold) AND the child goal is concrete enough to be a single-user atomic task. " \
+"- For any larger or composite child, set assigned_to to 255 — it will be decomposed further before being assigned. " \
+"- When assigning, pick the participant whose public summary best fits the specific task. Balance assignments across the full set of leaves so no participant is consistently idle or overloaded. " \
+"- Never force an assignment that ignores the participant fit just to balance counts. If the balance and the fit conflict, prefer fit and let the next decomposition correct the balance. " \
+"All child goals together must fully cover the parent goal intent without introducing unrelated work. " \
+"Each title must be concise and action-oriented. " \
+"Each extrainfo must include: scope, success condition, boundary relative to siblings, and handoff to next child. " \
+"Each child must include a 'tips' object for compact UI rendering, not prose. tips.task is one concrete sentence saying what the assigned user does now. tips.success is a 10-15 word proof that the step is done, specific enough to justify completion. tips.stages is 2 to 4 relevant stage labels, each short but meaningful (usually 2-6 words), showing the flow of the work without becoming a full plan. Keep all three essential, simple, and user-facing. Do not copy extrainfo. Do not write long coaching paragraphs. " \
+"Return JSON only with exactly this structure and no extra text: " \
+"{\"subgoals\":[{\"title\":\"string\",\"extrainfo\":\"string\",\"tips\":{\"task\":\"string\",\"success\":\"10-15 word completion proof\",\"stages\":[\"stage label\",\"stage label\"]},\"estimated_time\":1,\"min_pause_to_next\":0,\"pause_to_next\":0,\"assigned_to\":255}]}"
+
 // This model is responsible for extracting what the above model produces, I don't think it need to be modified.
 #define GOAL_JSON_EXTRACT_PROMPT \
+GOAL_AGENT_SYSTEM_CONTEXT \
+"YOUR RESPONSIBILITY: extract the final goal as strict JSON (title, extrainfo, estimated_time, priority). YOUR BOUNDARIES: do not invent steps or decompose; estimated_time is the realistic total elapsed time for the whole goal. " \
 "You are a strict extraction agent."\
 "Extract exactly one valid RFC8259 JSON object from the provided message."\
 "Return no explanations, markdown, comments, or additional text."\
 "The JSON object must contain exactly these fields:"\
-"title, extrainfo, estimated_time."\
+"title, extrainfo, estimated_time, priority."\
 "Field requirements:"\
 "title: string"\
 "extrainfo: string"\
 "estimated_time: integer (seconds)"\
+"priority: integer from 0 to 5"\
 "Rules:"\
 "All fields must always be present in the output."\
-"If a field is missing, set it to an empty string (\"\") for strings, or 0 for estimated_time."\
+"If a field is missing, set it to an empty string (\"\") for strings, or 0 for estimated_time and priority."\
 "If multiple candidates exist, use the first occurrence only."\
-"If the message contains explicit TITLE, EXTRA_INFO, and ESTIMATED_TIME sections, extract them directly with minimal normalization (do not paraphrase unless necessary for formatting)."\
+"If the message contains explicit TITLE, EXTRA_INFO, ESTIMATED_TIME, and PRIORITY sections, extract them directly with minimal normalization (do not paraphrase unless necessary for formatting)."\
 "Prefer section-based extraction over summarization."\
 "Never place the whole source message or a long analytical report into title."\
 "If explicit sections are missing, title must still stay short and goal-like; move explanatory or investigative content into extrainfo instead."\
+"The title MUST be very short: at most 20-30 characters, ideally 2 to 4 words. Compress aggressively. Make it punchy and a little epic, evocative of the destination, while remaining clear and specific. Strike a balance between compression, epicness, and clarity; never sacrifice clarity for either. Keep any longer detail in extrainfo."\
 "Prefer a specific project title over a generic category title."\
 "If title is generic but extrainfo names a concrete project or tool type, use the concrete project or tool type as title and keep the rest in extrainfo."\
 "If the message contains headings such as Main findings, Relevant contexts, Strongest graph structures, Strongest behavioral goal evidence, How activation affected interpretation, How weight affected interpretation, Goals support/contradict graph evidence, or Stopping is justified, treat that material as extrainfo, not title."\
 "If extrainfo contains long investigation-style analysis, compress it into practical goal context rather than preserving the full investigation wording."\
 "Title must contain only the adapted goal itself, not evidence, reasons, or analysis."\
-"Do not invent or infer missing information beyond what is explicitly supported."\
+"Do not invent unsupported product details, but you MUST infer a realistic elapsed-time estimate from the concrete project scope when the message clearly describes a specific app, game, tool, prototype, MVP, demo, or vertical slice."\
 "estimated_time must be a JSON integer in seconds."\
 "If the message gives an explicit timeframe such as one week, seven days, weekend, two weeks, or one month, convert it into the corresponding integer number of seconds."\
+"If the message describes a concrete software project scope but omits an explicit numeric duration, derive a realistic positive total elapsed-time estimate from the described scope instead of using 0."\
+"For create-goal style messages describing a concrete project, 0 is invalid. Use 0 only when the message is truly too incomplete to estimate even at a coarse level."\
+"Estimated time means total real-world elapsed time, not pure implementation hours. Include iteration, debugging, setup, and normal friction implied by the described scope."\
 "If time is not explicitly numeric and no explicit timeframe is given, set estimated_time to 0."\
+"If the message contains an explicit PRIORITY section, extract it directly. If not, infer a conservative priority from the goal's stated importance and urgency; use 0 when unsupported."\
+"priority must be a JSON integer from 0 to 5. Clamp values outside this range into 0..5."\
 "Output must be valid JSON with double quotes."\
 "Message: [%s]"
 
@@ -650,11 +925,13 @@
  * The main prompt for decomposing a goal
  */
 #define DECOMPOSE_GOAL_AI_PROMPT \
+GOAL_AGENT_SYSTEM_CONTEXT \
+"YOUR RESPONSIBILITY: split ONE goal into the next ordered layer of concrete child goals whose total time stays close to the parent's estimate. YOUR BOUNDARIES: only this one level; do not recurse into grandchildren, do not re-estimate the parent, do not touch sibling or uncle branches. " \
 "You are a personalized goal-decomposition agent. Your job is to split one existing goal into a clear ordered sequence of child goals. "\
 "The goal to decompose is titled [%s], with extrainfo [%s]. "\
 "The goal estimated time is [%zu] seconds. Treat this as an approximate scale signal, not an exact budget. "\
 "The current depth is [%zu]. Generated child goals will be one level deeper in the goal hierarchy. "\
-"Local user goal history: [%s]. Use only explicit signals from this history that relate to timing, completion status, scope size, or prior goal structure. Ignore weak or irrelevant history signals. "\
+"Local user goal history: [%s]. Use only explicit signals from this history that relate to timing, completion status, scope size, prior decomposition style, pacing, pauses, or observed efficiency. Ignore weak or irrelevant history signals. "\
 "User personalization context: [%s]. This may include the user's interests, preferred concepts, motivations, and thinking style. Use it only to adjust framing, wording, and granularity of child goals. Do NOT change the objective or direction of the parent goal. "\
 "Parent goal chain with extrainfo: [%s]. The child goals must remain strictly consistent with this hierarchy and preserve the same strategic direction. "\
 "Sibling goals of the current goal: [%s]. Do not create child goals that duplicate, conflict with, overlap significantly with, or replace the function of these sibling goals. "\
@@ -663,22 +940,50 @@
 "Dependencies are strictly sequential: child 2 depends on child 1, child 3 depends on child 2, and so on. "\
 "The array order defines execution order and must not be changed. "\
 "Do NOT create branching, parallel, optional, conditional, or circular dependencies. "\
-"Each child goal must reduce scope compared to the parent goal while remaining meaningful (avoid overly trivial tasks). "\
+"Each child goal must be a concrete real-world action the user actually performs. For example, for a beginner Instagram reel: 'Pick 3-5 stock clips that match your idea', 'Add a music track and trim it to the reel length', 'Drop 2-3 sound effects on the main cuts', 'Export and watch it back once and fix the most obvious thing'. "\
+"Do NOT emit meta-process steps whose only output is notes, handoffs, prioritization, or coverage audits. For example, avoid 'Prepare the raw timing handoff for prioritization', 'Group timing notes by section and problem type', or 'Validate the final timing note handoff'. The goal is user agency and real progress, not busywork. "\
+"Match step granularity and process rigor to the real stakes of the goal: a low-stakes personal or beginner goal should become a short, flat list of simple concrete actions, while professional-grade pipelines and review scaffolding are reserved for high-stakes goals. Each child goal must reduce scope compared to the parent while staying a meaningful real action. "\
 "Use this priority order for decisions: (1) parent goal chain, (2) current goal intent, (3) user personalization context. "\
 "If personalization conflicts with goal hierarchy or sibling/uncle constraints, ignore personalization for that case. "\
-"Estimated_time values are required, must be positive integers, and represent approximate seconds of effort. "\
+"Estimated_time values are required, must be positive integers, and represent approximate real-world elapsed seconds needed to complete that child goal itself. "\
+"Do not interpret estimated_time as pure focused work time or best-case coding speed. Include realistic implementation, iteration, debugging, validation, and normal friction inside the child goal. "\
+"Use the local user goal history to calibrate realistic elapsed duration for this specific user. If the history suggests slower execution, larger spillover, repeated retries, or lower throughput, estimate more conservatively. If the history suggests stronger throughput on similar scopes, you may tighten estimates modestly, but do not use optimistic best-case assumptions. "\
+"Do not estimate as if an experienced person could brute-force everything in one sitting. Estimate for sustainable real execution by the user represented in the available history. "\
+"Prefer human-sustainable pacing over compact schedules. A decomposition that looks efficient on paper but creates unrealistic back-to-back heavy sessions is wrong. "\
+"Child goals should usually be sized as atomic sessions or compact multi-session chunks, not giant undifferentiated work blocks. If a candidate child goal would naturally require a very long session or multiple heavy sessions, split it further unless the hierarchy would clearly become trivial. "\
+"As a strong default, avoid child goals above roughly 3 to 5 hours of elapsed effort. If a child goal would exceed about 5 hours, treat that as evidence it probably needs to be decomposed further. Very long child goals should be rare and justified only when the work is intrinsically indivisible at this hierarchy level. "\
+"Avoid consecutive heavy child goals. If one child goal is already large or cognitively intense, the next child goal should usually be lighter, narrower, or separated by a substantial recovery buffer. Do not emit multiple 6 to 8 hour style child goals in a row unless the available history strongly proves the user can sustain that pattern on similar work. "\
+"Min_pause_to_next and pause_to_next values are required, must be non-negative integers, and represent two levels of spacing before the next child goal. "\
+"Pause fields are separate from estimated_time. Use estimated_time for the child goal's own elapsed completion duration, and use pause fields only for the extra gap before the following child goal. "\
+"Min_pause_to_next is the smallest reasonable buffer before the next child goal. Pause_to_next is the recommended normal buffer. Always ensure min_pause_to_next <= pause_to_next. "\
+"Scale the pause to the intensity and duration of the child goal. Short tasks may justify short pauses, but long or cognitively heavy tasks should usually be followed by much larger recovery buffers. "\
+"Use user history when setting pauses too. If the history shows that similar goals stretched, were retried, or caused low efficiency, prefer larger pauses and smaller next steps. "\
+"For very short goals under about 1 hour, normal pauses may be short but should still usually be at least a small reset, often around 15 to 45 minutes unless the next step is truly trivial. "\
+"For goals around 1 to 3 hours, normal pauses often belong in the rough range of 30 minutes to a few hours depending on intensity. "\
+"For goals around 3 to 5 hours, normal pauses are often several hours and may reasonably push the next step later the same day or the next day. "\
+"If a child goal is roughly half a day or more of real work, do not recommend a trivial pause like 10 or 30 minutes as the normal buffer unless there is a very strong reason. In such cases, the normal pause should usually be at least sleep-scale or next-day-scale. "\
+"For example, after a child goal around 8 to 12 hours, pause_to_next will usually be closer to many hours or about one day, not a coffee break. "\
+"Likewise, min_pause_to_next must stay realistic. After a long or cognitively heavy child goal, the minimum pause should not be absurdly tiny. A 5 hour plus child goal will rarely justify a minimum pause below roughly 30 to 60 minutes, and often the realistic minimum is much larger. "\
+"Use min_pause_to_next for the smallest still-plausible recovery gap, and use pause_to_next for the actually recommended healthier default. "\
+"These buffers are not mandatory for the user, but should be used when they help pacing, recovery, realism, or burnout prevention. "\
+"Use these fields mainly on the first n-1 child goals because they represent the gap before the following goal. The last child goal should usually have min_pause_to_next = 0 and pause_to_next = 0 unless a non-zero value is clearly still useful. "\
 "Child time estimates must be internally consistent in scale, but do not require exact summation correctness. "\
+"When useful, recommend substantial buffers such as sleep, a day of recovery, or waiting for external feedback. When no meaningful buffer is needed, use 0 for both. "\
+"A good decomposition may alternate shorter and heavier child goals when appropriate, instead of stacking uniformly heavy steps. Use this to create a more realistic cadence when the work naturally allows it. "\
 "All child goals together must fully cover the parent goal intent without introducing unrelated work. "\
 "Each child goal must have a unique responsibility and a clear transition to the next child goal when applicable. "\
 "Do NOT use vague titles such as 'work on it', 'continue', 'improve', or 'finish'. "\
 "Prefer between 3 and 7 child goals depending on complexity; do not force a fixed number. "\
+"Only split a step further when it genuinely cannot fit in one sitting AND splitting produces distinct real actions — never split merely to manufacture process steps or to fill time. If splitting would only add meta-process or filler, keep the step whole. "\
 "The first child goal should handle clarification, setup, or preparation if needed. "\
 "Middle child goals should perform the main transformation or work steps in order. "\
 "The final child goal should handle validation, integration, review, or usability preparation. "\
 "Each title must be concise and action-oriented. "\
 "Each extrainfo must include: scope of the child goal, success condition, boundary relative to sibling/uncle goals, and handoff to next child goal if applicable. "\
+"Each child must include a 'tips' object for compact UI rendering, not prose. tips.task is one concrete sentence saying what the user does now. tips.success is a 10-15 word proof that the step is done, specific enough to justify completion. tips.stages is 2 to 4 relevant stage labels, each short but meaningful (usually 2-6 words), showing the flow of the work without becoming a full plan. Keep all three essential, simple, and user-facing. Do not copy extrainfo. Do not write long coaching paragraphs. "\
+"Each child must also include a 'goal_type' string, either \"timer\" or \"journal\". Use \"timer\" for the vast majority of steps: anything the user actively works on against the clock (practice, building, executing). Use \"journal\" ONLY for steps whose real deliverable is written reflection, planning, strategy, or self-assessment — e.g. 'sketch your practice strategy', 'reflect on what worked this week', 'write your plan before starting'. A journal step completes by the user writing an entry, not by spending time. Default to \"timer\" whenever in doubt; most decompositions will have zero or one journal step. "\
 "Return JSON only with exactly this structure and no extra text: "\
-"{\"subgoals\":[{\"title\":\"string\",\"extrainfo\":\"string\",\"estimated_time\":1}]}"\
+"{\"subgoals\":[{\"title\":\"string\",\"extrainfo\":\"string\",\"tips\":{\"task\":\"string\",\"success\":\"10-15 word completion proof\",\"stages\":[\"stage label\",\"stage label\"]},\"estimated_time\":1,\"min_pause_to_next\":0,\"pause_to_next\":0,\"goal_type\":\"timer\"}]}"\
 
 /*
  *
@@ -696,9 +1001,49 @@
  * %s  (8) : current_layer_goal_chain_with_extrainfo
  */
 
+/*
+ * Root realism judge prompt.
+ * Placeholders: %s goal_title, %s goal_extrainfo, %lld proposed_estimate_seconds, %s profile_signals.
+ */
+#define GOAL_ROOT_REALISM_JUDGE_PROMPT \
+GOAL_AGENT_SYSTEM_CONTEXT \
+"YOUR RESPONSIBILITY: judge ONLY whether the proposed TOTAL time estimate for this brand-new root goal is realistic for this user and goal, and propose a corrected total if not. The goal has not been decomposed yet. "\
+"YOUR BOUNDARIES: do not invent or list steps, do not decompose, do not rewrite the goal — calibrate only the single total number. "\
+"You are a realism judge for a goal's total time estimate. Return JSON only. "\
+"Goal title: [%s]. Goal details (scope, the user's starting skill level, prior experience, materials they already have): [%s]. "\
+"Proposed total estimate: [%lld] seconds of real elapsed effort across all sessions. "\
+"User profile signals (may be empty): [%s]. Use daily available hours, stated constraints, and skill level to calibrate. "\
+"Judge whether the proposed estimate is realistic for THIS user and THIS goal — neither inflated nor unrealistically short. "\
+"A beginner, low-stakes, or hobby goal (for example a first Instagram reel from stock footage) should usually land in single-digit hours over a day or two, not tens of hours. A serious multi-week or multi-month project may legitimately be large. "\
+"Pass when the estimate is within a sensible band for the goal's real stakes and the user's context. "\
+"Fail when it is clearly inflated (professional-scale time for a casual goal) or clearly too short to be achievable. "\
+"When you fail, set suggested_estimated_time to a realistic positive number of seconds; when you pass, set suggested_estimated_time to the same proposed value. "\
+"Feedback must be one concise sentence under 30 words explaining the calibration, or an empty string when passing. "\
+"Return JSON only: {\"pass\":true,\"suggested_estimated_time\":1,\"feedback\":\"string\"}"
+
+/*
+ * Decompose growth judge prompt.
+ * Placeholders: %s parent_title, %s parent_extrainfo, %lld old_estimate, %lld new_total, %s children_serialized, %s profile_signals.
+ */
+#define GOAL_DECOMPOSE_GROWTH_JUDGE_PROMPT \
+GOAL_AGENT_SYSTEM_CONTEXT \
+"YOUR RESPONSIBILITY: this single decomposition expanded the total time above the parent's prior estimate. Judge ONLY whether that expansion is acceptable for a goal of this size and stakes, or excessive. You MAY permit the expansion. "\
+"YOUR BOUNDARIES: you do NOT have the surrounding tree context, and it is NOT your job to judge whether the children are correct, well-ordered, well-named, complete, or consistent with the rest of the goal structure. The children's titles and details are given ONLY as extra signal to gauge whether the extra time is plausible. Never ask for structural or content changes — only for leaner time. "\
+"Return JSON only. "\
+"Parent goal title: [%s]. Parent details: [%s]. "\
+"Parent's prior total estimate: [%lld] seconds. New total after this decomposition (sum of the children): [%lld] seconds. "\
+"Children, as signal only (title, estimate, scope): [%s]. "\
+"User profile signals (may be empty): [%s]. "\
+"Pass when the extra time plausibly reflects real necessary work for a goal of this size, or when the growth is modest. "\
+"Fail only when the total balloons well beyond what this goal should take — typically padded or over-estimated children — especially for low-stakes or beginner goals. "\
+"When failing, feedback must be one concise correction under 40 words telling the decomposer to produce leaner children with smaller, realistic time estimates that fit the parent budget. When passing, feedback must be an empty string. "\
+"Return JSON only: {\"pass\":true,\"feedback\":\"string\"}"
+
 #include <stdint.h>
 #include <inttypes.h>
 #define SHORTEN_GOAL_AI_PROMPT \
+GOAL_AGENT_SYSTEM_CONTEXT \
+"YOUR RESPONSIBILITY: rewrite ONE active goal to a smaller, more achievable scope while keeping its direction and place in the tree. YOUR BOUNDARIES: do not change its hierarchy role or time context, and do not decompose it. " \
 "You are a goal scope-calibration agent. Your job is to rewrite one active goal so it becomes more achievable in terms of workload and complexity without changing its direction, hierarchy role, or time context. " \
 "The user is currently attempting this goal: title [%s], extrainfo [%s]. " \
 "This rewrite was triggered because the current goal appears too ambitious, inefficient, overdue, or unrealistic for the available time. " \
@@ -717,9 +1062,194 @@
 "If remaining time is sufficient, avoid trivialization and keep meaningful complexity. " \
 "The title must be concise, action-oriented, and derived directly from the original goal. " \
 "The extrainfo must explain: reduced scope, success criteria, intentionally excluded parts, and how overlap is avoided. " \
-"The estimated_time field is required for schema compatibility. It must be a positive integer. If remaining time is positive, use it; otherwise use 1. " \
+"The estimated_time field is required for schema compatibility. It may be 0 on this shorten flow if no meaningful positive remaining time exists. If remaining time is positive, use it; otherwise use 0. " \
+"When estimated_time is positive on this shorten flow, it still means realistic elapsed duration for completing the shortened goal, not pure work time. " \
+"The priority field is required for schema compatibility. Use 0 because shortening a non-root or already-positioned goal must not change root priority. " \
 "Return JSON only, with this exact structure and no extra text: " \
-"{\"title\":\"string\",\"extrainfo\":\"string\",\"estimated_time\":1}"\
+"{\"title\":\"string\",\"extrainfo\":\"string\",\"estimated_time\":0,\"priority\":0}"\
 
+/*
+ * Reshape (recontextualize) a single leaf goal the user is stuck on, WITHOUT
+ * losing coherence with the rest of the tree. Placeholders: %s leaf_title,
+ * %s leaf_extrainfo, %lld current_required_time_seconds, %s parent_chain,
+ * %s sibling_goals, %s uncle_goals.
+ */
+#define RESHAPE_GOAL_LEAF_PROMPT \
+GOAL_AGENT_SYSTEM_CONTEXT \
+"YOUR RESPONSIBILITY: the user is stuck on this one leaf task and asked to reshape it. Recontextualize it — rewrite its title and extrainfo so it becomes a concrete, doable action that still moves the same work forward — as a compromise that fits its exact position in the tree. YOUR BOUNDARIES: do not decompose it, do not touch sibling/parent/uncle goals, do not change its role in the sequence; only rewrite THIS leaf. " \
+"The leaf to reshape: title [%s], extrainfo [%s]. Current estimated time: [%lld] seconds. " \
+"Parent goal chain (the objective this leaf serves): [%s]. " \
+"Sibling goals at the same level (what comes before/after — do not overlap or duplicate them): [%s]. " \
+"Uncle goals (adjacent branches — stay out of their scope): [%s]. " \
+"Keep strict coherence: the reshaped leaf must still hand off cleanly to its siblings and serve the same parent objective. It must remain a single concrete real action the user performs, not meta-process or filler. " \
+"You may make it simpler, more concrete, or approached from a different angle if the user is stuck — but it must still produce the real progress its position requires. " \
+"estimated_time: keep the current value unless the reshaped scope clearly needs a different realistic elapsed estimate; only then adjust it. priority: always 0. " \
+"The title must be concise and action-oriented. The extrainfo must state the concrete scope, the success condition, and how it hands off to the next sibling. " \
+"Return JSON only, with this exact structure and no extra text: " \
+"{\"title\":\"string\",\"extrainfo\":\"string\",\"estimated_time\":0,\"priority\":0}"\
+
+
+/*
+ * GOAL REPAIR PROMPTS
+ *
+ * Placeholder mapping is documented above each prompt.
+ */
+
+/*
+ * %s (1) : user_requested_change
+ * %s (2) : current_branch_with_progress
+ * %s (3) : previous_failed_attempts_and_judge_feedback
+ * %s (4) : local_user_goal_history_before_branch
+ * %s (5) : same_layer_sibling_goals
+ * %s (6) : parent_goal_chain
+ * %s (7) : linked_previous_followup_goals
+ * %s (8) : parent_sibling_uncle_context
+ */
+#define GOAL_REPAIR_DS_PROMPT \
+"You are investigating how to repair an existing goal branch for this specific user. " \
+"The user's requested change is: [%s]. " \
+"Current branch, including progress state and children: [%s]. " \
+"Previous failed repair attempts and judge feedback: [%s]. " \
+"Local user goal history before this branch: [%s]. " \
+"Sibling goals at the same layer: [%s]. " \
+"Parent goal chain: [%s]. " \
+"Linked previous/follow-up goals around this branch: [%s]. " \
+"Parent sibling/uncle context: [%s]. " \
+"Use the identity graph, goal history, due goals, decomposition, relational goal context, and schedule evidence as needed. " \
+"Produce a compact but evidence-grounded repair context report for a downstream goal-creation agent. " \
+"The report must explain what should change, what must stay aligned with the parent/sibling structure, and what progress has already happened. " \
+"Do not create the final goal tree yourself. Do not invent unsupported user traits. " \
+"When using deep-search goal commands that require goal ids, use only exact runtime ids explicitly observed in command output. Never substitute a goal title, branch label, or summary into a goal_id field. " \
+"If you do not have an exact runtime goal id yet, prefer other commands until you do. " \
+"Critical progress rule: completed work in the old branch must be treated as retained foundation, not as future work to repeat; active unfinished work should be adapted or continued rather than discarded unless the user request explicitly invalidates it. " \
+"End with clear practical constraints for the replacement branch."
+
+/*
+ * %s (1) : existing_branch_title
+ * %s (2) : user_requested_change
+ * %s (3) : old_branch_with_progress_and_structure
+ * %s (4) : deep_search_repair_context
+ * %s (5) : previous_judge_generation_feedback
+ * %s (6) : server_retry_feedback
+ */
+#define GOAL_REPAIR_ROOT_PAYLOAD_PROMPT \
+"You are creating the replacement root goal payload for an already-investigated goal branch repair. " \
+"Return JSON only with title, extrainfo, estimated_time, and priority. " \
+"Existing branch title: [%s]. " \
+"User requested repair/change: [%s]. " \
+"Old branch with progress and structure: [%s]. " \
+"Deep-search repair context: [%s]. " \
+"Previous judge/generation correction feedback: [%s]. " \
+"Server retry feedback: [%s]. " \
+"Create a coherent replacement branch root goal that satisfies the requested change, stays compatible with parent/sibling context, and preserves already completed work as retained progress. " \
+"The output is user-facing goal content, not an architectural summary. " \
+"It must define the actual practice loop itself, not describe the repair process. " \
+"Do not write meta language such as preserve structure, keep the same branch, replace semantics, handoff order, unchanged architecture, adapted work, or downstream linkage unless translated into the actual user activity. " \
+"The first sentence of extrainfo must describe one concrete run of the loop itself. " \
+"For this YouTube-style case, that means a specific watch-pause-rewind-apply-check learning loop, not a generic statement about learning. " \
+"The root goal must stay concrete and narrow enough that its later children can refine it, rather than repeating structural instructions. " \
+"The title must be short, concrete, and action-oriented. " \
+"The extrainfo must summarize the concrete loop, success condition, excluded scope, and only the minimum constraints needed for later decomposition. " \
+"Do not plan completed old work as future work again. If old active work is still relevant, continue or adapt it instead of dropping it. " \
+"estimated_time must be a positive realistic elapsed-time estimate in seconds for the remaining replacement branch, not the already-completed old work. " \
+"Do not use 0. " \
+"priority must be an integer from 0 to 5. Use 0 when the existing branch priority should be preserved."
+
+/*
+ * %s  (1) : user_requested_change
+ * %s  (2) : deep_search_repair_context
+ * %s  (3) : previous_judge_generation_feedback
+ * %s  (4) : repaired_parent_title
+ * %s  (5) : repaired_parent_extrainfo
+ * %s  (6) : original_child_slot_to_rewrite
+ * %s  (7) : original_sibling_ordering_for_level
+ * %zu (8) : child_position_1_based
+ * %zu (9) : total_child_count
+ * %s  (10): server_retry_feedback
+ */
+#define GOAL_REPAIR_CHILD_PAYLOAD_PROMPT \
+"You are creating one child goal payload for a repaired goal branch. " \
+"Return JSON only with title, extrainfo, estimated_time, and priority. " \
+"User requested repair/change: [%s]. " \
+"Deep-search repair context: [%s]. " \
+"Previous judge/generation correction feedback: [%s]. " \
+"Repaired parent goal title: [%s]. " \
+"Repaired parent extra_info: [%s]. " \
+"Original child slot to rewrite: [%s]. " \
+"Original sibling ordering for this level: [%s]. " \
+"This child must remain position %zu of %zu and keep the same role in the sequence, only retargeted to the repaired concept. " \
+"Server retry feedback: [%s]. " \
+"The output is user-facing goal content, not an architectural summary. " \
+"Do not write meta language such as preserve structure, same branch, handoff order, unchanged architecture, or adapted work. " \
+"If this child was already completed or active in the old branch, describe the same responsibility in repaired terms so progress can map onto it; do not invent a different responsibility. " \
+"Keep the same abstraction level as the original child. " \
+"If the original child had descendants, keep this child broad enough to still own them; if it was a leaf, keep it leaf-level and concrete. " \
+"estimated_time must be a positive realistic elapsed-time estimate in seconds for this child only. " \
+"priority must be 0 for child goals because only root goal priority is used."
+
+/*
+ * %s (1) : user_requested_change
+ * %s (2) : original_branch_with_status_progress
+ * %s (3) : deep_search_context_used_by_generator
+ * %s (4) : candidate_replacement_branch
+ * %s (5) : previous_failed_candidate_feedback
+ */
+#define GOAL_REPAIR_JUDGE_PROMPT \
+"You are judging whether a regenerated goal branch is acceptable. " \
+"Return JSON only. " \
+"User requested branch change: [%s]. " \
+"Original branch, including status/progress: [%s]. " \
+"Deep-search context used by the generator: [%s]. " \
+"Candidate replacement branch: [%s]. " \
+"Previous failed candidate feedback: [%s]. " \
+"Pass if the candidate reasonably addresses the user's requested change, remains compatible with the old branch's parent/sibling role, and uses the deep-search context enough to be personalized. " \
+"Pass if the candidate preserves completed progress as foundation and does not obviously force the user to redo completed old work. " \
+"Pass only if the candidate defines an actual concrete goal/loop rather than mostly restating repair instructions, branch structure, handoff order, or abstract constraints. " \
+"Do not be overly restrictive: this repair flow is expensive and the candidate only needs to be directionally correct, coherent, and safe to decompose further. " \
+"Fail for major drift, ignoring the user request, losing or contradicting important progress, incoherent scope, clear mismatch with parent/sibling constraints, or outputs that are mostly meta-commentary instead of the actual repaired branch content. " \
+"When failing, feedback must be one concise actionable correction under 40 words. " \
+"When passing, feedback must be an empty string."
+
+/* ── Review / Goal Authenticity System ── */
+
+#define MAX_DAILY_REVIEWS     3
+#define SUBMISSIONS_DIR       PROJECT_ROOT "data/submissions/"
+#define SUBMISSIONS_DAILY_DIR PROJECT_ROOT "data/submissions/.daily/"
+
+/*
+ * REVIEW_LABEL_PROMPT — 1-3 word expertise label for a completed goal.
+ * Placeholders: goal_title, goal_extra_info, child_context.
+ */
+#define REVIEW_LABEL_PROMPT \
+"You are categorizing a completed goal for an anonymous peer review system. " \
+"Based on the goal below, output a short 1-3 word expertise label describing " \
+"the kind of person who typically accomplishes this kind of work. " \
+"Examples: Software Engineer, Athlete, Writer, Musician, Designer, Entrepreneur, Student. " \
+"Goal title: [%s]. Goal description: [%s]. Related tasks: [%s]. " \
+"Return a single label. No explanation, no punctuation, no extra words."
+
+#define REVIEW_LABEL_SCHEMA \
+"{\"type\":\"object\"," \
+"\"properties\":{\"label\":{\"type\":\"string\"}}," \
+"\"required\":[\"label\"]," \
+"\"additionalProperties\":false}"
+
+/*
+ * REVIEW_DESCRIPTION_PROMPT — 2-3 sentence anonymous description.
+ * Placeholders: goal_title, goal_extra_info, child_context.
+ */
+#define REVIEW_DESCRIPTION_PROMPT \
+"You are writing a brief anonymous description of a completed goal for peer review. " \
+"The reviewer will never see the submitter's name or any personal details. " \
+"Write 2-3 sentences describing what this goal was roughly about. " \
+"Be specific enough to give the reviewer a fair sense of the effort involved, " \
+"but vague enough to preserve privacy — no names, locations, or unique identifiers. " \
+"Goal title: [%s]. Goal description: [%s]. Related tasks: [%s]."
+
+#define REVIEW_DESCRIPTION_SCHEMA \
+"{\"type\":\"object\"," \
+"\"properties\":{\"description\":{\"type\":\"string\"}}," \
+"\"required\":[\"description\"]," \
+"\"additionalProperties\":false}"
 
 #endif

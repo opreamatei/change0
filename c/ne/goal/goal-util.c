@@ -1,32 +1,47 @@
 #include "goal-util.h"
 #include "globals.h"
+#include "srv/user/journey.h"
 #include <string.h>
+#include <stdlib.h>
+#include <math.h>
 
-Goal *GOAL_CONTAINER[1024];
-size_t GOAL_CONTAINER_COUNT = INITIAL_GOAL_INDEX;
+double goal_growth_tolerance(time_t old_estimate)
+{
+	const double small = (double)GOAL_GROWTH_TOL_SMALL_SECONDS;
+	const double big = (double)GOAL_GROWTH_TOL_BIG_SECONDS;
+
+	double old = (double)old_estimate;
+	if (old <= small)
+		return GOAL_GROWTH_TOL_MIN;
+	if (old >= big)
+		return GOAL_GROWTH_TOL_MAX;
+
+	/* log interpolation between the small and big anchors */
+	double frac = log(old / small) / log(big / small);
+	if (frac < 0.0) frac = 0.0;
+	if (frac > 1.0) frac = 1.0;
+
+	return GOAL_GROWTH_TOL_MIN + (GOAL_GROWTH_TOL_MAX - GOAL_GROWTH_TOL_MIN) * frac;
+}
+
+static inline _Bool is_leaf(Goal *g){
+	return g->subgoals_len == 0;
+}
 
 enum GOAL_STATUS ValidateGoal(Goal *g, time_t now)
 {
-	// parent goals are valid because they depend on children validation
 	if (g->subgoals_len > 0)
 		return GOAL_VALID;
 
 	if (g->start_date && !g->end_date && (now - g->start_date) > CalcGoalRequiredTime(g) * (1 + GOAL_REQUIRED_TIME_ERROR_MARGIN) ){
-		// goal is imposible to finish
 		return GOAL_INVALID;
 	}
 
-	// goal hasn't started
 	return GOAL_VALID;
 }
 
 time_t CalcGoalRequiredTime(Goal *g){
 	change_assert(g, "Goal with required time of 0 must not exist [%s]", g->title.p);
-
-	/*
-	   If a goal has children, return the children sum
-	   else return the default required time 
-	   */
 
 	if (g->subgoals_len == 0){
 		return g->required_time;
@@ -35,12 +50,12 @@ time_t CalcGoalRequiredTime(Goal *g){
 	time_t sum = 0;
 
 	for (size_t i = 0; i < g->subgoals_len; i++){
-		Goal *subgoal = FindGoalFromIndex(g->subgoals[i]);
+		Goal *subgoal = FindGoalFromIndex(g->journey_id, g->subgoals[i]);
 
-		sum += CalcGoalRequiredTime(subgoal);		
+		sum += CalcGoalRequiredTime(subgoal);
+		sum += subgoal->pauseToNext;
 	}
 
-	// also cache the calculated required just in case children are regenerated
 	g->required_time = sum;
 
 	return sum;
@@ -49,12 +64,19 @@ time_t CalcGoalRequiredTime(Goal *g){
 void GoalSystemLazyLoad(goal_emit_like_func *goal_emit){
 	if (*goal_emit == NULL){
 		*goal_emit = (goal_emit_like_func)ReadGlobalPointer(FSTRING_SIZE_PARAMS("goal_emit"));
-		change_assert(goal_emit, "Can't load goal_emit");
+		change_assert(*goal_emit, "Can't load goal_emit");
 	}
 }
 
-Goal *ExternalFindGoal(size_t id){
-	return FindGoalFromIndex(id);
+void JourneySystemLazyLoad(journey_str_func *title, journey_str_func *info){
+	if (title && !*title){
+		*title = (journey_str_func)ReadGlobalPointer(FSTRING_SIZE_PARAMS("journey_title"));
+		change_assert(*title, "Can't load journey_title — InitJourneySystem not called?\n");
+	}
+	if (info && !*info){
+		*info = (journey_str_func)ReadGlobalPointer(FSTRING_SIZE_PARAMS("journey_info"));
+		change_assert(*info, "Can't load journey_info — InitJourneySystem not called?\n");
+	}
 }
 
 void CreateGoalDSId(char* name, char* deep_search_id){
@@ -65,19 +87,14 @@ void CreateGoalDSId(char* name, char* deep_search_id){
 	*(deep_search_id + index_end + FSIZE("-deep-search-id")) = '\0';
 }
 
-// AI generated function
 void CreateSubgoalId(Goal *parent, size_t child_index, goalIDType out)
 {
 	memset(out, 0, GOAL_ID_SIZE + 1);
-
-	//int n = snprintf(out, 33, "g%zu-%zu", parent->globalIndex, child_index + 1);
-	// TODO merge the two techniques
 	random_id(out, GOAL_ID_SIZE + 1);
 	out[32] = '\0';
-	//change_assert(n > 0 && n < 33, "Failed to create subgoal id.\n");
 }
 
-Goal *CreateGoal(char goalId[], String *input_goal, String *input_extrainfo, size_t estimated_time, size_t parent_index, size_t depth)
+Goal *CreateGoal(char goalId[], String *input_goal, String *input_extrainfo, size_t estimated_time, size_t parent_index, size_t depth, const char *journey_id)
 {
 	Goal *g = malloc(sizeof(Goal));
 
@@ -87,6 +104,8 @@ Goal *CreateGoal(char goalId[], String *input_goal, String *input_extrainfo, siz
 	InitString(&g->extra_info, input_extrainfo->len + 1);
 	CopyString(&g->extra_info, input_extrainfo);
 
+	InitString(&g->tips, 1); /* set later by the generating AI */
+
 	g->required_time = estimated_time;
 
 	memset(g->id, 0, sizeof(g->id));
@@ -95,162 +114,256 @@ Goal *CreateGoal(char goalId[], String *input_goal, String *input_extrainfo, siz
 
 	g->subgoals = NULL;
 	g->subgoals_len = 0;
+	g->minPauseToNext = 0;
+	g->pauseToNext = 0;
 	g->priority = 0;
 	g->prev = 0;
 	g->next = 0;
 	g->start_date = 0;
 	g->end_date = 0;
 	g->retry_depth = 0;
-	g->globalIndex = GOAL_CONTAINER_COUNT;
+	g->localIndex = 0;
 	g->depth = depth;
-
 	g->parent = parent_index;
+	g->assigned_to = JOURNEY_USER_UNASSIGNED;
+	g->goal_type = GOAL_TYPE_TIMER;
+	g->attach_id[0] = '\0';
 
-	GOAL_CONTAINER[GOAL_CONTAINER_COUNT] = g;
+	Journey *j = FindJourneyByID(journey_id);
+	change_assert(j, "CreateGoal: unknown journey. [%s]\n", journey_id);
 
-	GOAL_CONTAINER_COUNT++;
+	AddGoalToJourney(j, g);
 
 	return g;
 }
 
 Goal *CalcGoalRoot(Goal *g){
 	while (g->parent != 0){
-		g = FindGoalFromIndex(g->parent);
+		g = FindGoalFromIndex(g->journey_id, g->parent);
 	}
 	return g;
 }
 
-Goal **GetGoalsContainer(size_t *len){
-	*len = GOAL_CONTAINER_COUNT - INITIAL_GOAL_INDEX;
-	return &GOAL_CONTAINER[1];
-}
+static journey_str_func journey_get_title = NULL;
+static journey_str_func journey_get_info  = NULL;
 
-void PersonalizeGoal(String* input1, String *input2, String* out, char* goalId, start_ds_session_like_func start_ds_session){
-	InitString(out, 2048);
+void PersonalizeGoal(String* input1, String *input2, String* out, char* goalId, String *feedback, start_ds_session_like_func start_ds_session, const char *journey_id, User *user){
+	change_assert(input1 && input1->p, "PersonalizeGoal: input1 is NULL\n");
+	change_assert(start_ds_session, "PersonalizeGoal: start_ds_session is NULL\n");
 
-	// Init params
 	char search_id[256];
 	CreateGoalDSId(c_str(input1), search_id);
 
+	JourneySystemLazyLoad(&journey_get_title, &journey_get_info);
+	const char *jt = (journey_id && journey_id[0]) ? journey_get_title(journey_id) : NULL;
+	const char *ji = (journey_id && journey_id[0]) ? journey_get_info(journey_id)  : NULL;
+
 	Task task = {0};
-	create_goal_task(input1, input2, &task);
+	create_goal_task(input1, input2, feedback, &task, jt, ji);
 
-	// customize goal
-	start_ds_session(&task, search_id, out);
-
+	start_ds_session(&task, search_id, out, user);
 }
 
-Goal *FindGoalByID(goalIDType id){
-	// TODO : use a goal_id
-	size_t len = GOAL_CONTAINER_COUNT - INITIAL_GOAL_INDEX;
-	Goal** goals = GetGoalsContainer(&len);
+Goal *FindGoalByID(goalIDType id, const char *journey_id){
+	size_t len = 0;
+	Goal **goals = GetGoalsSorted(&len, journey_id);
 
+	Goal *found = NULL;
 	for (size_t i = 0; i < len; i++){
-		Goal* goal = goals[i];
-		if (strcmp(goal->id, id) == 0)
-			return goal;
+		if (!goals[i]) continue;
+		if (strcmp(goals[i]->id, id) == 0) {
+			found = goals[i];
+			break;
+		}
 	}
-	return NULL;
-}
-
-time_t StartGoal(goalIDType goalID){
-	Goal* g = FindGoalByID(goalID);
-	change_assert(g, "Goal not found, target goal id %s, serialized goals.", goalID);
-
-	time_t now = time(NULL);
-
-	g->start_date = now;
-
-	return now;
-}
-
-time_t EndGoal(goalIDType goalID){
-	Goal* g = FindGoalByID(goalID);
-	change_assert(g, "Goal not found, target goal id %s, serialized goals.", goalID);
-
-	time_t now = time(NULL);
-
-	g->end_date = now;
-
-	return now;
+	free(goals);
+	return found;
 }
 
 static size_t EstimateGoalsJSONSize(Goal **container, size_t goals_amm) {
-    size_t total = 128; // '[' + ']'
-
-    for (size_t i = 0; i < goals_amm; i++) {
-        Goal *g = container[i];
-
-        total += 256; 
-
-        total += g->title.len;
-        total += g->extra_info.len;
-
-        total += g->subgoals_len * 24;
-    }
-
-    return total;
-}
-
-void SerializeAllGoals(String *buffer){
-
-	size_t goals_amm = 0;
-	Goal** container = GetGoalsContainer(&goals_amm);
-
-	if (goals_amm == 0){
-		CatFixed(buffer, "[]");
-		return;
-	};
-
-	ResizeString(buffer, EstimateGoalsJSONSize(container, goals_amm));
-	EmptyString(buffer);
-
-	CatFixed(buffer, "[");
+	size_t total = 128;
 
 	for (size_t i = 0; i < goals_amm; i++) {
 		Goal *g = container[i];
+		if (!g) continue;
+
+		total += 256;
+		total += g->title.len;
+		total += g->extra_info.len;
+		total += g->tips.len;
+		total += g->subgoals_len * 24;
+	}
+
+	return total;
+}
+
+void SerializeGoalList(Goal **goals, size_t count, String *buffer) {
+	if (count == 0) {
+		CatFixed(buffer, "[]");
+		return;
+	}
+
+	ResizeString(buffer, EstimateGoalsJSONSize(goals, count));
+	EmptyString(buffer);
+
+	CatFixed(buffer, "[");
+	_Bool first = 1;
+
+	for (size_t i = 0; i < count; i++) {
+		Goal *g = goals[i];
+		if (!g) continue;
+
+		char *esc_title = json_escape_dup(g->title.p ? g->title.p : "");
+		char *esc_extra_info = json_escape_dup(g->extra_info.p ? g->extra_info.p : "");
+		char *esc_tips = json_escape_dup(g->tips.p ? g->tips.p : "");
+		char *esc_id = json_escape_dup(g->id);
+		char *esc_attach_id = json_escape_dup(g->attach_id);
+
+		cassert(esc_title, "Failed to escape goal title.\n");
+		cassert(esc_extra_info, "Failed to escape goal extra info.\n");
+		cassert(esc_tips, "Failed to escape goal tips.\n");
+		cassert(esc_id, "Failed to escape goal id.\n");
+		cassert(esc_attach_id, "Failed to escape goal attach id.\n");
+
+		if (!first)
+			CatFixed(buffer, ",");
 
 		CatTemplateString(buffer,
 				"{"
 				"\"title\":\"%s\","
 				"\"extra_info\":\"%s\","
+				"\"tips\":\"%s\","
 				"\"start_date\":%lld,"
 				"\"end_date\":%lld,"
 				"\"required_time\":%lld,"
+				"\"min_pause_to_next\":%lld,"
+				"\"pause_to_next\":%lld,"
 				"\"subgoals_len\":%zu,"
 				"\"parent\":%zu,"
 				"\"prev\":%zu,"
 				"\"next\":%zu,"
-				"\"globalIndex\":%zu,"
+				"\"localIndex\":%zu,"
 				"\"depth\":%zu,"
 				"\"retry_depth\":%zu,"
 				"\"priority\":%zu,"
-				"\"id\":%zu"
-				"}%c",
-				g->title.p,
-				g->extra_info.p,
+				"\"assigned_to\":%u,"
+				"\"goal_type\":%u,"
+				"\"attach_id\":\"%s\","
+				"\"id\":\"%s\","
+				"\"subgoals\":[",
+				esc_title,
+				esc_extra_info,
+				esc_tips,
 				(long long)g->start_date,
 				(long long)g->end_date,
 				(long long)g->required_time,
+				(long long)g->minPauseToNext,
+				(long long)g->pauseToNext,
 				g->subgoals_len,
 				g->parent,
 				g->prev,
 				g->next,
-				g->globalIndex,
+				g->localIndex,
 				g->depth,
 				g->retry_depth,
 				g->priority,
-				(size_t)g->id,
-				i != goals_amm - 1 ? ',' : ' '
+				(unsigned)g->assigned_to,
+				(unsigned)g->goal_type,
+				esc_attach_id,
+				esc_id
 					);
+
+		for (size_t j = 0; j < g->subgoals_len; j++) {
+			if (j > 0)
+				CatFixed(buffer, ",");
+			CatTemplateString(buffer, "%zu", g->subgoals[j]);
+		}
+
+		CatFixed(buffer, "]}");
+		first = 0;
+
+		free(esc_title);
+		free(esc_extra_info);
+		free(esc_tips);
+		free(esc_id);
+		free(esc_attach_id);
 	}
 
 	CatFixed(buffer, "]");
 }
 
-void ExportGoalsTo(char* path){
-	String buff; InitString(&buff,1);
-	SerializeAllGoals(&buff);
-	dump_to_file(path, buff.p, buff.len);
-	FreeString(&buff);
+void SerializeAllGoals(String *buffer, const char *journey_id){
+	size_t count = 0;
+	Goal **goals = GetGoalsSorted(&count, journey_id);
+
+	SerializeGoalList(goals, count, buffer);
+
+	free(goals);
+}
+
+Goal** GetLeafDueGoals(size_t *size, const char *journey_id, const char *user_id){
+
+	*size = 0;
+	size_t goals_len = 0;
+	Goal **goals = GetGoalsSorted(&goals_len, journey_id);
+
+	Journey *journey = FindJourneyByID(journey_id);
+	_Bool apply_user_filter = 0;
+	size_t my_index = MAX_JOURNEY_USERS;
+
+	if (journey && journey->is_shared && user_id) {
+		my_index = FindUserIndexInJourney(journey, user_id);
+		change_assert(my_index < journey->user_count,
+			"GetLeafDueGoals: user [%s] is not a participant of shared journey [%s].\n",
+			user_id, journey->id);
+		apply_user_filter = 1;
+	}
+
+	for (size_t pass = 0; pass < 2; pass++) {
+		Goal **out = NULL;
+		size_t w = 0;
+
+		if (pass == 1) {
+			if (*size == 0) { free(goals); return NULL; }
+			out = malloc(*size * sizeof(Goal*));
+			change_assert(out, "Couldn't allocate memory for due leaf out.\n");
+		}
+
+		for (size_t i = 0; i < goals_len; i++){
+			Goal *g = goals[i];
+			if (!g) continue;
+			Goal *next = FindGoalFromIndex(g->journey_id, g->next);
+
+			_Bool goalStartedNotEnded = (g->start_date && !g->end_date);
+			_Bool goalStartedEnded    = (g->start_date && g->end_date);
+			_Bool nextNotStartedNotEnded = g->next && next && !next->start_date && !next->end_date;
+
+			/*
+			 * Also catch the first leaf of a completely fresh chain:
+			 * a leaf with no previous sibling and no start_date is the
+			 * entry point for journeys where nothing has been started yet.
+			 * RefreshSchedule will anchor such chains at "now".
+			 */
+			_Bool freshChainStart = (g->subgoals_len == 0) &&
+			                        (g->start_date == 0) &&
+			                        (g->prev == 0);
+
+			if (!(goalStartedNotEnded || (goalStartedEnded && nextNotStartedNotEnded) || freshChainStart))
+				continue;
+
+			if (apply_user_filter && g->subgoals_len == 0 && g->assigned_to != my_index)
+				continue;
+
+			if (pass == 0) (*size)++;
+			else           out[w++] = g;
+		}
+
+		if (pass == 1) {
+			free(goals);
+			return out;
+		}
+	}
+
+	free(goals);
+	return NULL;
 }

@@ -8,6 +8,7 @@
 #include <string.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include "change-errors.h"
 
 static const char charset[] =
@@ -16,16 +17,28 @@ static const char charset[] =
 "0123456789";
 
 void random_id(char *out, size_t len){
-	srand((unsigned int)time(NULL));
+	static _Bool seeded = 0;
 	size_t charset_size = sizeof(charset) - 1;
+
+	if (len == 0) return;
+
+	if (!seeded) {
+		srand((unsigned int)change_time_now() ^ (unsigned int)getpid());
+		seeded = 1;
+	}
+
+	if (len == 1) {
+		out[0] = '\0';
+		return;
+	}
 
 	out[0] = 'g';
 
-	for (size_t i = 1; i < len; ++i) {
+	for (size_t i = 1; i + 1 < len; ++i) {
 		out[i] = charset[rand() % charset_size];
 	}
 
-	out[len] = '\0';
+	out[len - 1] = '\0';
 }
 
 
@@ -234,6 +247,14 @@ void lowerAll(char** s, size_t len){
 	char* a = *s;
 	for (int i = 0; i < len; i++)
 		a[i] = a[i] < 'a' ? a[i] + ('a' - 'A') : a[i];
+}
+
+void trim_newline_inplace(char *s)
+{
+	if (!s)
+		return;
+
+	s[strcspn(s, "\n")] = '\0';
 }
 
 void InitString(String* s, size_t init_cap){

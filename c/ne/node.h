@@ -31,9 +31,6 @@
 
 #define INIT_CHILDREN_COUNT 256
 
-#define NodeAt(i) (Nodes.items + (i))
-#define NodeExists(i) ((i) < Nodes.count)
-
 #define INFERTILE 0
 #define FERTILE 1
 #define HASPARENT 1
@@ -69,28 +66,35 @@ typedef struct ConnectionType {
 	size_t target;
 } Connection;
 
-struct {
-	Node* items;
+typedef struct {
+	Node *items;
 	size_t capacity;
 	size_t count;
-
 	_Bool needsRefresh;
 	_Bool init;
-} Nodes;
+	size_t connection_count;
+	size_t contexts[CONTEXT_COUNT];
+} NodeContainer;
 
 typedef struct {
 	String name;
 	size_t minDepth;
 } Task;
 
-_Bool InitNodes();
-_Bool FreeNodes();
+extern const char context_labels[CONTEXT_COUNT][NODE_LABEL_CAP];
 
-Node* FindNode(char* target, uint_fast8_t length, Node* parent);
-Node* FindNodeGlobal(char* target, uint_fast8_t length, size_t stop);
+#define NodeAt(nc, i) ((nc)->items + (i))
+#define NodeExists(nc, i) ((i) < (nc)->count)
+
+_Bool InitNodes(NodeContainer *nc);
+_Bool FreeNodes(NodeContainer *nc);
+
+Node* FindNode(NodeContainer *nc, char* target, uint_fast8_t length, Node* parent);
+Node* FindNodeGlobal(NodeContainer *nc, char* target, uint_fast8_t length, size_t stop);
 
 Node* AddNodeEx(
-		char* label,
+		NodeContainer *nc,
+		const char* label,
 		size_t label_len,
 		double activation,
 		double weight,
@@ -102,28 +106,19 @@ Node* AddNodeEx(
 
 Connection* LinkExists(Node* A, Node* B);
 
-_Bool UniLinkEx(Node* A, Node* B, double activation, double weight);
-_Bool UniLink(Node* A, Node* B);
-_Bool BiLink(Node* A, Node* B);
-_Bool BiLinkEx(Node* A, Node* B, double activation, double weight);
+_Bool UniLinkEx(NodeContainer *nc, Node* A, Node* B, double activation, double weight);
+_Bool UniLink(NodeContainer *nc, Node* A, Node* B);
+_Bool BiLink(NodeContainer *nc, Node* A, Node* B);
+_Bool BiLinkEx(NodeContainer *nc, Node* A, Node* B, double activation, double weight);
 
-size_t ConnectionCount = 0;
-
-char context_labels[CONTEXT_COUNT][NODE_LABEL_CAP] = {
-	"profesie",
-	"emotie",
-	"pasiuni",
-	"generalitati",
-	"subiectiv",
-};
-size_t Contexts[CONTEXT_COUNT];
-
-double read_node_activation(Node* n);
-double read_node_weight(Node* n);
-double read_connection_activation(Connection* c);
-double read_connection_weight(Connection* c);
+double read_node_activation(NodeContainer *nc, Node* n);
+double read_node_weight(NodeContainer *nc, Node* n);
+double read_connection_activation(NodeContainer *nc, Connection* c);
+double read_connection_weight(NodeContainer *nc, Connection* c);
 
 void touch_node(Node *n, double power, time_t now);
 void touch_connection(Connection *n, double power, time_t now);
+
+void SetupContextNodes(NodeContainer *nc);
 
 #endif

@@ -1,0 +1,4 @@
+- SEctions like goal need manual F5 refresh
+- There is no chat history on the front end
+- You cannot exit a shared journey
+- Have not tested the live visualzier + must palce more emits

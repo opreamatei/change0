@@ -4,10 +4,12 @@
 #include <stdlib.h>
 #include "goal/goal-util.h"
 #include "util.h"
+#include "schedule-system.h"
 #include <string.h>
 #include "search.h"
 #include "command-parsing.h"
 #include "globals.h"
+#include "profile/user-profile.h"
 
 static ds_emit_like_func ds_emit = NULL;
 
@@ -16,15 +18,16 @@ static void lazy_load(){
         ds_emit = (ds_emit_like_func)ReadGlobalPointer("ds_emit", FSIZE("ds_emit"));
 }
 
-void run1(json_value* doc, String *dynamic_mem, char *ds_id){
+void run1(json_value* doc, String *dynamic_mem, char *ds_id, User *user){
 	if (!dynamic_mem || !doc) return;
 	lazy_load();
 
+	NodeContainer *nc = &user->nodes;
 	int_fast64_t percentage = -1;
 	char criteria[16];
 	size_t criteria_length;
 	String intent; InitString(&intent, 256);
-	
+
 	if (decompose_command_1_params(doc, dynamic_mem, &percentage, &criteria, &criteria_length, &intent) == 0) return;
 
 	size_t count = 0;
@@ -34,10 +37,10 @@ void run1(json_value* doc, String *dynamic_mem, char *ds_id){
 	_Bool isActivation;
 
 	if (!strcmp(criteria, "activation")){
-		result = FilterNodeByActivationGlobal(percentage, &count);
+		result = FilterNodeByActivationGlobal(percentage, &count, nc);
 		isActivation = 1;
 	}else if(!strcmp(criteria, "weight")){
-		result = FilterNodeByWeightGlobal(percentage, &count);
+		result = FilterNodeByWeightGlobal(percentage, &count, nc);
 		isActivation = 0;
 	}else {
 		cassert(0, "You shouldn t arrive here unless the compiler is brain damaged :( \n");
@@ -74,8 +77,8 @@ void run1(json_value* doc, String *dynamic_mem, char *ds_id){
 				"{\"name\" : \"%s\", \"%s\" : %.2f, \"parent\" : \"%s\"}\n",
 				result[i]->label,
 				criteria,
-				isActivation ? read_node_activation(result[i]) : read_node_weight(result[i]),
-				result[i]->hasParent ? NodeAt(result[i]->parent)->label : "NONE"
+				isActivation ? read_node_activation(nc, result[i]) : read_node_weight(nc, result[i]),
+				result[i]->hasParent ? NodeAt(nc, result[i]->parent)->label : "NONE"
 		       );
 		CatString(&data, buffer, len);
 
@@ -91,10 +94,11 @@ void run1(json_value* doc, String *dynamic_mem, char *ds_id){
 	free(result);
 }
 
-void run2(json_value* doc, String *dynamic_mem, char* ds_id){
+void run2(json_value* doc, String *dynamic_mem, char* ds_id, User *user){
 	if (!doc || !dynamic_mem) return;
 	lazy_load();
 
+	NodeContainer *nc = &user->nodes;
 	int_fast64_t percentage;
 	int_fast64_t context;
 
@@ -105,9 +109,9 @@ void run2(json_value* doc, String *dynamic_mem, char* ds_id){
 
 	String intent; InitString(&intent, 256);
 
-	if (!decompose_command_2_params(doc, dynamic_mem, &percentage, &target, &target_length, &criteria, &criteria_length, &context, &intent)) return;
+	if (!decompose_command_2_params(doc, dynamic_mem, &percentage, &target, &target_length, &criteria, &criteria_length, &context, &intent, nc)) return;
 
-	Node* node = FindNode(target, target_length, NodeAt(context));
+	Node* node = FindNode(nc, target, target_length, NodeAt(nc, context));
 
 	if (!node){
 		CatFixed(dynamic_mem, "Error: Target Node not found in context. (Only context was found).\n");
@@ -161,9 +165,9 @@ void run2(json_value* doc, String *dynamic_mem, char* ds_id){
 
 	for (size_t i = 0; i < count; i++){
 		char buffer[NODE_LABEL_CAP + 128];
-		Node* target = NodeAt(result[i]->target);
-		double relative = isActivation ? read_connection_activation(result[i]) : read_connection_weight(result[i]);
-		double local = isActivation ? read_node_activation(target) : read_node_weight(target);
+		Node* target = NodeAt(nc, result[i]->target);
+		double relative = isActivation ? read_connection_activation(nc, result[i]) : read_connection_weight(nc, result[i]);
+		double local = isActivation ? read_node_activation(nc, target) : read_node_weight(nc, target);
 		size_t len = sprintf(	
 				buffer, 
 				"{\"name\": \"%s\", \"connection_%s\": %.2f, \"node_%s\": %.2f}\n",
@@ -188,19 +192,20 @@ void run2(json_value* doc, String *dynamic_mem, char* ds_id){
 	FreeString(&data);
 }
 
-void run3(json_value* doc, String *dynamic_mem, char* ds_id){
+void run3(json_value* doc, String *dynamic_mem, char* ds_id, User *user){
 	if (!doc || !dynamic_mem) return;
 	lazy_load();
 
+	NodeContainer *nc = &user->nodes;
 	char target[NODE_LABEL_CAP];
 	size_t target_length = 0;
 
 	int_fast64_t percA, percW, depth, context;
 	String intent; InitString(&intent, 256);
 
-	if (!decompose_command_3_params(doc, dynamic_mem, &target, &target_length, &context, &percA, &percW, &depth, &intent)) return;
-					  
-	Node* node = FindNode(target, target_length, NodeAt(context));
+	if (!decompose_command_3_params(doc, dynamic_mem, &target, &target_length, &context, &percA, &percW, &depth, &intent, nc)) return;
+
+	Node* node = FindNode(nc, target, target_length, NodeAt(nc, context));
 
 	if (!node){
 		CatFixed(dynamic_mem, "Error: Target Node not found in context. (Only context was found).\n");
@@ -212,7 +217,7 @@ void run3(json_value* doc, String *dynamic_mem, char* ds_id){
 
 	
 	size_t data_len = 0;
-	char* data = ComputeNodeFamily(node, percA, percW, depth, &data_len);
+	char* data = ComputeNodeFamily(nc, node, percA, percW, depth, &data_len);
 
 	if (*intent.p != '\0'){
 		CatFixed(dynamic_mem, "Model Intention : \"");
@@ -230,11 +235,14 @@ void run3(json_value* doc, String *dynamic_mem, char* ds_id){
 }
 
 // Partially AI Generated
-void run4(json_value* doc, String *dynamic_mem, char* ds_id){
+void run4(json_value* doc, String *dynamic_mem, char* ds_id, User *user){
 	if (!doc || !dynamic_mem) return;
 	lazy_load();
 
-	if (GOAL_CONTAINER_COUNT == INITIAL_GOAL_INDEX){ CatFixed(dynamic_mem, "Warning, you tried to run a goal-oriented command (4,5,6), but the user currently doesn't have any goals. Please avoid commands 4,5,6."); return;}
+	const char *journey_id = user->journeys[0];
+	size_t goals_len = 0;
+	Goal **goals = GetGoalsSorted(&goals_len, journey_id);
+	if (goals_len == 0){ free(goals); CatFixed(dynamic_mem, "Warning, you tried to run a goal-oriented command (4,5,6), but the user currently doesn't have any goals. Please avoid commands 4,5,6."); return;}
 
 	char mode[16] = "roots";
 	size_t mode_length = 5;
@@ -248,14 +256,14 @@ void run4(json_value* doc, String *dynamic_mem, char* ds_id){
 
 	if (!strcmp(mode, "roots")){
 
-		size_t goals_len = GOAL_CONTAINER_COUNT - INITIAL_GOAL_INDEX;
-		Goal** goals = GetGoalsContainer(&goals_len);
-
 		CatFixed(&data, "Current user Root Goals: {");
+
+		_Bool first = 1;
 
 		for (size_t i = 0; i < goals_len; i++){
 			const Goal* g = goals[i];
 
+			if (!g) continue;
 			if (g->parent > 0) continue;
 
 			const char* started_on;
@@ -267,7 +275,7 @@ void run4(json_value* doc, String *dynamic_mem, char* ds_id){
 			if (g->start_date == 0) {
 				started_on = "not started";
 			} else {
-				snprintf(started_buf, sizeof(started_buf), "%s", ctime(&g->start_date));
+				snprintf(started_buf, sizeof(started_buf), "%s", change_ctime(&g->start_date));
 				started_buf[strcspn(started_buf, "\n")] = 0;
 				started_on = started_buf;
 			}
@@ -275,10 +283,16 @@ void run4(json_value* doc, String *dynamic_mem, char* ds_id){
 			if (g->end_date == 0) {
 				finished_on = "not finished";
 			} else {
-				snprintf(finished_buf, sizeof(finished_buf), "%s", ctime(&g->end_date));
+				snprintf(finished_buf, sizeof(finished_buf), "%s", change_ctime(&g->end_date));
 				finished_buf[strcspn(finished_buf, "\n")] = 0;
 				finished_on = finished_buf;
 			}
+
+			if (!first)
+				CatFixed(&data, ",");
+
+			Goal *root = CalcGoalRoot((Goal *)g);
+			size_t effective_priority = root ? root->priority : g->priority;
 
 			CatTemplateString(
 					&data,
@@ -295,23 +309,21 @@ void run4(json_value* doc, String *dynamic_mem, char* ds_id){
 					started_on,
 					(size_t)g->required_time,
 					g->id,
-					g->priority
+					effective_priority
 					);
 
-			if (i + 1 < goals_len){
-				CatFixed(&data, ",");
-			}
+			first = 0;
 		}
 
 		CatFixed(&data, "}");
 	}
 	else if (!strcmp(mode, "due")){
 		CatFixed(&data, "Current user Due Goals:\n");
-		SerializeDueGoals(&data, max);
+		SerializeDueGoals(&data, max, journey_id);
 	}
 	else if (!strcmp(mode, "history")){
 		CatFixed(&data, "Current user Goal History:\n");
-		SerializeUserGoalHistory(&data, max);
+		SerializeUserGoalHistory(&data, max, journey_id);
 	}
 	else {
 		CatFixed(&data, "Internal Error: Invalid command 4 mode.\n");
@@ -321,9 +333,13 @@ void run4(json_value* doc, String *dynamic_mem, char* ds_id){
 
 	CatString(dynamic_mem, data.p, data.len);
 	FreeString(&data);
+	free(goals);
 }
 
 static void CatGoalTree(String* data, const Goal* g, int_fast64_t depth){
+	Goal *root = CalcGoalRoot((Goal *)g);
+	size_t effective_priority = root ? root->priority : g->priority;
+
 	CatTemplateString(
 			data,
 			"{\"name\":\"%s\", "
@@ -332,16 +348,16 @@ static void CatGoalTree(String* data, const Goal* g, int_fast64_t depth){
 			"\"id\":\"%s\", "
 			"\"priority\":%zu, "
 			"\"children\":[",
-			g->title,
-			g->extra_info,
+			g->title.p,
+			g->extra_info.p,
 			(size_t)g->required_time,
 			g->id,
-			g->priority
+			effective_priority
 			);
 
 	if (depth > 0 && g->subgoals_len > 0){
 		for (size_t i = 0; i < g->subgoals_len; i++){
-			const Goal* child = FindGoalFromIndex(g->subgoals[i]);
+			const Goal* child = FindGoalFromIndex(g->journey_id, g->subgoals[i]);
 
 			CatGoalTree(data, child, depth - 1);
 
@@ -361,11 +377,12 @@ static void CatGoalTree(String* data, const Goal* g, int_fast64_t depth){
 }
 
 // AI generated
-void run5(json_value* doc, String *dynamic_mem, char* ds_id){
+void run5(json_value* doc, String *dynamic_mem, char* ds_id, User *user){
 	if (!doc || !dynamic_mem) return;
 	lazy_load();
 
-	if (GOAL_CONTAINER_COUNT == INITIAL_GOAL_INDEX){ CatFixed(dynamic_mem, "Warning, you tried to run a goal-oriented command (4,5,6), but the user currently doesn't have any goals. Please avoid commands 4,5,6."); return;}
+	const char *journey_id = user->journeys[0];
+	{ size_t _tmp = 0; Goal **_g = GetGoalsSorted(&_tmp, journey_id); free(_g); if (_tmp == 0){ CatFixed(dynamic_mem, "Warning, you tried to run a goal-oriented command (4,5,6), but the user currently doesn't have any goals. Please avoid commands 4,5,6."); return;} }
 
 	goalIDType goal_id;
 	int_fast64_t depth = 0;
@@ -375,7 +392,7 @@ void run5(json_value* doc, String *dynamic_mem, char* ds_id){
 	if (depth < 1) depth = 1;
 	if (depth > 5) depth = 5;
 
-	Goal* goal = FindGoalByID(goal_id);
+	Goal* goal = FindGoalByID(goal_id, journey_id);
 
 	if (!goal){
 		CatFixed(dynamic_mem, "Error: Goal not found.\n");
@@ -395,11 +412,12 @@ void run5(json_value* doc, String *dynamic_mem, char* ds_id){
 	FreeString(&data);
 }
 
-void run6(json_value* doc, String *dynamic_mem, char* ds_id){
+void run6(json_value* doc, String *dynamic_mem, char* ds_id, User *user){
 	if (!doc || !dynamic_mem) return;
 	lazy_load();
 
-	if (GOAL_CONTAINER_COUNT == INITIAL_GOAL_INDEX){ CatFixed(dynamic_mem, "Warning, you tried to run a goal-oriented command (4,5,6), but the user currently doesn't have any goals. Please avoid commands 4,5,6."); return;}
+	const char *journey_id = user->journeys[0];
+	{ size_t _tmp = 0; Goal **_g = GetGoalsSorted(&_tmp, journey_id); free(_g); if (_tmp == 0){ CatFixed(dynamic_mem, "Warning, you tried to run a goal-oriented command (4,5,6), but the user currently doesn't have any goals. Please avoid commands 4,5,6."); return;} }
 
 	goalIDType goal_id;
 	char method[32];
@@ -407,7 +425,7 @@ void run6(json_value* doc, String *dynamic_mem, char* ds_id){
 
 	if (!decompose_command_6_params(doc, dynamic_mem, &goal_id, &method, &method_length)) return;
 
-	Goal* goal = FindGoalByID(goal_id);
+	Goal* goal = FindGoalByID(goal_id, journey_id);
 
 	if (!goal){
 		CatFixed(dynamic_mem, "Error: Goal not found.\n");
@@ -447,6 +465,67 @@ void run6(json_value* doc, String *dynamic_mem, char* ds_id){
 
 	ds_emit(ds_id, "cmd-6", data.p, data.len);
 
+	CatString(dynamic_mem, data.p, data.len);
+	FreeString(&data);
+}
+
+void run7(json_value* doc, String *dynamic_mem, char* ds_id, User *user){
+	// call SerialzieScheduleData(String* buffer, time_t threshold time offset in seconds form now to fitler )
+	if (!dynamic_mem || !doc) return;
+	lazy_load();
+
+	time_t offset_seconds;
+
+	if (decompose_command_7_params(doc, dynamic_mem, &offset_seconds) == 0) return;
+
+	// Allocate 35 characters per node, 32 bonus
+	String data;
+	InitString(&data, 2);
+	change_assert(data.p, "Failed to allocate memory for data.\n");
+
+	SerializeScheduleData(&data, offset_seconds, user);
+
+	ds_emit(ds_id, "cmd-7", c_str(&data), data.len);
+
+	CatString(dynamic_mem, data.p, data.len);
+
+	FreeString(&data);
+}
+
+void run8(json_value* doc, String *dynamic_mem, char* ds_id, User *user){
+	if (!dynamic_mem || !doc) return;
+	lazy_load();
+
+	char section[32];
+	size_t section_length = 0;
+	size_t max = 10;
+
+	if (decompose_command_8_params(doc, dynamic_mem, &section, &section_length, &max) == 0) return;
+
+	String data;
+	InitString(&data, 1024);
+	change_assert(data.p, "Failed to allocate memory for command 8 data.\n");
+
+	SerializeUserProfileHistorySection(user, section, max, &data);
+
+	ds_emit(ds_id, "cmd-8", c_str(&data), data.len);
+	CatString(dynamic_mem, data.p, data.len);
+	FreeString(&data);
+}
+
+void run9(json_value* doc, String *dynamic_mem, char* ds_id, User *user){
+	if (!dynamic_mem || !doc) return;
+	lazy_load();
+
+	if (decompose_command_9_params(doc, dynamic_mem) == 0) return;
+
+	String data;
+	InitString(&data, 1024);
+	change_assert(data.p, "Failed to allocate memory for command 9 data.\n");
+
+	SerializeUserProfileDerivedSummary(user, &data);
+
+	ds_emit(ds_id, "cmd-9", c_str(&data), data.len);
 	CatString(dynamic_mem, data.p, data.len);
 	FreeString(&data);
 }

@@ -3,14 +3,16 @@
 
 #include "util.h"
 
+typedef struct UserType User;
+
 
 #define OPENAI_DECOMPOSITION_SCHEMA_JSON \
 "{" \
   "\"type\":\"object\"," \
   "\"additionalProperties\":false," \
-  "\"required\":[\"profesie\",\"emotie\",\"pasiuni\",\"generalitati\",\"subiectiv\"]," \
+  "\"required\":[\"profession\",\"emotion\",\"passions\",\"generalities\",\"subjective\"]," \
   "\"properties\":{" \
-    "\"profesie\":{" \
+    "\"profession\":{" \
       "\"type\":\"object\"," \
       "\"additionalProperties\":false," \
       "\"required\":[\"nodes\",\"connections\"]," \
@@ -48,7 +50,7 @@
         "}" \
       "}" \
     "}," \
-    "\"emotie\":{" \
+    "\"emotion\":{" \
       "\"type\":\"object\"," \
       "\"additionalProperties\":false," \
       "\"required\":[\"nodes\",\"connections\"]," \
@@ -86,7 +88,7 @@
         "}" \
       "}" \
     "}," \
-    "\"pasiuni\":{" \
+    "\"passions\":{" \
       "\"type\":\"object\"," \
       "\"additionalProperties\":false," \
       "\"required\":[\"nodes\",\"connections\"]," \
@@ -124,7 +126,7 @@
         "}" \
       "}" \
     "}," \
-    "\"generalitati\":{" \
+    "\"generalities\":{" \
       "\"type\":\"object\"," \
       "\"additionalProperties\":false," \
       "\"required\":[\"nodes\",\"connections\"]," \
@@ -162,7 +164,7 @@
         "}" \
       "}" \
     "}," \
-    "\"subiectiv\":{" \
+    "\"subjective\":{" \
       "\"type\":\"object\"," \
       "\"additionalProperties\":false," \
       "\"required\":[\"nodes\",\"connections\"]," \
@@ -204,6 +206,6 @@
 "}"
 
 
-void DecomposeInputIntoGraph(String *input);
+size_t DecomposeInputIntoGraph(String *input, User *user);
 
 #endif

@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include "node.h"
 #include "util.h"
+#include "srv/user/user-management.h"
 
 #define OPENAI_DEEP_SEARCH_SCHEMA_JSON \
 "{" \
@@ -24,16 +25,18 @@
     "\"mode\"," \
     "\"max\"," \
     "\"goal_id\"," \
-    "\"method\"" \
+    "\"method\"," \
+    "\"offset\"," \
+    "\"profile_section\"" \
   "]," \
   "\"properties\":{" \
-    "\"command\":{\"type\":[\"integer\",\"null\"],\"enum\":[1,2,3,4,5,6,null]}," \
+    "\"command\":{\"type\":[\"integer\",\"null\"],\"enum\":[1,2,3,4,5,6,7,8,9,null]}," \
     "\"finished\":{\"type\":[\"boolean\",\"null\"]}," \
     "\"conclusion\":{\"type\":[\"string\",\"null\"]}," \
-    "\"percentage\":{\"type\":[\"integer\",\"null\"],\"minimum\":0,\"maximum\":100}," \
+    "\"percentage\":{\"type\":[\"integer\",\"null\"],\"minimum\":1,\"maximum\":100}," \
     "\"criteria\":{\"type\":[\"string\",\"null\"],\"enum\":[\"activation\",\"weight\",null]}," \
     "\"node\":{\"type\":[\"string\",\"null\"]}," \
-    "\"context\":{\"type\":[\"string\",\"null\"],\"enum\":[\"profesie\",\"emotie\",\"pasiuni\",\"generalitati\",\"subiectiv\",null]}," \
+    "\"context\":{\"type\":[\"string\",\"null\"],\"enum\":[\"profession\",\"emotion\",\"passions\",\"generalities\",\"subjective\",null]}," \
     "\"percA\":{\"type\":[\"integer\",\"null\"],\"minimum\":0,\"maximum\":100}," \
     "\"percW\":{\"type\":[\"integer\",\"null\"],\"minimum\":0,\"maximum\":100}," \
     "\"depth\":{\"type\":[\"integer\",\"null\"],\"minimum\":1,\"maximum\":5}," \
@@ -41,11 +44,13 @@
     "\"mode\":{\"type\":[\"string\",\"null\"],\"enum\":[\"roots\",\"due\",\"history\",null]}," \
     "\"max\":{\"type\":[\"integer\",\"null\"],\"minimum\":0}," \
     "\"goal_id\":{\"type\":[\"string\",\"null\"]}," \
-    "\"method\":{\"type\":[\"string\",\"null\"],\"enum\":[\"siblings\",\"parents\",\"linked-siblings\",\"linked-siblings-hidden\",\"uncles\",\"uncles-hidden\",\"history\",null]}" \
+    "\"method\":{\"type\":[\"string\",\"null\"],\"enum\":[\"siblings\",\"parents\",\"linked-siblings\",\"linked-siblings-hidden\",\"uncles\",\"uncles-hidden\",\"history\",null]}," \
+    "\"offset\":{\"type\":[\"integer\",\"null\"],\"minimum\":0}," \
+    "\"profile_section\":{\"type\":[\"string\",\"null\"],\"enum\":[\"inputs\",\"goal-activity\",null]}" \
   "}" \
 "}"
 
-void start_ds_session(Task *task, char* id, String* out);
+void start_ds_session(Task *task, char* id, String* out, User *user);
 
 #endif
 
@@ -55,7 +60,7 @@ void start_ds_session(Task *task, char* id, String* out);
 typedef struct {
 	String dynamic;
 	String persistent;
-
+	User *user;
 } DS_memory;
 
 _Bool init_ds_memory(DS_memory *d);

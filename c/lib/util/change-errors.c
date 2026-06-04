@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <time.h>
 #include "change-errors.h"
+#include "time-util.h"
 #include <string.h>
 
 _Bool massert(_Bool assertion, const char* message){
@@ -70,7 +71,7 @@ void change_assert_impl(
 
 	va_end(args);
 
-	time_t now = time(NULL);
+	time_t now = change_time_now();
 	struct tm* tm_info = localtime(&now);
 
 	char timestamp[64];

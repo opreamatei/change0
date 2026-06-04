@@ -17,6 +17,7 @@ size_t mystrnlen(const char* s, size_t maxlen);
 #include <stdio.h>
 #include "change-errors.h"
 #include "json.h"
+#include "time-util.h"
 
 char* readFile(char* filename, size_t *bytes);
 
@@ -40,6 +41,8 @@ double atod(char s[], int precision);
 
 #ifndef STRING_SEARCH_FUNCTIONS
 #define STRING_SEARCH_FUNCTIONS
+
+void trim_newline_inplace(char *s);
 
 char* searchFirstDigit(char *source);
 

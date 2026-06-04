@@ -1,5 +1,5 @@
 import {
-  SERVER_BASE_URL,
+  getClientBaseUrl,
   buildGoalEndUrl,
   buildGoalDecomposeUrl,
   buildGoalListUrl,
@@ -12,17 +12,22 @@ export interface GoalInit {
   id: string
   title: string
   extraInfo: string
+  tips?: string
   startDate: number | null
   endDate: number | null
   requiredTime: number
+  minPauseToNext: number
+  pauseToNext: number
   subgoals: number[]
   parent: number | null
   prev: number | null
   next: number | null
-  globalIndex: number
+  localIndex: number
   depth: number
   retryDepth: number
   priority: number
+  goalType?: string
+  attachId?: string
 }
 
 export interface GoalDecomposePayload {
@@ -30,17 +35,21 @@ export interface GoalDecomposePayload {
 }
 
 export interface GoalStatusActionPayload {
-  goalId: string
+  goalId?: string
+  goalIndex?: number
 }
 
 export interface GoalListResponseItem {
   id: string
-  globalIndex: number
+  localIndex: number
   title: string
   extra_info: string
+  tips?: string
   start_date: number
   end_date: number
   required_time: number
+  min_pause_to_next: number
+  pause_to_next: number
   subgoals: number[]
   parent: number
   prev: number
@@ -48,6 +57,8 @@ export interface GoalListResponseItem {
   depth: number
   retry_depth: number
   priority: number
+  goal_type?: number
+  attach_id?: string
 }
 
 export interface GoalListResponse {
@@ -60,13 +71,16 @@ export interface GoalListResponse {
 export interface GoalStatusActionResponse {
   ok: boolean
   'goal-id': string
+  goal_index?: number
   at: number
   start_date: number
   end_date: number
+  attach_id?: string
 }
 
 export interface GoalEventPayload {
   'goal-id'?: string
+  goal_index?: number
   start_date?: number
   end_date?: number
 }
@@ -89,46 +103,60 @@ export class Goal implements GoalInit {
     'startDate',
     'endDate',
     'requiredTime',
+    'minPauseToNext',
+    'pauseToNext',
     'subgoals',
     'parent',
     'prev',
     'next',
-    'globalIndex',
+    'localIndex',
     'depth',
     'retryDepth',
     'priority',
+    'goalType',
+    'attachId',
   ]
 
   id: string
   title: string
   extraInfo: string
+  tips: string
   startDate: number | null
   endDate: number | null
   requiredTime: number
+  minPauseToNext: number
+  pauseToNext: number
   subgoals: number[]
   parent: number | null
   prev: number | null
   next: number | null
-  globalIndex: number
+  localIndex: number
   depth: number
   retryDepth: number
   priority: number
+  goalType: string
+  attachId: string
 
   constructor(init: GoalInit) {
     this.id = init.id
     this.title = init.title
     this.extraInfo = init.extraInfo
+    this.tips = init.tips ?? ''
     this.startDate = init.startDate
     this.endDate = init.endDate
     this.requiredTime = init.requiredTime
+    this.minPauseToNext = init.minPauseToNext
+    this.pauseToNext = init.pauseToNext
     this.subgoals = [...init.subgoals]
     this.parent = init.parent
     this.prev = init.prev
     this.next = init.next
-    this.globalIndex = init.globalIndex
+    this.localIndex = init.localIndex
     this.depth = init.depth
     this.retryDepth = init.retryDepth
     this.priority = init.priority
+    this.goalType = init.goalType ?? 'timer'
+    this.attachId = init.attachId ?? ''
   }
 
   static from(init: GoalInit | Goal) {
@@ -140,25 +168,30 @@ export class Goal implements GoalInit {
       id: item.id,
       title: item.title,
       extraInfo: item.extra_info,
+      tips: item.tips ?? '',
       startDate: item.start_date > 0 ? item.start_date : null,
       endDate: item.end_date > 0 ? item.end_date : null,
       requiredTime: item.required_time,
+      minPauseToNext: item.min_pause_to_next,
+      pauseToNext: item.pause_to_next,
       subgoals: [...item.subgoals],
       parent: item.parent > 0 ? item.parent : null,
       prev: item.prev > 0 ? item.prev : null,
       next: item.next > 0 ? item.next : null,
-      globalIndex: item.globalIndex,
+      localIndex: item.localIndex,
       depth: item.depth,
       retryDepth: item.retry_depth,
       priority: item.priority,
+      goalType: item.goal_type === 1 ? 'journal' : 'timer',
+      attachId: item.attach_id ?? '',
     })
   }
 
   toDecomposePayload(): GoalDecomposePayload {
-    return { goalIndex: this.globalIndex }
+    return { goalIndex: this.localIndex }
   }
 
-  static decomposeUrl(baseUrl = SERVER_BASE_URL) {
+  static decomposeUrl(baseUrl = getClientBaseUrl() ?? '') {
     return buildGoalDecomposeUrl(baseUrl)
   }
 
@@ -181,8 +214,35 @@ export interface GoalEdge {
   relation: GoalRelation
 }
 
-export function findGoalByGlobalIndex(goals: Goal[], globalIndex: number) {
-  return goals.find((goal) => goal.globalIndex === globalIndex) ?? null
+export function findGoalByGlobalIndex(goals: Goal[], localIndex: number) {
+  return goals.find((goal) => goal.localIndex === localIndex) ?? null
+}
+
+export function getRootGoalProgressPct(goals: Goal[], start: Goal): number {
+  let root = start
+  while (root.parent !== null) {
+    const parent = findGoalByGlobalIndex(goals, root.parent)
+    if (!parent) break
+    root = parent
+  }
+
+  let totalTime = 0
+  let doneTime = 0
+
+  function walk(g: Goal) {
+    if (g.subgoals.length === 0) {
+      totalTime += g.requiredTime
+      if (g.endDate !== null) doneTime += g.requiredTime
+      return
+    }
+    for (const idx of g.subgoals) {
+      const child = findGoalByGlobalIndex(goals, idx)
+      if (child) walk(child)
+    }
+  }
+  walk(root)
+
+  return totalTime > 0 ? Math.round((doneTime / totalTime) * 100) : 0
 }
 
 export function findGoalById(goals: Goal[], id: string) {
@@ -220,7 +280,22 @@ export function formatGoalDate(value: number | null) {
   return date.toLocaleString()
 }
 
-export async function loadGoalsFromServer(baseUrl = SERVER_BASE_URL) {
+/* Parse a goal-list container ({ goals: [...] }) into Goal objects, deduping by
+ * localIndex. Shared by the live loader and the cached profile-snapshot viewer. */
+export function goalsFromContainer(payload: GoalListResponse | null | undefined): Goal[] {
+  const items = Array.isArray(payload?.goals) ? payload!.goals : []
+  const seen = new Set<number>()
+
+  return items
+    .filter((item) => {
+      if (seen.has(item.localIndex)) return false
+      seen.add(item.localIndex)
+      return true
+    })
+    .map(Goal.fromServer)
+}
+
+export async function loadGoalsFromServer(baseUrl = getClientBaseUrl() ?? '') {
   const response = await fetch(buildGoalListUrl(baseUrl), {
     method: 'GET',
     cache: 'no-store',
@@ -231,19 +306,22 @@ export async function loadGoalsFromServer(baseUrl = SERVER_BASE_URL) {
   }
 
   const payload = (await response.json()) as GoalListResponse
-  const items = Array.isArray(payload.goals) ? payload.goals : []
-
-  return items.map(Goal.fromServer)
+  return goalsFromContainer(payload)
 }
 
-async function postGoalStatusAction(url: string, payload: GoalStatusActionPayload) {
+async function postGoalStatusAction(
+  url: string,
+  payload: GoalStatusActionPayload,
+  extra?: Record<string, unknown>,
+) {
   const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      'goal-id': payload.goalId,
+      ...(payload.goalId ? { 'goal-id': payload.goalId } : {}),
+      ...(extra ?? {}),
     }),
   })
 
@@ -254,17 +332,76 @@ async function postGoalStatusAction(url: string, payload: GoalStatusActionPayloa
   return (await response.json()) as GoalStatusActionResponse
 }
 
-export async function startGoalOnServer(goalId: string, baseUrl = SERVER_BASE_URL) {
-  return postGoalStatusAction(buildGoalStartUrl(baseUrl), { goalId })
+export async function startGoalOnServer(goal: Goal, baseUrl = getClientBaseUrl() ?? "") {
+  return postGoalStatusAction(buildGoalStartUrl(baseUrl), { goalId: goal.id })
 }
 
-export async function endGoalOnServer(goalId: string, baseUrl = SERVER_BASE_URL) {
-  return postGoalStatusAction(buildGoalEndUrl(baseUrl), { goalId })
+/*
+ * Journal goals pass the produced entry id back as `journal_ref`; the server
+ * requires it before it will complete a journal leaf. Timer goals omit it.
+ */
+export async function endGoalOnServer(goal: Goal, journalRef?: string, baseUrl = getClientBaseUrl() ?? "") {
+  return postGoalStatusAction(
+    buildGoalEndUrl(baseUrl),
+    { goalId: goal.id },
+    journalRef ? { journal_ref: journalRef } : undefined,
+  )
+}
+
+/*
+ * Abandon an in-progress session without completing it. Resets the goal to
+ * idle server-side (clears start/end and the journal draft link). The journal
+ * draft entry itself is kept.
+ */
+export async function cancelGoalOnServer(goal: Goal, baseUrl = getClientBaseUrl() ?? "") {
+  const response = await fetch(`${baseUrl}/goal/cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ 'goal-id': goal.id }),
+  })
+  if (!response.ok) throw new Error(`Goal cancel failed: ${response.status}`)
+  return (await response.json()) as { ok: boolean; 'goal-id': string; goal_index: number }
+}
+
+export async function repairGoalOnServer(goal: Goal, reason: string, baseUrl = getClientBaseUrl() ?? "") {
+  const response = await fetch(`${baseUrl}/goal/repair`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ 'goal-id': goal.id, reason }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Goal repair failed: ${response.status}`)
+  }
+
+  return (await response.json()) as { ok: boolean; 'goal-id': string; goal_index: number }
+}
+
+export async function extendGoalOnServer(goal: Goal, baseUrl = getClientBaseUrl() ?? "") {
+  const response = await fetch(`${baseUrl}/goal/extend`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ 'goal-id': goal.id }),
+  })
+  if (!response.ok) throw new Error(`Goal extend failed: ${response.status}`)
+  return (await response.json()) as { ok: boolean; 'goal-id': string; goal_index: number; required_time: number }
+}
+
+export async function reshapeGoalOnServer(goal: Goal, baseUrl = getClientBaseUrl() ?? "") {
+  const response = await fetch(`${baseUrl}/goal/reshape`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ 'goal-id': goal.id }),
+  })
+  if (!response.ok) throw new Error(`Goal reshape failed: ${response.status}`)
+  return (await response.json()) as { ok: boolean; 'goal-id': string; goal_index: number; title: string; required_time: number }
 }
 
 export function applyGoalEvent(goals: Goal[], goalId: string, payload: GoalEventPayload) {
   return goals.map((goal) => {
-    if (goal.id !== goalId) {
+    const matchesGoal = goal.id === goalId
+
+    if (!matchesGoal) {
       return goal
     }
 
@@ -475,21 +612,23 @@ export function createMockGoals(template: MockGoalTemplate): Goal[] {
     parent: number | null,
     siblingPosition: number,
   ): number {
-    const globalIndex = nextGlobalIndex++
+    const localIndex = nextGlobalIndex++
     const childIndexes: number[] = []
 
     const goal = new Goal({
-      id: `mock-goal-${globalIndex}`,
+      id: `mock-goal-${localIndex}`,
       title: node.title,
       extraInfo: node.extraInfo ?? '',
       startDate: node.startDate ?? null,
       endDate: node.endDate ?? null,
       requiredTime: node.requiredTime,
+      minPauseToNext: 0,
+      pauseToNext: 0,
       subgoals: childIndexes,
       parent,
       prev: null,
       next: null,
-      globalIndex,
+      localIndex,
       depth,
       retryDepth: 0,
       priority: node.priority ?? Math.max(1, 100 - depth * 10 - siblingPosition),
@@ -500,7 +639,7 @@ export function createMockGoals(template: MockGoalTemplate): Goal[] {
     const children = node.children ?? []
 
     for (let i = 0; i < children.length; i += 1) {
-      const childIndex = visit(children[i], depth + 1, globalIndex, i)
+      const childIndex = visit(children[i], depth + 1, localIndex, i)
       childIndexes.push(childIndex)
     }
 
@@ -514,7 +653,7 @@ export function createMockGoals(template: MockGoalTemplate): Goal[] {
 
     goal.subgoals = childIndexes
 
-    return globalIndex
+    return localIndex
   }
 
   visit(template, 0, null, 0)
@@ -541,7 +680,7 @@ export interface PreparedGoalNode {
   progress: number
   parentIndex: number
   groupId: number
-  globalIndex: number
+  localIndex: number
 }
 
 export interface InteractionNode {
@@ -554,7 +693,7 @@ export interface InteractionNode {
   progress: number
   parentId: number | null
   parentIndex: number
-  globalIndex: number
+  localIndex: number
 }
 
 export interface PrepareGoalMapOptions {
@@ -581,6 +720,76 @@ export function inferGoalState(goal: Goal): InferredGoalState {
   if (goal.startDate && goal.endDate) return 'finished'
   if (goal.startDate && !goal.endDate) return 'started'
   return 'idle'
+}
+
+export function isLeafGoal(goal: Goal) {
+  return goal.subgoals.length === 0
+}
+
+export function getLeafGoals(goals: Goal[]) {
+  return goals.filter(isLeafGoal)
+}
+
+export function getCurrentLeafGoals(goals: Goal[]) {
+  return getLeafGoals(goals).filter((goal) => inferGoalState(goal) === 'started')
+}
+
+export function getPreviousTimelineLeaf(goals: Goal[], goal: Goal): Goal | null {
+  function lastLeafOf(g: Goal): Goal {
+    while (g.subgoals.length > 0) {
+      const child = findGoalByGlobalIndex(goals, g.subgoals[g.subgoals.length - 1])
+      if (!child) break
+      g = child
+    }
+    return g
+  }
+
+  let current: Goal | null = goal
+  while (current) {
+    if (current.prev !== null) {
+      const prev = findGoalByGlobalIndex(goals, current.prev)
+      return prev ? lastLeafOf(prev) : null
+    }
+    if (current.parent === null) return null
+    current = findGoalByGlobalIndex(goals, current.parent)
+  }
+  return null
+}
+
+export function getGoalStartGate(goals: Goal[], goal: Goal, now = Math.floor(Date.now() / 1000)) {
+  const previousGoal = getPreviousTimelineLeaf(goals, goal)
+
+  if (!previousGoal) {
+    return {
+      ready: true,
+      previousGoal: null as Goal | null,
+      minPauseUntil: null as number | null,
+      normalPauseUntil: null as number | null,
+      remainingMinPause: 0,
+    }
+  }
+
+  if (!previousGoal.endDate) {
+    return {
+      ready: false,
+      previousGoal,
+      minPauseUntil: null as number | null,
+      normalPauseUntil: null as number | null,
+      remainingMinPause: Number.POSITIVE_INFINITY,
+    }
+  }
+
+  const minPauseUntil = previousGoal.endDate + previousGoal.minPauseToNext
+  const normalPauseUntil = previousGoal.endDate + previousGoal.pauseToNext
+  const remainingMinPause = Math.max(0, minPauseUntil - now)
+
+  return {
+    ready: remainingMinPause <= 0,
+    previousGoal,
+    minPauseUntil,
+    normalPauseUntil,
+    remainingMinPause,
+  }
 }
 
 export function getGoalPrev(goals: Goal[], goal: Goal | number) {

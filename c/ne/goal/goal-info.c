@@ -1,6 +1,10 @@
 #include "goal-info.h"
+#include "srv/user/journey.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
+
+static journey_str_func journey_get_title = NULL;
 
 char* SerializeGoal(Goal* g, size_t *length, char* relation, _Bool showExtraInfo){
 	*length = sizeof(OTHER_GOAL_TEMPLATE_RICH) + g->extra_info.len + g->title.len + 512;
@@ -9,11 +13,11 @@ char* SerializeGoal(Goal* g, size_t *length, char* relation, _Bool showExtraInfo
 	cassert(main_buffer, "Coudln't malloc mem for main buffer\n");
 
 	char end_time_buffer[128];
-	size_t temp_len = sprintf(end_time_buffer, "%s", g->end_date == 0 ? "goal is not finished" : ctime(&g->end_date));
+	size_t temp_len = sprintf(end_time_buffer, "%s", g->end_date == 0 ? "goal is not finished" : change_ctime(&g->end_date));
 	cassert(temp_len < 128, "Buffer too small 0\n");
 
 	char start_time_buffer[128];
-	temp_len = sprintf(start_time_buffer, "%s", g->start_date == 0 ? "goal is not started" : ctime(&g->start_date));
+	temp_len = sprintf(start_time_buffer, "%s", g->start_date == 0 ? "goal is not started" : change_ctime(&g->start_date));
 	cassert(temp_len < 128, "Buffer too small 0\n");
 
 	end_time_buffer[strcspn(end_time_buffer, "\n")] = '\0';
@@ -44,59 +48,51 @@ char* SerializeGoal(Goal* g, size_t *length, char* relation, _Bool showExtraInfo
 	return main_buffer;
 }
 
-void SerializeUserGoalHistory(String *buffer, size_t max){
+void SerializeUserGoalHistory(String *buffer, size_t max, const char *journey_id){
 
 	size_t i = 0;
+	size_t total = 0;
+	Goal **goals = GetGoalsSorted(&total, journey_id);
 
-	for (size_t currentIndex = GOAL_CONTAINER_COUNT;
-			currentIndex-- > INITIAL_GOAL_INDEX && i < max;){
-
-		Goal *g = FindGoalFromIndex(currentIndex);
-
+	for (size_t idx = total; idx-- > 0 && i < max;) {
+		Goal *g = goals[idx];
 		if (!g) continue;
-
-		if (g->start_date != 0){
-
-			size_t register_len_size = 0;
-
-			char* info = SerializeGoal(
-					g,
-					&register_len_size,
-					"example-goal",
-					1
-					);
-
-			cassert(info, "Something failed when providing goal info.\n");
-
-			CatString(buffer, info, register_len_size);
-
-			free(info);
-
-			i++;
-		}
-	}
-}
- 
-void SerializeUserGoalHistoryUpTo(Goal* g, String *buffer, int max){
-
-	size_t currentIndex = g->globalIndex - 1;
-	int i = 0;
-
-	for (size_t currentIndex = g->globalIndex;
-			currentIndex-- > INITIAL_GOAL_INDEX && i < max;){
-		Goal *g = FindGoalFromIndex(currentIndex);
 
 		if (g->start_date != 0){
 			size_t register_len_size = 0;
 			char* info = SerializeGoal(g, &register_len_size, "example-goal", 1);
-			cassert(info, "Something failed when provdiing info.\n");
+			cassert(info, "Something failed when providing goal info.\n");
 			CatString(buffer, info, register_len_size);
 			free(info);
 			i++;
 		}
-
-		currentIndex --;
 	}
+
+	free(goals);
+}
+ 
+void SerializeUserGoalHistoryUpTo(Goal* g, String *buffer, int max){
+
+	size_t total = 0;
+	Goal **goals = GetGoalsSorted(&total, g->journey_id);
+	int i = 0;
+
+	for (size_t idx = total; idx-- > 0 && i < max;) {
+		Goal *cg = goals[idx];
+		if (!cg) continue;
+		if (cg->localIndex >= g->localIndex) continue;
+
+		if (cg->start_date != 0){
+			size_t register_len_size = 0;
+			char* info = SerializeGoal(cg, &register_len_size, "example-goal", 1);
+			cassert(info, "Something failed when providing info.\n");
+			CatString(buffer, info, register_len_size);
+			free(info);
+			i++;
+		}
+	}
+
+	free(goals);
 }
 
 void SerializeSlibingGoals(Goal *g, String *buffer){
@@ -105,10 +101,10 @@ void SerializeSlibingGoals(Goal *g, String *buffer){
 		return;
 	}
 
-	Goal* parent = FindGoalFromIndex(g->parent);
+	Goal* parent = FindGoalFromIndex(g->journey_id, g->parent);
 
 	for (size_t i = 0; i < parent->subgoals_len; i++){
-		Goal *slibing = FindGoalFromIndex(parent->subgoals[i]);
+		Goal *slibing = FindGoalFromIndex(parent->journey_id, parent->subgoals[i]);
 
 		size_t len = 0;
 		char* info = SerializeGoal(slibing, &len, "brother-goal", 1);
@@ -119,9 +115,19 @@ void SerializeSlibingGoals(Goal *g, String *buffer){
 }
 
 void SerializeGoalParentChain(Goal *g, String *buffer){
-	
+	Goal *root = g;
+	while (root->parent != 0)
+		root = FindGoalFromIndex(root->journey_id, root->parent);
+
+	if (root->journey_id[0]) {
+		JourneySystemLazyLoad(&journey_get_title, NULL);
+		const char *jt = journey_get_title(root->journey_id);
+		if (jt && jt[0])
+			CatTemplateString(buffer, "[Journey: %s]\n", jt);
+	}
+
 	while (g->parent != 0){
-		g = FindGoalFromIndex(g->parent);
+		g = FindGoalFromIndex(g->journey_id, g->parent);
 
 		size_t len;
 		char* info = SerializeGoal(g, &len, "parent-goal", 1);
@@ -138,7 +144,7 @@ void SerializeGoalLinkedSlibingsChain(Goal *g, String *buffer, _Bool displayInfo
 	Goal* original = g;
 
 	while (g->next != 0){
-		g = FindGoalFromIndex(g->next);
+		g = FindGoalFromIndex(g->journey_id, g->next);
 
 		size_t len;
 		char* info = SerializeGoal(g, &len, "follow-up-goal", displayInfo);
@@ -151,7 +157,7 @@ void SerializeGoalLinkedSlibingsChain(Goal *g, String *buffer, _Bool displayInfo
 	g = original;
 	CatString(buffer, FSTRING_SIZE_PARAMS("\n\nPrevious goals: \n"));
 	while (g->prev != 0){
-		g = FindGoalFromIndex(g->prev);
+		g = FindGoalFromIndex(g->journey_id, g->prev);
 
 		size_t len;
 		char* info = SerializeGoal(g, &len, "prev-goal", displayInfo);
@@ -167,7 +173,7 @@ void SerializeGoalParentSlibings(Goal *g, String *buffer, _Bool displayInfo){
 		CatString(buffer, FSTRING_SIZE_PARAMS("Root goal has no uncle because it's a root goal."));
 		return;
 	}
-	Goal* parent = FindGoalFromIndex(g->parent);
+	Goal* parent = FindGoalFromIndex(g->journey_id, g->parent);
 	if (parent == 0){
 		CatString(buffer, FSTRING_SIZE_PARAMS("This is a root goal, it doesn't have any uncles."));
 		return;
@@ -179,36 +185,195 @@ void SerializeGoalParentSlibings(Goal *g, String *buffer, _Bool displayInfo){
 }
 
 // AI Generated
-void SerializeDueGoals(String *buffer, size_t max){
+void SerializeStalledGoals(String *buffer, size_t max, const char *journey_id)
+{
+	size_t total = 0;
+	Goal **goals = GetGoalsSorted(&total, journey_id);
+	time_t now = change_time_now();
+	size_t count = 0;
+
+	for (size_t idx = 0; idx < total && count < max; idx++) {
+		Goal *g = goals[idx];
+		if (!g) continue;
+		if (g->start_date == 0 || g->end_date != 0) continue;
+
+		time_t elapsed = now - g->start_date;
+		if (elapsed < 2 * 24 * 3600) continue;
+
+		long long days = (long long)(elapsed / 86400);
+		long long hours = (long long)((elapsed % 86400) / 3600);
+		char relation[64];
+		if (days == 1)
+			snprintf(relation, sizeof(relation), "stalled-1-day-%lld-hours", hours);
+		else
+			snprintf(relation, sizeof(relation), "stalled-%lld-days", days);
+
+		size_t len = 0;
+		char *info = SerializeGoal(g, &len, relation, 1);
+		if (info) {
+			CatString(buffer, info, len);
+			free(info);
+		}
+		count++;
+	}
+
+	free(goals);
+}
+
+void SerializeDueGoals(String *buffer, size_t max, const char *journey_id){
 
 	size_t emitted = 0;
+	size_t total = 0;
+	Goal **goals = GetGoalsSorted(&total, journey_id);
 
-	for (size_t currentIndex = GOAL_CONTAINER_COUNT;
-			currentIndex-- > INITIAL_GOAL_INDEX && emitted < max;){
-
-		Goal *g = FindGoalFromIndex(currentIndex);
-
+	for (size_t idx = total; idx-- > 0 && emitted < max;) {
+		Goal *g = goals[idx];
 		if (!g) continue;
 
-		// due / unfinished goals only
 		if (g->end_date == 0){
-
 			size_t len = 0;
-
-			char* info = SerializeGoal(
-					g,
-					&len,
-					"due-goal",
-					1
-					);
-
+			char* info = SerializeGoal(g, &len, "due-goal", 1);
 			cassert(info, "Something failed when serializing due goal.\n");
-
 			CatString(buffer, info, len);
-
 			free(info);
-
 			emitted++;
 		}
+	}
+
+	free(goals);
+}
+
+void SerializeLeafDueGoals(String *buffer, size_t max, const char *journey_id){
+
+	size_t emitted = 0;
+	size_t total = 0;
+	Goal **goals = GetGoalsSorted(&total, journey_id);
+
+	for (size_t idx = total; idx-- > 0 && emitted < max;) {
+		Goal *g = goals[idx];
+		if (!g) continue;
+
+		if (g->end_date == 0 && g->subgoals_len == 0){
+			size_t len = 0;
+			char* info = SerializeGoal(g, &len, "due-goal", 1);
+			cassert(info, "Something failed when serializing leaf due goal.\n");
+			CatString(buffer, info, len);
+			free(info);
+			emitted++;
+		}
+	}
+
+	free(goals);
+}
+
+/* -------- shared-journey level views -------- */
+
+static const char *journey_user_label(const Journey *j, uint8_t assigned_to)
+{
+	if (assigned_to == JOURNEY_USER_UNASSIGNED) return "unassigned";
+	if (assigned_to >= j->user_count)           return "out-of-range";
+	const String *name = &j->users[assigned_to].display_name;
+	return (name->p && name->len) ? name->p : "unnamed";
+}
+
+void SerializeJourneyCompletionAttribution(String *buffer, size_t max, const char *journey_id)
+{
+	change_assert(buffer, "SerializeJourneyCompletionAttribution: NULL buffer.\n");
+
+	Journey *j = FindJourneyByID(journey_id);
+	if (!j) {
+		CatFixed(buffer, "No journey found for completion attribution.\n");
+		return;
+	}
+
+	size_t total = 0;
+	Goal **goals = GetGoalsSorted(&total, journey_id);
+	size_t emitted = 0;
+
+	for (size_t idx = total; idx-- > 0 && emitted < max;) {
+		Goal *g = goals[idx];
+		if (!g) continue;
+		if (g->subgoals_len != 0) continue;
+		if (!g->start_date || !g->end_date) continue;
+
+		long long actual    = (long long)(g->end_date - g->start_date);
+		long long estimated = (long long)CalcGoalRequiredTime(g);
+
+		CatTemplateString(buffer,
+			"{\"goal_title\":\"%s\",\"assigned_to_index\":%u,\"assigned_to_name\":\"%s\","
+			"\"estimated_time\":%lld,\"actual_duration\":%lld}\n",
+			g->title.p ? g->title.p : "",
+			(unsigned)g->assigned_to,
+			journey_user_label(j, g->assigned_to),
+			estimated, actual);
+		emitted++;
+	}
+
+	if (emitted == 0)
+		CatFixed(buffer, "No completed leaves yet in this shared journey.\n");
+
+	free(goals);
+}
+
+void SerializeJourneyDelayAttribution(String *buffer, size_t max, const char *journey_id)
+{
+	change_assert(buffer, "SerializeJourneyDelayAttribution: NULL buffer.\n");
+
+	Journey *j = FindJourneyByID(journey_id);
+	if (!j) {
+		CatFixed(buffer, "No journey found for delay attribution.\n");
+		return;
+	}
+
+	size_t total = 0;
+	Goal **goals = GetGoalsSorted(&total, journey_id);
+	time_t now = change_time_now();
+	size_t emitted = 0;
+
+	for (size_t idx = 0; idx < total && emitted < max; idx++) {
+		Goal *g = goals[idx];
+		if (!g) continue;
+		if (g->subgoals_len != 0) continue;
+		if (!g->start_date || g->end_date) continue;
+
+		time_t required = CalcGoalRequiredTime(g);
+		time_t elapsed  = now - g->start_date;
+		if (elapsed <= required) continue;
+
+		long long overdue = (long long)(elapsed - required);
+		CatTemplateString(buffer,
+			"{\"goal_title\":\"%s\",\"assigned_to_index\":%u,\"assigned_to_name\":\"%s\","
+			"\"estimated_time\":%lld,\"elapsed_time\":%lld,\"overdue_by\":%lld}\n",
+			g->title.p ? g->title.p : "",
+			(unsigned)g->assigned_to,
+			journey_user_label(j, g->assigned_to),
+			(long long)required, (long long)elapsed, overdue);
+		emitted++;
+	}
+
+	if (emitted == 0)
+		CatFixed(buffer, "No participant is currently late on a shared leaf.\n");
+
+	free(goals);
+}
+
+void SerializeJourneyParticipants(String *buffer, const char *journey_id)
+{
+	change_assert(buffer, "SerializeJourneyParticipants: NULL buffer.\n");
+
+	Journey *j = FindJourneyByID(journey_id);
+	if (!j || j->user_count == 0) {
+		CatFixed(buffer, "No participants registered.\n");
+		return;
+	}
+
+	for (size_t i = 0; i < j->user_count; i++) {
+		const JourneyUser *ju = &j->users[i];
+		const char *name = (ju->display_name.p && ju->display_name.len) ? ju->display_name.p : "unnamed";
+		const char *ctx  = (ju->context_summary.p && ju->context_summary.len) ? ju->context_summary.p : "";
+		if (*ctx)
+			CatTemplateString(buffer, "User %zu (%s): %s\n", i, name, ctx);
+		else
+			CatTemplateString(buffer, "User %zu (%s): (no public summary available)\n", i, name);
 	}
 }

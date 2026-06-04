@@ -3,22 +3,129 @@ export const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 export const num=(v,f=0)=>Number.isFinite(Number(v))?Number(v):f;
 export const own=(o,k)=>Object.prototype.hasOwnProperty.call(o,k);
 
-const HOST="127.0.0.1";
-const PORT=8085;
-const BASE=`http://${HOST}:${PORT}`;
+const DEFAULT_ENDPOINT_BASE="http://127.0.0.1:8085";
+const CENTRAL_BASE_URL="http://127.0.0.1:8085";
+const ENDPOINT_STORAGE_KEY="graph-viewer.endpoint-base.v1";
+const LOCAL_USER_STORAGE_KEY="graph-viewer.local-user.v1";
+const LOCAL_HTTP_HOSTS=new Set(["127.0.0.1","localhost","[::1]","::1"]);
 
-export const EP={
-  graph:`${BASE}/graph`,
-  export:`${BASE}/graph/export`,
-  load:`${BASE}/graph/load`,
-  msg:`${BASE}/message`,
-  rsStart:`${BASE}/research/start`,
-  rsEvents:`${BASE}/research/events`,
-  goalCreate:`${BASE}/goal/create`,
-  goalEvents:`${BASE}/goal/events`,
-  goalList:`${BASE}/goal/list`,
-  goalDecompose:`${BASE}/goal/decompose`
-};
+export function buildEndpoints(base){
+  return{
+    graph:`${base}/graph`,
+    export:`${base}/graph/export`,
+    load:`${base}/graph/load`,
+    msg:`${base}/message`,
+    rsStart:`${base}/research/start`,
+    rsEvents:`${base}/research/events`,
+    goalCreate:`${base}/goal/create`,
+    goalEvents:`${base}/goal/events`,
+    goalList:`${base}/goal/list`,
+    goalExport:`${base}/goal/export`,
+    goalLoad:`${base}/goal/load`,
+    goalDecompose:`${base}/goal/decompose`,
+    goalRepair:`${base}/goal/repair`
+  };
+}
+
+export function defaultEndpointBase(){
+  return DEFAULT_ENDPOINT_BASE;
+}
+
+export function normalizeEndpointBase(value){
+  const raw=String(value||"").trim();
+  if(!raw)return DEFAULT_ENDPOINT_BASE;
+  const candidate=/^https?:\/\//i.test(raw)?raw:`https://${raw}`;
+  let url;
+  try{
+    url=new URL(candidate);
+  }catch{
+    throw new Error("Endpoint invalid. Use a full HTTPS URL, for example https://server.example.com.");
+  }
+  const isLocalHttp=url.protocol==="http:"&&LOCAL_HTTP_HOSTS.has(url.hostname);
+  if(url.protocol!=="https:"&&!isLocalHttp){
+    throw new Error("Endpoint must use HTTPS. Only local development may use http://127.0.0.1:8085 or http://localhost.");
+  }
+  url.username="";
+  url.password="";
+  url.search="";
+  url.hash="";
+  url.pathname=url.pathname.replace(/\/+$/,"");
+  return url.toString().replace(/\/$/,"");
+}
+
+export function loadEndpointBase(){
+  try{
+    return normalizeEndpointBase(localStorage.getItem(ENDPOINT_STORAGE_KEY)||DEFAULT_ENDPOINT_BASE);
+  }catch{
+    return DEFAULT_ENDPOINT_BASE;
+  }
+}
+
+export const EP=buildEndpoints(loadEndpointBase());
+
+export function setEndpointBase(value){
+  const base=normalizeEndpointBase(value);
+  Object.assign(EP,buildEndpoints(base));
+  try{localStorage.setItem(ENDPOINT_STORAGE_KEY,base)}catch{}
+  return base;
+}
+
+/*
+ * Central server (meta-only) login helpers.
+ *
+ * The JS shell only ever talks to a single "local user" client server.
+ * These helpers wrap the central /users routes so the JS can resolve
+ * the current local user and the port of its bound client server.
+ */
+function readLocalUserFromStorage(){
+  try{
+    const raw=localStorage.getItem(LOCAL_USER_STORAGE_KEY);
+    if(!raw)return null;
+    const parsed=JSON.parse(raw);
+    return parsed&&parsed.id&&parsed.name?parsed:null;
+  }catch{return null}
+}
+let localUser=readLocalUserFromStorage();
+
+export function getLocalUser(){return localUser}
+export function setLocalUser(user){
+  localUser=user||null;
+  try{
+    if(localUser)localStorage.setItem(LOCAL_USER_STORAGE_KEY,JSON.stringify(localUser));
+    else localStorage.removeItem(LOCAL_USER_STORAGE_KEY);
+  }catch{}
+}
+
+export async function centralListUsers(){
+  const res=await fetch(`${CENTRAL_BASE_URL}/users`,{cache:"no-store"});
+  if(!res.ok)throw new Error(`Central /users HTTP ${res.status}`);
+  const payload=await res.json();
+  return Array.isArray(payload.users)?payload.users:[];
+}
+
+async function centralPostJson(path,body){
+  const res=await fetch(`${CENTRAL_BASE_URL}${path}`,{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(body)
+  });
+  if(!res.ok)throw new Error(`Central ${path} HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function centralCreateUser(name){
+  const created=await centralPostJson("/users/create",{name});
+  return {id:created.id,name:created.name};
+}
+
+/* Selects the user, starts a client server, applies the endpoint base. */
+export async function centralLogin(userId){
+  const payload=await centralPostJson("/users/select",{id:userId});
+  const base=`http://127.0.0.1:${payload.port}`;
+  setEndpointBase(base);
+  setLocalUser({id:payload.id,name:payload.name});
+  return {user:getLocalUser(),base};
+}
 
 const OFFLINE="Open CHANGE terminal client and select Start Server (run ./build.sh)";
 

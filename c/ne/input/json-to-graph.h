@@ -3,8 +3,10 @@
 
 #include "../lib/util/util.h"
 #include "../lib/jsonp/json.h"
+#include "node.h"
 
-_Bool AddContextNodesFromJSON(char* context_name, size_t context_size, json_value* root);
+_Bool AddContextNodesFromJSON(char* context_name, size_t context_size, json_value* root, NodeContainer *nc);
+void LoadGraphFromFile(char* path, NodeContainer *nc);
 
 #define OPENAI_SCHEMA_JSON \
 "{" \
@@ -21,7 +23,7 @@ _Bool AddContextNodesFromJSON(char* context_name, size_t context_size, json_valu
         "\"properties\":{" \
           "\"context\":{" \
             "\"type\":\"string\"," \
-            "\"enum\":[\"profesie\",\"emotie\",\"pasiuni\",\"generalitati\",\"subiectiv\"]" \
+            "\"enum\":[\"profession\",\"emotion\",\"passions\",\"generalities\",\"subjective\"]" \
           "}," \
           "\"nodes\":{" \
             "\"type\":\"array\"," \
